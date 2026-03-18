@@ -1,0 +1,50 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Role {
+  id    Int    @id @default(autoincrement())
+  name  String @unique
+  users User[]
+
+  @@map("roles")
+}
+
+model DsaAccount {
+  id         Int      @id @default(autoincrement())
+  name       String
+  email      String   @unique
+  mobile     String?
+  status     String   @default("ACTIVE")
+  created_at DateTime @default(now())
+  users      User[]
+
+  @@map("dsa_accounts")
+}
+
+model User {
+  id              Int      @id @default(autoincrement())
+  name            String
+  email           String   @unique
+  mobile          String?
+  password_hash   String
+  role_id         Int
+  dsa_id          Int?
+  hierarchy_level String?
+  manager_id      Int?
+  hierarchy_path  String?
+  status          String   @default("ACTIVE")
+  created_at      DateTime @default(now())
+
+  role            Role        @relation(fields: [role_id], references: [id])
+  dsa             DsaAccount? @relation(fields: [dsa_id], references: [id])
+  manager         User?       @relation("UserToManager", fields: [manager_id], references: [id])
+  subordinates    User[]      @relation("UserToManager")
+
+  @@map("users")
+}
