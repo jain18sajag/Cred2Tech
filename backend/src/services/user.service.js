@@ -4,14 +4,27 @@ const { hashPassword } = require('../utils/hash');
 async function createUser(data, currentUser) {
   const { name, email, mobile, password, role_id, dsa_id, hierarchy_level, manager_id } = data;
 
-  const role = await prisma.role.findUnique({ where: { id: role_id } });
+  const parsedRoleId = parseInt(role_id, 10);
+  const role = await prisma.role.findUnique({ where: { id: parsedRoleId } });
   if (!role) {
     throw new Error('Role not found');
   }
 
-  // Permission Checks based on current user (simplified logic)
-  if (currentUser.roleName === 'DSA' && dsa_id !== currentUser.dsaId) {
-    throw new Error('You can only create users within your DSA');
+  let finalDsaId = dsa_id ? parseInt(dsa_id, 10) : null;
+  const parsedManagerId = manager_id ? parseInt(manager_id, 10) : null;
+
+  // Permission Checks based on current user
+  if (currentUser.roleName === 'DSA') {
+    if (role.name === 'ADMIN' || role.name === 'DSA') {
+      throw new Error(`As a DSA Admin, you cannot create users with role ${role.name}`);
+    }
+    // Force the dsa_id to be the current user's dsa
+    finalDsaId = currentUser.dsaId;
+  } else if (currentUser.roleName === 'EMPLOYEE') {
+    if (role.name === 'ADMIN' || role.name === 'DSA') {
+      throw new Error(`As an Employee, you cannot create users with role ${role.name}`);
+    }
+    finalDsaId = currentUser.dsaId;
   }
 
   const hashedPassword = await hashPassword(password);
@@ -23,10 +36,10 @@ async function createUser(data, currentUser) {
       email,
       mobile,
       password_hash: hashedPassword,
-      role_id,
-      dsa_id,
+      role_id: parsedRoleId,
+      dsa_id: finalDsaId,
       hierarchy_level,
-      manager_id,
+      manager_id: parsedManagerId,
     };
 
     const newUser = await tx.user.create({ data: newUserData });
@@ -34,8 +47,8 @@ async function createUser(data, currentUser) {
     // Hierarchy Logic Calculation
     let hierarchyPath = `/${newUser.id}/`;
 
-    if (manager_id) {
-      const manager = await tx.user.findUnique({ where: { id: manager_id } });
+    if (parsedManagerId) {
+      const manager = await tx.user.findUnique({ where: { id: parsedManagerId } });
       if (!manager) {
         throw new Error('Manager not found');
       }

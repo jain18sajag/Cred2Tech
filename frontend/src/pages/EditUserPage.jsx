@@ -1,0 +1,139 @@
+import React, { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { ChevronLeft, AlertTriangle, Construction } from 'lucide-react';
+import { getUserById } from '../api/userService';
+import { MOCK_USERS } from '../constants/mockData';
+import PageHeader from '../components/ui/PageHeader';
+import FormField from '../components/ui/FormField';
+import Badge from '../components/ui/Badge';
+import { ROLE_OPTIONS, HIERARCHY_LEVELS } from '../constants/roles';
+import LoadingSpinner from '../components/ui/LoadingSpinner';
+
+const ROLE_ID_MAP = { ADMIN: 1, DSA: 2, EMPLOYEE: 3, PARTNER: 4, MSME: 5 };
+const ROLE_ID_NAME = { 1: 'ADMIN', 2: 'DSA', 3: 'EMPLOYEE', 4: 'PARTNER', 5: 'MSME' };
+
+const EditUserPage = () => {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState({ name: '', email: '', mobile: '', role: '', dsa_id: '', hierarchy_level: '', manager_id: '' });
+
+  useEffect(() => {
+    const fetchUser = async () => {
+      try {
+        const data = await getUserById(id);
+        const u = data.user || data;
+        setUser(u);
+        setForm({
+          name: u.name || '',
+          email: u.email || '',
+          mobile: u.mobile || '',
+          role: ROLE_ID_NAME[u.role_id] || u.role?.name || '',
+          dsa_id: u.dsa_id?.toString() || '',
+          hierarchy_level: u.hierarchy_level || '',
+          manager_id: u.manager_id?.toString() || '',
+        });
+      } catch {
+        const mock = MOCK_USERS.find((u) => u.id === Number(id));
+        if (mock) {
+          setUser(mock);
+          setForm({
+            name: mock.name || '',
+            email: mock.email || '',
+            mobile: mock.mobile || '',
+            role: mock.role?.name || '',
+            dsa_id: mock.dsa_id?.toString() || '',
+            hierarchy_level: mock.hierarchy_level || '',
+            manager_id: mock.manager_id?.toString() || '',
+          });
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchUser();
+  }, [id]);
+
+  const handleChange = (e) => setForm((p) => ({ ...p, [e.target.name]: e.target.value }));
+
+  if (loading) return <LoadingSpinner fullPage />;
+
+  return (
+    <div>
+      <PageHeader
+        title={`Edit: ${user?.name || 'User'}`}
+        subtitle="Modify user information"
+        breadcrumbs={[
+          { label: 'Dashboard', path: '/' },
+          { label: 'Users', path: '/users' },
+          { label: user?.name || 'User', path: `/users/${id}` },
+          { label: 'Edit' },
+        ]}
+        actions={
+          <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/users/${id}`)}>
+            <ChevronLeft size={15} /> Back to User
+          </button>
+        }
+      />
+
+      {/* Backend limitation notice */}
+      <div className="notice notice-warning" style={{ marginBottom: 24 }}>
+        <Construction size={20} style={{ flexShrink: 0, marginTop: 1 }} />
+        <div>
+          <strong style={{ display: 'block', marginBottom: 4 }}>Backend endpoint not yet implemented</strong>
+          The <code>PUT /users/:id</code> endpoint is not yet available in the backend. This form is pre-filled and functional from the UI side — once the backend is implemented, submitting this form will save the changes.
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 720 }}>
+        <div className="card card-padded" style={{ marginBottom: 20 }}>
+          <h3 style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 20 }}>
+            Basic Information
+          </h3>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
+            <FormField label="Full Name" name="name" value={form.name} onChange={handleChange} />
+            <FormField label="Email Address" name="email" type="email" value={form.email} onChange={handleChange} />
+            <FormField label="Mobile" name="mobile" value={form.mobile} onChange={handleChange} />
+          </div>
+        </div>
+
+        <div className="card card-padded" style={{ marginBottom: 20 }}>
+          <h3 style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 20 }}>
+            Role & Organization
+          </h3>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
+            <FormField label="Platform Role" name="role">
+              <select name="role" value={form.role} onChange={handleChange} className="form-control">
+                <option value="">Select role…</option>
+                {ROLE_OPTIONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </select>
+            </FormField>
+            <FormField label="DSA Account ID" name="dsa_id" value={form.dsa_id} onChange={handleChange} />
+            <FormField label="Hierarchy Level" name="hierarchy_level">
+              <select name="hierarchy_level" value={form.hierarchy_level} onChange={handleChange} className="form-control">
+                <option value="">None</option>
+                {HIERARCHY_LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
+              </select>
+            </FormField>
+            <FormField label="Manager ID" name="manager_id" value={form.manager_id} onChange={handleChange} />
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+          <button className="btn btn-secondary" onClick={() => navigate(`/users/${id}`)}>Cancel</button>
+          <button
+            className="btn btn-primary"
+            disabled
+            title="Backend endpoint not yet implemented"
+            style={{ opacity: 0.6, cursor: 'not-allowed' }}
+          >
+            <AlertTriangle size={14} /> Save Changes (Backend Pending)
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default EditUserPage;
