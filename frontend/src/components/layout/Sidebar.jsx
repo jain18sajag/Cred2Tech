@@ -55,7 +55,7 @@ const Sidebar = () => {
           <Zap size={18} color="white" />
         </div>
         <div>
-          <p style={{ color: 'white', fontWeight: 700, fontSize: 15, lineHeight: 1.2 }}>SupplyChain</p>
+          <p style={{ color: 'white', fontWeight: 700, fontSize: 15, lineHeight: 1.2 }}>DSA CRM</p>
           <p style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>Admin Platform</p>
         </div>
       </div>

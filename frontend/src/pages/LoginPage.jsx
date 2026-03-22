@@ -88,7 +88,7 @@ const LoginPage = () => {
             <Zap size={22} color="white" />
           </div>
           <span style={{ color: 'white', fontWeight: 800, fontSize: 20, letterSpacing: '-0.02em' }}>
-            SupplyChain
+            DSA CRM
           </span>
         </div>
 
