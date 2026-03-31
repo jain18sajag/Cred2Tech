@@ -5,7 +5,7 @@ const { generateToken } = require('../utils/jwt');
 async function loginUser(email, password) {
   const user = await prisma.user.findUnique({
     where: { email },
-    include: { role: true },
+    include: { role: true, tenant: true },
   });
 
   if (!user) {
@@ -26,7 +26,7 @@ async function loginUser(email, password) {
     userId: user.id,
     roleId: user.role_id,
     roleName: user.role.name,
-    dsaId: user.dsa_id,
+    tenantId: user.tenant_id,
     hierarchyLevel: user.hierarchy_level,
     hierarchyPath: user.hierarchy_path,
   };

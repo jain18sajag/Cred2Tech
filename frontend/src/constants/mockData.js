@@ -65,3 +65,20 @@ export const MOCK_USERS = [
 export const MOCK_DSA_ACCOUNTS = [
   { id: 1, name: 'Test DSA Company', email: 'dsa@company.com', mobile: '1234567890', status: 'ACTIVE' },
 ];
+
+export const MOCK_TENANTS = [
+  {
+    id: 'TEN-001',
+    name: 'Cred2Tech Platform',
+    type: 'INTERNAL',
+    status: 'ACTIVE',
+    created_at: '2025-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'TEN-002',
+    name: 'Sample DSA Partner',
+    type: 'DSA',
+    status: 'ACTIVE',
+    created_at: '2025-01-02T00:00:00.000Z',
+  }
+];

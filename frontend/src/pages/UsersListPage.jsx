@@ -121,7 +121,8 @@ const UsersListPage = () => {
                 <th>User</th>
                 <th>Mobile</th>
                 <th>Role</th>
-                <th>DSA ID</th>
+                <th>Tenant ID</th>
+                <th>Tenant Type</th>
                 <th>Level</th>
                 <th>Manager</th>
                 <th>Status</th>
@@ -145,7 +146,8 @@ const UsersListPage = () => {
                   </td>
                   <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{u.mobile || '—'}</td>
                   <td><Badge type="role" value={u.role?.name} /></td>
-                  <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{u.dsa_id || '—'}</td>
+                  <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{u.tenant_id || '—'}</td>
+                  <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{u.tenant?.type || '—'}</td>
                   <td>{u.hierarchy_level ? <Badge type="level" value={u.hierarchy_level} /> : <span style={{ color: 'var(--text-tertiary)' }}>—</span>}</td>
                   <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{u.manager_id || '—'}</td>
                   <td><Badge type="status" value={u.status} /></td>

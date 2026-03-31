@@ -3,8 +3,8 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 
-const ProtectedRoute = ({ children, allowedRoles }) => {
-  const { isAuthenticated, isLoading, hasRole } = useAuth();
+const ProtectedRoute = ({ children, allowedRoles, allowedTenantTypes }) => {
+  const { isAuthenticated, isLoading, hasRole, hasTenantType } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -19,8 +19,13 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // If specific roles are required, check them
-  if (allowedRoles && !allowedRoles.some((r) => hasRole(r))) {
+  // Role check
+  if (allowedRoles && !hasRole(allowedRoles)) {
+    return <Navigate to="/unauthorized" replace />;
+  }
+
+  // Tenant type check
+  if (allowedTenantTypes && !hasTenantType(allowedTenantTypes)) {
     return <Navigate to="/unauthorized" replace />;
   }
 

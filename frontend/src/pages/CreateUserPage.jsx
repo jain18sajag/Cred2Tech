@@ -1,32 +1,59 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { UserPlus, AlertCircle, CheckCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { createUser } from '../api/userService';
+import { createUser, getUsers } from '../api/userService';
+import { getRoles } from '../api/roleService';
 import { useAuth } from '../context/AuthContext';
-import { ROLE_OPTIONS, HIERARCHY_LEVELS } from '../constants/roles';
-import { MOCK_DSA_ACCOUNTS } from '../constants/mockData';
+import { HIERARCHY_LEVELS } from '../constants/roles';
 import PageHeader from '../components/ui/PageHeader';
 import FormField from '../components/ui/FormField';
 import { getErrorMessage } from '../utils/helpers';
 
-const initialForm = { name: '', email: '', mobile: '', password: '', role: '', dsa_id: '', hierarchy_level: '', manager_id: '' };
+const initialForm = {
+  name: '',
+  email: '',
+  mobile: '',
+  password: '',
+  role_id: '',
+  hierarchy_level: '',
+  manager_id: '',
+};
 
-// Simple front-end role_id map
-const ROLE_ID_MAP = { ADMIN: 1, DSA: 2, EMPLOYEE: 3, PARTNER: 4, MSME: 5 };
+const INTERNAL_ROLE_NAMES = ['SUPER_ADMIN', 'CRED2TECH_MEMBER'];
+const DSA_ROLE_NAMES = ['DSA_ADMIN', 'DSA_MEMBER'];
 
 const CreateUserPage = () => {
   const { user: currentUser } = useAuth();
   const navigate = useNavigate();
-  const [form, setForm] = useState({
-    ...initialForm,
-    // If current user is DSA or EMPLOYEE, pre-fill their dsa_id
-    dsa_id: (currentUser?.role?.name === 'DSA' || currentUser?.role?.name === 'EMPLOYEE') && currentUser?.dsa_id ? String(currentUser.dsa_id) : '',
-  });
+  const [form, setForm] = useState(initialForm);
   const [errors, setErrors] = useState({});
   const [isLoading, setIsLoading] = useState(false);
   const [apiError, setApiError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [tenantUsers, setTenantUsers] = useState([]);
+  const [roles, setRoles] = useState([]);
+  const [isLoadingRoles, setIsLoadingRoles] = useState(true);
+  const [rolesError, setRolesError] = useState('');
+
+  useEffect(() => {
+    // Fetch same-tenant users for manager dropdown
+    getUsers()
+      .then(data => setTenantUsers(Array.isArray(data) ? data : data.users || []))
+      .catch(() => {});
+    // Fetch roles dynamically from backend
+    setIsLoadingRoles(true);
+    getRoles()
+      .then(data => {
+        setRoles(Array.isArray(data) ? data : []);
+        setRolesError('');
+      })
+      .catch((err) => {
+        console.error('Failed to load roles:', err?.response?.data || err.message);
+        setRolesError('Could not load roles. Please restart the backend and refresh.');
+      })
+      .finally(() => setIsLoadingRoles(false));
+  }, []);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -42,7 +69,7 @@ const CreateUserPage = () => {
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = 'Invalid email format';
     if (!form.password) e.password = 'Password is required';
     else if (form.password.length < 6) e.password = 'Minimum 6 characters required';
-    if (!form.role) e.role = 'Please select a role';
+    if (!form.role_id) e.role_id = 'Please select a role';
     return e;
   };
 
@@ -58,8 +85,8 @@ const CreateUserPage = () => {
         email: form.email.trim(),
         mobile: form.mobile || undefined,
         password: form.password,
-        role_id: ROLE_ID_MAP[form.role],
-        dsa_id: form.dsa_id ? Number(form.dsa_id) : undefined,
+        role_id: parseInt(form.role_id, 10), // real DB id from dynamic /roles response
+        tenant_id: currentUser.tenant_id,    // backend overrides this — sent for context only
         hierarchy_level: form.hierarchy_level || undefined,
         manager_id: form.manager_id ? Number(form.manager_id) : undefined,
       });
@@ -73,13 +100,15 @@ const CreateUserPage = () => {
     }
   };
 
-  const availableRoles = ROLE_OPTIONS.filter((r) => {
-    if (currentUser?.role?.name === 'ADMIN') return true;
-    return ['EMPLOYEE', 'PARTNER', 'MSME'].includes(r.value);
+  // Filter roles allowed for the current user's tenant type
+  const availableRoles = roles.filter((r) => {
+    if (currentUser?.tenant_type === 'CRED2TECH') return INTERNAL_ROLE_NAMES.includes(r.name);
+    if (currentUser?.tenant_type === 'DSA') return DSA_ROLE_NAMES.includes(r.name);
+    return false;
   });
 
-  const isDSARole = form.role === 'EMPLOYEE' || form.role === 'DSA';
-  const isDSALocked = currentUser?.role?.name === 'DSA' || currentUser?.role?.name === 'EMPLOYEE';
+  // Manager dropdown: only same-tenant users (backend also enforces this)
+  const eligibleManagers = tenantUsers.filter(u => u.tenant_id === currentUser?.tenant_id);
 
   return (
     <div>
@@ -123,43 +152,47 @@ const CreateUserPage = () => {
             <h3 style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 20 }}>
               Role & Access
             </h3>
-            <FormField label="Platform Role" name="role" required error={errors.role} hint="Determines what the user can access on the platform.">
-              <select name="role" value={form.role} onChange={handleChange} className={`form-control${errors.role ? ' error-input' : ''}`}>
-                <option value="">Select a role…</option>
-                {availableRoles.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+            <FormField label="Platform Role" name="role_id" required error={errors.role_id} hint="Determines what the user can access on the platform.">
+              <select name="role_id" value={form.role_id} onChange={handleChange} className={`form-control${errors.role_id ? ' error-input' : ''}`} disabled={isLoadingRoles || !!rolesError}>
+                <option value="">
+                  {isLoadingRoles ? 'Loading roles…' : rolesError ? 'Failed to load roles' : 'Select a role…'}
+                </option>
+                {availableRoles.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name.replace(/_/g, ' ')}
+                  </option>
+                ))}
               </select>
+              {rolesError && (
+                <p style={{ color: 'var(--error)', fontSize: 12, marginTop: 4 }}>{rolesError}</p>
+              )}
+            </FormField>
+
+            <FormField label="Tenant Scope" hint="Users are strictly locked to your organizational tenant.">
+              <input type="text" className="form-control" value={`Locked to Tenant ID: ${currentUser.tenant_id}`} disabled />
             </FormField>
           </div>
 
-          {/* Hierarchy & DSA */}
+          {/* Hierarchy & Manager */}
           <div className="card card-padded" style={{ marginBottom: 20 }}>
             <h3 style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 20 }}>
               Organization & Hierarchy
             </h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
-              <FormField
-                label="DSA Account ID"
-                name="dsa_id"
-                value={form.dsa_id}
-                onChange={handleChange}
-                placeholder="e.g. 1"
-                disabled={isDSALocked}
-                hint={isDSALocked ? 'Auto-filled from your account' : `Available DSA: ${MOCK_DSA_ACCOUNTS.map(d => `${d.name} (ID: ${d.id})`).join(', ')}`}
-              />
-              <FormField label="Hierarchy Level" name="hierarchy_level" error={errors.hierarchy_level} hint="Only for EMPLOYEE role users (L1, L2, L3…)">
+              <FormField label="Hierarchy Level" name="hierarchy_level" error={errors.hierarchy_level} hint="Only for DSA_MEMBER role users (L1, L2, L3…)">
                 <select name="hierarchy_level" value={form.hierarchy_level} onChange={handleChange} className="form-control">
                   <option value="">None (root level)</option>
                   {HIERARCHY_LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
                 </select>
               </FormField>
-              <FormField
-                label="Manager ID"
-                name="manager_id"
-                value={form.manager_id}
-                onChange={handleChange}
-                placeholder="e.g. 3"
-                hint="Enter the numeric user ID of the manager. Leave blank if no manager."
-              />
+              <FormField label="Manager" name="manager_id" hint="Select a manager from your tenant. Leave blank if none.">
+                <select name="manager_id" value={form.manager_id} onChange={handleChange} className="form-control">
+                  <option value="">None (root level)</option>
+                  {eligibleManagers.map(u => (
+                    <option key={u.id} value={u.id}>{u.name} ({u.role?.name || u.role})</option>
+                  ))}
+                </select>
+              </FormField>
             </div>
           </div>
 

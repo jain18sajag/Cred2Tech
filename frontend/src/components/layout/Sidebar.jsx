@@ -15,9 +15,10 @@ const Sidebar = () => {
     navigate('/login');
   };
 
-  const visibleItems = NAV_ITEMS.filter((item) =>
-    item.roles.some((r) => hasRole(r))
-  );
+  const visibleItems = NAV_ITEMS.filter((item) => {
+    if (item.roles && !item.roles.some((r) => hasRole(r))) return false;
+    return true;
+  });
 
   return (
     <aside style={{
@@ -55,8 +56,8 @@ const Sidebar = () => {
           <Zap size={18} color="white" />
         </div>
         <div>
-          <p style={{ color: 'white', fontWeight: 700, fontSize: 15, lineHeight: 1.2 }}>DSA CRM</p>
-          <p style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>Admin Platform</p>
+          <p style={{ color: 'white', fontWeight: 700, fontSize: 15, lineHeight: 1.2 }}>Platform UI</p>
+          <p style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>RBAC Management</p>
         </div>
       </div>
 
@@ -167,7 +168,7 @@ const Sidebar = () => {
           }}>
             {user?.name || 'User'}
           </p>
-          <Badge type="role" value={user?.role?.name} />
+          <Badge type="role" value={user?.role} />
         </div>
         <button
           className="btn btn-ghost btn-icon"

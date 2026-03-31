@@ -19,11 +19,11 @@ async function login(req, res) {
 
 async function getMe(req, res) {
   try {
-    const userId = req.user.userId;
+    const userId = req.user.id;
     
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      include: { role: true, dsa: true },
+      include: { role: true, tenant: true },
     });
 
     if (!user) {

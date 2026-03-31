@@ -15,8 +15,15 @@ export const AuthProvider = ({ children }) => {
       if (storedToken) {
         try {
           const userData = await getMe();
-          // Backend may return user directly or wrapped in { user: ... }
-          setUser(userData.user || userData);
+          // Normalize tenant type if nested
+          const finalUser = userData.user || userData;
+          if (finalUser && finalUser.tenant && !finalUser.tenant_type) {
+             finalUser.tenant_type = finalUser.tenant.type;
+          }
+          if (finalUser && finalUser.role && finalUser.role.name) {
+             finalUser.role = finalUser.role.name;
+          }
+          setUser(finalUser);
         } catch {
           // Token is invalid/expired — clear everything
           localStorage.removeItem('token');
@@ -35,6 +42,8 @@ export const AuthProvider = ({ children }) => {
     const { token: newToken, user: newUser } = data;
     localStorage.setItem('token', newToken);
     setToken(newToken);
+    if (newUser && newUser.tenant && !newUser.tenant_type) newUser.tenant_type = newUser.tenant.type;
+    if (newUser && newUser.role && newUser.role.name) newUser.role = newUser.role.name;
     setUser(newUser);
     return newUser;
   }, []);
@@ -53,13 +62,18 @@ export const AuthProvider = ({ children }) => {
     isAuthenticated: !!token,
     login,
     logout,
-    // Convenience role checker
     hasRole: (roles) => {
-      if (!user?.role?.name) return false;
+      if (!user?.role) return false;
       return Array.isArray(roles)
-        ? roles.includes(user.role.name)
-        : user.role.name === roles;
+        ? roles.includes(user.role)
+        : user.role === roles;
     },
+    hasTenantType: (types) => {
+      if (!user?.tenant_type) return false;
+      return Array.isArray(types)
+        ? types.includes(user.tenant_type)
+        : user.tenant_type === types;
+    }
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

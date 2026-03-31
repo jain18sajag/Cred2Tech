@@ -5,51 +5,85 @@ import {
   GitBranch,
   User,
   Settings,
+  Building,
+  BarChart,
 } from 'lucide-react';
 
-// Each nav item: which roles can see it
 export const NAV_ITEMS = [
+  // SUPER_ADMIN Views
   {
-    id: 'dashboard',
+    id: 'analytics',
+    label: 'Platform Analytics',
+    path: '/',
+    icon: BarChart,
+    roles: ['SUPER_ADMIN'],
+  },
+  {
+    id: 'tenants',
+    label: 'Tenant Management',
+    path: '/tenants',
+    icon: Building,
+    roles: ['SUPER_ADMIN'],
+  },
+  {
+    id: 'internal-team',
+    label: 'Cred2Tech Team',
+    path: '/users',
+    icon: Users,
+    roles: ['SUPER_ADMIN'],
+  },
+
+  // DSA_ADMIN Views
+  {
+    id: 'dsa-dashboard',
     label: 'Dashboard',
     path: '/',
     icon: LayoutDashboard,
-    roles: ['ADMIN', 'DSA', 'EMPLOYEE', 'PARTNER', 'MSME'],
+    roles: ['DSA_ADMIN'],
   },
+  {
+    id: 'dsa-team',
+    label: 'Team Management',
+    path: '/users',
+    icon: Users,
+    roles: ['DSA_ADMIN'],
+  },
+  {
+    id: 'dsa-hierarchy',
+    label: 'Hierarchy Management',
+    path: '/hierarchy',
+    icon: GitBranch,
+    roles: ['DSA_ADMIN'],
+  },
+  {
+    id: 'dsa-create-user',
+    label: 'Create User',
+    path: '/users/create',
+    icon: UserPlus,
+    roles: ['DSA_ADMIN'],
+  },
+
+  // DSA_MEMBER / Shared Views
   {
     id: 'profile',
     label: 'My Profile',
     path: '/profile',
     icon: User,
-    roles: ['ADMIN', 'DSA', 'EMPLOYEE', 'PARTNER', 'MSME'],
+    roles: ['SUPER_ADMIN', 'DSA_ADMIN', 'DSA_MEMBER', 'CRED2TECH_MEMBER'],
   },
   {
-    id: 'users',
-    label: 'Users',
-    path: '/users',
+    id: 'my-manager',
+    label: 'My Manager',
+    path: '/manager',
     icon: Users,
-    roles: ['ADMIN', 'DSA', 'EMPLOYEE'],
-  },
-  {
-    id: 'create-user',
-    label: 'Create User',
-    path: '/users/create',
-    icon: UserPlus,
-    roles: ['ADMIN', 'DSA', 'EMPLOYEE'],
-  },
-  {
-    id: 'hierarchy',
-    label: 'Hierarchy',
-    path: '/hierarchy',
-    icon: GitBranch,
-    roles: ['ADMIN', 'DSA', 'EMPLOYEE'],
+    roles: ['DSA_MEMBER'],
   },
   {
     id: 'settings',
     label: 'Settings',
     path: '/settings',
     icon: Settings,
-    roles: ['ADMIN'],
+    roles: ['SUPER_ADMIN'],
     disabled: true,
     badge: 'Soon',
   },

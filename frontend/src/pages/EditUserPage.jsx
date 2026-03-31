@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ChevronLeft, AlertTriangle, Construction } from 'lucide-react';
-import { getUserById } from '../api/userService';
+import { getUserById, getUsers } from '../api/userService';
 import { MOCK_USERS } from '../constants/mockData';
 import PageHeader from '../components/ui/PageHeader';
 import FormField from '../components/ui/FormField';
@@ -9,15 +9,22 @@ import Badge from '../components/ui/Badge';
 import { ROLE_OPTIONS, HIERARCHY_LEVELS } from '../constants/roles';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 
-const ROLE_ID_MAP = { ADMIN: 1, DSA: 2, EMPLOYEE: 3, PARTNER: 4, MSME: 5 };
-const ROLE_ID_NAME = { 1: 'ADMIN', 2: 'DSA', 3: 'EMPLOYEE', 4: 'PARTNER', 5: 'MSME' };
+const ROLE_ID_MAP = { SUPER_ADMIN: 1, DSA_ADMIN: 2, CRED2TECH_MEMBER: 3, DSA_MEMBER: 4 };
+const ROLE_ID_NAME = { 1: 'SUPER_ADMIN', 2: 'DSA_ADMIN', 3: 'CRED2TECH_MEMBER', 4: 'DSA_MEMBER' };
 
 const EditUserPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState({ name: '', email: '', mobile: '', role: '', dsa_id: '', hierarchy_level: '', manager_id: '' });
+  const [form, setForm] = useState({ name: '', email: '', mobile: '', role: '', tenant_id: '', hierarchy_level: '', manager_id: '' });
+  const [tenantUsers, setTenantUsers] = useState([]);
+
+  useEffect(() => {
+    getUsers()
+      .then(data => setTenantUsers(Array.isArray(data) ? data : data.users || []))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -29,8 +36,8 @@ const EditUserPage = () => {
           name: u.name || '',
           email: u.email || '',
           mobile: u.mobile || '',
-          role: ROLE_ID_NAME[u.role_id] || u.role?.name || '',
-          dsa_id: u.dsa_id?.toString() || '',
+          role: ROLE_ID_NAME[u.role_id] || u.role?.name || u.role || '',
+          tenant_id: u.tenant_id?.toString() || '',
           hierarchy_level: u.hierarchy_level || '',
           manager_id: u.manager_id?.toString() || '',
         });
@@ -43,7 +50,7 @@ const EditUserPage = () => {
             email: mock.email || '',
             mobile: mock.mobile || '',
             role: mock.role?.name || '',
-            dsa_id: mock.dsa_id?.toString() || '',
+            tenant_id: mock.tenant_id?.toString() || '',
             hierarchy_level: mock.hierarchy_level || '',
             manager_id: mock.manager_id?.toString() || '',
           });
@@ -109,14 +116,19 @@ const EditUserPage = () => {
                 {ROLE_OPTIONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
               </select>
             </FormField>
-            <FormField label="DSA Account ID" name="dsa_id" value={form.dsa_id} onChange={handleChange} />
+            <FormField label="Tenant ID" name="tenant_id" value={form.tenant_id} onChange={handleChange} disabled />
             <FormField label="Hierarchy Level" name="hierarchy_level">
               <select name="hierarchy_level" value={form.hierarchy_level} onChange={handleChange} className="form-control">
                 <option value="">None</option>
                 {HIERARCHY_LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
               </select>
             </FormField>
-            <FormField label="Manager ID" name="manager_id" value={form.manager_id} onChange={handleChange} />
+            <FormField label="Manager" name="manager_id">
+              <select name="manager_id" value={form.manager_id} onChange={handleChange} className="form-control">
+                <option value="">None (root level)</option>
+                {tenantUsers.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role?.name || u.role})</option>)}
+              </select>
+            </FormField>
           </div>
         </div>
 

@@ -12,6 +12,8 @@ const ProfilePage = lazy(() => import('../pages/ProfilePage'));
 const UsersListPage = lazy(() => import('../pages/UsersListPage'));
 const UserDetailPage = lazy(() => import('../pages/UserDetailPage'));
 const CreateUserPage = lazy(() => import('../pages/CreateUserPage'));
+const CreateTenantPage = lazy(() => import('../pages/CreateTenantPage'));
+const TenantsListPage = lazy(() => import('../pages/TenantsListPage'));
 const EditUserPage = lazy(() => import('../pages/EditUserPage'));
 const HierarchyPage = lazy(() => import('../pages/HierarchyPage'));
 const UnauthorizedPage = lazy(() => import('../pages/UnauthorizedPage'));
@@ -40,13 +42,29 @@ const AppRouter = () => (
             <Route
               path="/users/create"
               element={
-                <ProtectedRoute allowedRoles={['ADMIN', 'DSA', 'EMPLOYEE']}>
+                <ProtectedRoute allowedRoles={['SUPER_ADMIN', 'DSA_ADMIN', 'CRED2TECH_MEMBER']}>
                   <CreateUserPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/tenants/create"
+              element={
+                <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
+                  <CreateTenantPage />
                 </ProtectedRoute>
               }
             />
             <Route path="/users/:id" element={<UserDetailPage />} />
             <Route path="/users/:id/edit" element={<EditUserPage />} />
+            <Route
+              path="/tenants"
+              element={
+                <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
+                  <TenantsListPage />
+                </ProtectedRoute>
+              }
+            />
             <Route path="/hierarchy" element={<HierarchyPage />} />
           </Route>
 

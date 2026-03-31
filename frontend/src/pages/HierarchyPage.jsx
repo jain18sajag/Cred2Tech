@@ -126,7 +126,7 @@ const HierarchyPage = () => {
         <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
           Legend:
         </p>
-        {['ADMIN', 'DSA', 'EMPLOYEE'].map((role) => <Badge key={role} type="role" value={role} />)}
+        {['SUPER_ADMIN', 'DSA_ADMIN', 'DSA_MEMBER', 'CRED2TECH_MEMBER'].map((role) => <Badge key={role} type="role" value={role} />)}
         {['L1', 'L2', 'L3'].map((l) => <Badge key={l} type="level" value={l} />)}
         <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Click any card to view user details</span>
       </div>
