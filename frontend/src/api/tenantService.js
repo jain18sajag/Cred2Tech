@@ -1,4 +1,5 @@
 import api from './axiosInstance';
+import axios from 'axios';
 
 export const getTenants = async () => {
   const response = await api.get('/tenants');
@@ -12,5 +13,12 @@ export const createTenant = async (tenantData) => {
 
 export const updateTenantStatus = async (id, status) => {
   const response = await api.patch(`/tenants/${id}/status`, { status });
+  return response.data;
+};
+
+// Public — no auth token required
+export const publicRegisterDSA = async (data) => {
+  const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+  const response = await axios.post(`${baseURL}/tenants/public-register`, data);
   return response.data;
 };

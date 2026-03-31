@@ -18,6 +18,7 @@ const EditUserPage = lazy(() => import('../pages/EditUserPage'));
 const HierarchyPage = lazy(() => import('../pages/HierarchyPage'));
 const UnauthorizedPage = lazy(() => import('../pages/UnauthorizedPage'));
 const NotFoundPage = lazy(() => import('../pages/NotFoundPage'));
+const DSARegisterPage = lazy(() => import('../pages/DSARegisterPage'));
 
 const PageLoader = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -32,6 +33,7 @@ const AppRouter = () => (
         <Routes>
           {/* Public */}
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/register-dsa" element={<DSARegisterPage />} />
           <Route path="/unauthorized" element={<UnauthorizedPage />} />
 
           {/* Protected */}

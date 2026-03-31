@@ -228,6 +228,40 @@ const LoginPage = () => {
               <strong>Password:</strong> password123
             </p>
           </div>
+
+          {/* DSA Self-registration CTA */}
+          <div style={{ marginTop: 20, textAlign: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+              <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+              <span style={{ fontSize: 11, color: 'var(--text-tertiary)', fontWeight: 500, whiteSpace: 'nowrap' }}>New to the platform?</span>
+              <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+            </div>
+            <button
+              type="button"
+              id="register-dsa-btn"
+              onClick={() => navigate('/register-dsa')}
+              style={{
+                width: '100%',
+                padding: '11px 20px',
+                background: 'transparent',
+                border: '1.5px solid rgba(99,102,241,0.5)',
+                borderRadius: 10,
+                color: 'var(--primary)',
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                transition: 'all 0.2s',
+              }}
+              onMouseOver={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.08)'; e.currentTarget.style.borderColor = 'var(--primary)'; }}
+              onMouseOut={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)'; }}
+            >
+              🏢 Register as a New DSA
+            </button>
+          </div>
         </div>
       </div>
     </div>
