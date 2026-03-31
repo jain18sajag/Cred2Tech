@@ -22,6 +22,14 @@ async function loginUser(email, password) {
     throw new Error('User account is not active');
   }
 
+  const loginTime = new Date();
+
+  // ── Record last login timestamp ──────────────────────────────────────────
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { last_login_at: loginTime },
+  });
+
   const tokenPayload = {
     userId: user.id,
     roleId: user.role_id,
@@ -36,7 +44,7 @@ async function loginUser(email, password) {
   // Omit password hash in the returned user object
   const { password_hash, ...userWithoutPassword } = user;
 
-  return { user: userWithoutPassword, token };
+  return { user: { ...userWithoutPassword, last_login_at: loginTime }, token };
 }
 
 module.exports = {
