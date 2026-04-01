@@ -55,6 +55,9 @@ model Tenant {
   pincode      String?
 
   users        User[]
+  customers    Customer[]
+  cases        Case[]
+  otps         OtpVerification[]
 
   @@map("tenants")
 }
@@ -86,5 +89,119 @@ model User {
   @@index([tenant_id])
   @@index([manager_id])
 
+  created_customers Customer[] @relation("CustomerCreator")
+  created_cases     Case[]     @relation("CaseCreator")
+  created_otps      OtpVerification[] @relation("OtpCreator")
+
   @@map("users")
+}
+
+// --- Onboarding Flow Models ---
+
+model Customer {
+  id                 Int       @id @default(autoincrement())
+  tenant_id          Int
+  business_pan       String
+  business_name      String?
+  business_mobile    String?
+  business_email     String?
+  mobile_verified    Boolean   @default(false)
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+
+  created_by_user_id Int
+
+  tenant         Tenant @relation(fields: [tenant_id], references: [id])
+  created_by     User   @relation("CustomerCreator", fields: [created_by_user_id], references: [id])
+  cases          Case[]
+
+  @@unique([tenant_id, business_pan])
+  @@map("customers")
+}
+
+enum CaseStage {
+  DRAFT
+  LEAD_CREATED
+  DATA_COLLECTION
+  IN_REVIEW
+  APPROVED
+  REJECTED
+}
+
+model Case {
+  id                 Int       @id @default(autoincrement())
+  tenant_id          Int
+  customer_id        Int
+  product_type       String?   // LAP, HL, WC, TL, Machinery, BL, Other
+  stage              CaseStage @default(DRAFT)
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+
+  created_by_user_id Int
+
+  tenant         Tenant      @relation(fields: [tenant_id], references: [id])
+  customer       Customer    @relation(fields: [customer_id], references: [id])
+  created_by     User        @relation("CaseCreator", fields: [created_by_user_id], references: [id])
+  applicants     Applicant[]
+
+  // Empty relation placeholders for future integrations
+  // gst_reports    GSTReport[]
+  // itr_reports    ITRReport[]
+  // bank_statements BankStatementMetadata[]
+
+  @@map("cases")
+}
+
+enum ApplicantType {
+  PRIMARY
+  CO_APPLICANT
+}
+
+model Applicant {
+  id             Int           @id @default(autoincrement())
+  case_id        Int
+  type           ApplicantType
+  pan_number     String?
+  mobile         String?
+  email          String?
+  otp_verified   Boolean       @default(false)
+  created_at     DateTime      @default(now())
+  updated_at     DateTime      @updatedAt
+
+  case           Case          @relation(fields: [case_id], references: [id], onDelete: Cascade)
+
+  @@map("applicants")
+}
+
+enum OtpPurpose {
+  PRIMARY_APPLICANT
+  CO_APPLICANT
+}
+
+enum OtpTargetType {
+  CUSTOMER
+  APPLICANT
+}
+
+model OtpVerification {
+  id                 Int           @id @default(autoincrement())
+  tenant_id          Int
+  created_by_user_id Int
+  mobile             String
+  otp_hash           String
+  purpose            OtpPurpose
+  target_type        OtpTargetType
+  target_id          Int
+  is_verified        Boolean       @default(false)
+  expires_at         DateTime
+  attempt_count      Int           @default(0)
+  created_at         DateTime      @default(now())
+  verified_at        DateTime?
+  
+  tenant             Tenant        @relation(fields: [tenant_id], references: [id])
+  created_by         User          @relation("OtpCreator", fields: [created_by_user_id], references: [id])
+
+  @@index([tenant_id, target_type, target_id])
+  @@index([mobile])
+  @@map("otp_verifications")
 }

@@ -19,6 +19,8 @@ const HierarchyPage = lazy(() => import('../pages/HierarchyPage'));
 const UnauthorizedPage = lazy(() => import('../pages/UnauthorizedPage'));
 const NotFoundPage = lazy(() => import('../pages/NotFoundPage'));
 const DSARegisterPage = lazy(() => import('../pages/DSARegisterPage'));
+const CustomersListPage = lazy(() => import('../pages/CustomersListPage'));
+const AddCustomerWizardPage = lazy(() => import('../pages/AddCustomerWizardPage'));
 
 const PageLoader = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -68,6 +70,24 @@ const AppRouter = () => (
               }
             />
             <Route path="/hierarchy" element={<HierarchyPage />} />
+
+            {/* Customers Pipeline / Wizard */}
+            <Route
+              path="/customers"
+              element={
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER']}>
+                  <CustomersListPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/customers/add"
+              element={
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER']}>
+                  <AddCustomerWizardPage />
+                </ProtectedRoute>
+              }
+            />
           </Route>
 
           {/* Fallbacks */}

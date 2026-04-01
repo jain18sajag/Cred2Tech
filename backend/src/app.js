@@ -18,12 +18,18 @@ const userRoutes = require('./routes/user.routes');
 const tenantRoutes = require('./routes/tenant.routes');
 const analyticsRoutes = require('./routes/analytics.routes');
 const roleRoutes = require('./routes/role.routes');
+const customerRoutes = require('./routes/customer.routes');
+const caseRoutes = require('./routes/case.routes');
+const otpRoutes = require('./routes/otp.routes');
 
 app.use('/auth', authRoutes);
 app.use('/users', userRoutes);
 app.use('/tenants', tenantRoutes);
 app.use('/analytics', analyticsRoutes);
 app.use('/roles', roleRoutes);
+app.use('/customers', customerRoutes);
+app.use('/cases', caseRoutes);
+app.use('/otp', otpRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err.stack);

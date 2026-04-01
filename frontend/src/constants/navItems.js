@@ -7,6 +7,7 @@ import {
   Settings,
   Building,
   BarChart,
+  Briefcase
 } from 'lucide-react';
 
 export const NAV_ITEMS = [
@@ -54,6 +55,13 @@ export const NAV_ITEMS = [
     path: '/hierarchy',
     icon: GitBranch,
     roles: ['DSA_ADMIN'],
+  },
+  {
+    id: 'dsa-pipeline',
+    label: 'Pipeline & Customers',
+    path: '/customers',
+    icon: Briefcase,
+    roles: ['DSA_ADMIN', 'DSA_MEMBER'],
   },
   {
     id: 'dsa-create-user',
