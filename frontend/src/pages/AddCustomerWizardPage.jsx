@@ -30,6 +30,24 @@ const AddCustomerWizardPage = () => {
     product_type: ''
   });
 
+  const [costs, setCosts] = useState({ GST_FETCH: 0, ITR_FETCH: 0 });
+  const [walletBalance, setWalletBalance] = useState(0);
+
+  useEffect(() => {
+     fetch('http://localhost:5000/wallet/api-costs', { headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` } })
+       .then(res => res.json())
+       .then(data => {
+          const gst = data.find(d => d.api_code === 'GST_FETCH')?.tenant_cost || 0;
+          const itr = data.find(d => d.api_code === 'ITR_FETCH')?.tenant_cost || 0;
+          setCosts({ GST_FETCH: gst, ITR_FETCH: itr });
+       }).catch(console.error);
+
+     fetch('http://localhost:5000/wallet/balance', { headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` } })
+       .then(res => res.json())
+       .then(data => setWalletBalance(data.balance))
+       .catch(console.error);
+  }, []);
+
   const [panVerifying, setPanVerifying] = useState(false);
   const [existingCustomer, setExistingCustomer] = useState(null);
 
@@ -51,9 +69,11 @@ const AddCustomerWizardPage = () => {
   const restoreSession = async () => {
     try {
       setLoading(true);
-      const targetCaseId = urlCaseId || localStorage.getItem('draftCaseId');
+      // If the URL has a caseId, use it to restore. If not, the user clicked "Add New Customer" so start fresh.
+      const targetCaseId = urlCaseId;
       
       if (!targetCaseId) {
+        localStorage.removeItem('draftCaseId');
         setLoading(false);
         return; 
       }
@@ -76,7 +96,11 @@ const AddCustomerWizardPage = () => {
         business_email: caseData.customer?.business_email || '',
         mobile_verified: caseData.customer?.mobile_verified || false,
         applicants: caseData.applicants || [],
-        product_type: caseData.product_type || ''
+        product_type: caseData.product_type || '',
+        gst_completed: caseData.data_pull_status?.gst_status === 'COMPLETE',
+        gst_profile: caseData.customer?.gst_profiles?.[0]?.raw_response || null,
+        itr_completed: caseData.data_pull_status?.itr_status === 'COMPLETE',
+        itr_profile: caseData.customer?.itr_profiles?.[0]?.raw_response || null
       });
 
       if (caseData.applicants && caseData.applicants.length > 0) {
@@ -295,6 +319,63 @@ const AddCustomerWizardPage = () => {
     }
   };
 
+  const handleGenerateGst = async () => {
+    if (!formData.customer_id) return toast.error("Customer ID missing. Please go back and resave.");
+    const gstin = formData.business_pan + "1Z1"; // Extrapolate base mock GSTIN
+    
+    try {
+      setSaving(true);
+      const res = await fetch(`http://localhost:5000/external/gst-fetch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+        body: JSON.stringify({
+           customer_id: formData.customer_id,
+           case_id: caseId,
+           consentMethod: 'DIRECT_LOGIN',
+           gstin: gstin
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to fetch GST");
+      
+      setFormData(prev => ({...prev, gst_completed: true, gst_profile: data.gstProfile }));
+      toast.success("GST Report Generated successfully!");
+    } catch (err) {
+      if (err.message.includes('Insufficient credits')) toast.error("Insufficient Credits - Top Up Required!", { duration: 5000 });
+      else toast.error(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleGenerateItr = async () => {
+    if (!formData.customer_id) return toast.error("Customer ID missing.");
+    
+    try {
+      setSaving(true);
+      const res = await fetch(`http://localhost:5000/external/itr-fetch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+        body: JSON.stringify({
+           customer_id: formData.customer_id,
+           case_id: caseId,
+           consentMethod: 'DIRECT_LOGIN',
+           pan: formData.business_pan
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to fetch ITR");
+      
+      setFormData(prev => ({...prev, itr_completed: true, itr_profile: data.itrProfile }));
+      toast.success("ITR Report Generated successfully!");
+    } catch (err) {
+      if (err.message.includes('Insufficient credits')) toast.error("Insufficient Credits - Top Up Required!", { duration: 5000 });
+      else toast.error(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleStep2Submit = async (e) => { e.preventDefault(); setCurrentStep(3); };
   const handleStep3Submit = async (e) => {
     e.preventDefault();
@@ -460,7 +541,85 @@ const AddCustomerWizardPage = () => {
           </form>
         )}
 
-        {currentStep === 2 && ( <form onSubmit={handleStep2Submit}><div className="card" style={{ padding: 40, textAlign: 'center' }}><h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Financial Integrations</h2><div style={{ display: 'flex', gap: 16, justifyContent: 'center', marginTop: 24 }}><button className="btn btn-secondary" type="button" onClick={() => setCurrentStep(1)}>Go Back</button><button className="btn btn-primary" type="submit">Skip & Continue →</button></div></div></form> )}
+        {currentStep === 2 && ( 
+          <form onSubmit={handleStep2Submit} style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+            <div className="card">
+               <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
+                 <h3 style={{ fontSize: 16, fontWeight: 700 }}>GST Profile</h3>
+                 <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 4 }}>Extrapolated from Business PAN: {formData.business_pan}</p>
+               </div>
+               <div style={{ padding: 24 }}>
+                 {formData.gst_completed ? (
+                    <div style={{ padding: 20, backgroundColor: 'var(--success-subtle)', borderRadius: 'var(--radius)', border: '1px solid #A5D6A7' }}>
+                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#2E7D32', fontWeight: 600, marginBottom: 12 }}>
+                         <CheckCircle2 size={20} /> GST Pulled & Cached Successfully
+                       </div>
+                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, fontSize: 13, color: '#1B5E20' }}>
+                          <div><strong>Turnover:</strong> ₹{formData.gst_profile?.annual_turnover?.toLocaleString()}</div>
+                          <div><strong>Status:</strong> {formData.gst_profile?.filing_status}</div>
+                          <div><strong>Last Filed:</strong> {formData.gst_profile?.last_filed_period}</div>
+                       </div>
+                    </div>
+                 ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                       {walletBalance < costs.GST_FETCH && (
+                          <div style={{ padding: 12, borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: 'var(--error)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600}}>
+                             <AlertCircle size={16} /> Insufficient credits to pull GST. Wallet has {walletBalance}, needs {costs.GST_FETCH}.
+                          </div>
+                       )}
+                       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                         <input type="checkbox" required id="gstConsent" style={{ width: 18, height: 18 }} />
+                         <label htmlFor="gstConsent" style={{ fontSize: 14 }}>I confirm I obtained verifiable Customer Consent via Direct Login to pull GST records.</label>
+                       </div>
+                       <button type="button" className="btn btn-secondary" style={{ width: 'fit-content' }} onClick={handleGenerateGst} disabled={saving || walletBalance < costs.GST_FETCH}>
+                          {saving ? 'Processing...' : `💳 Generate GST Report (~${costs.GST_FETCH} Credits)`}
+                       </button>
+                    </div>
+                 )}
+               </div>
+            </div>
+
+            <div className="card">
+               <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
+                 <h3 style={{ fontSize: 16, fontWeight: 700 }}>ITR Assessment</h3>
+                 <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 4 }}>Last 3 Years via Direct Fetch</p>
+               </div>
+               <div style={{ padding: 24 }}>
+                 {formData.itr_completed ? (
+                    <div style={{ padding: 20, backgroundColor: 'var(--success-subtle)', borderRadius: 'var(--radius)', border: '1px solid #A5D6A7' }}>
+                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#2E7D32', fontWeight: 600, marginBottom: 12 }}>
+                         <CheckCircle2 size={20} /> ITR Cached Successfully
+                       </div>
+                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, fontSize: 13, color: '#1B5E20' }}>
+                          <div><strong>Net Profit:</strong> ₹{formData.itr_profile?.net_profit?.toLocaleString()}</div>
+                          <div><strong>Taxes Paid:</strong> ₹{formData.itr_profile?.tax_paid?.toLocaleString()}</div>
+                       </div>
+                    </div>
+                 ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                       {walletBalance < costs.ITR_FETCH && (
+                          <div style={{ padding: 12, borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: 'var(--error)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600}}>
+                             <AlertCircle size={16} /> Insufficient credits to pull ITR. Wallet has {walletBalance}, needs {costs.ITR_FETCH}.
+                          </div>
+                       )}
+                       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                         <input type="checkbox" required id="itrConsent" style={{ width: 18, height: 18 }} />
+                         <label htmlFor="itrConsent" style={{ fontSize: 14 }}>I confirm I obtained Customer Consent via OTP/Login to pull ITR details.</label>
+                       </div>
+                       <button type="button" className="btn btn-secondary" style={{ width: 'fit-content' }} onClick={handleGenerateItr} disabled={saving || walletBalance < costs.ITR_FETCH}>
+                          {saving ? 'Processing...' : `💳 Generate ITR Report (~${costs.ITR_FETCH} Credits)`}
+                       </button>
+                    </div>
+                 )}
+               </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 16, justifyContent: 'flex-end', marginTop: 10 }}>
+              <button className="btn btn-ghost" type="button" onClick={() => setCurrentStep(1)}>← Back</button>
+              <button className="btn btn-primary btn-lg" type="submit" disabled={saving}>Continue to Product Selection →</button>
+            </div>
+          </form> 
+        )}
         {currentStep === 3 && ( <form onSubmit={handleStep3Submit}><div className="card" style={{ padding: '20px 24px' }}><h3 style={{ fontSize: 16, fontWeight: 700 }}>Product Selection</h3><select className="form-control" style={{ marginTop: 20 }} value={formData.product_type} onChange={e => setFormData({...formData, product_type: e.target.value})} required><option value="" disabled>Select Tier</option><option value="LAP">Loan Against Property (LAP)</option><option value="BL">Business Loan</option></select></div><div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 24 }}><button className="btn btn-ghost" type="button" onClick={() => setCurrentStep(2)}>← Back</button><button className="btn btn-primary btn-lg" type="submit" disabled={saving}>Complete Onboarding</button></div></form> )}
       </div>
 

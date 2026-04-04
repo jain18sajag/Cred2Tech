@@ -58,6 +58,10 @@ model Tenant {
   customers    Customer[]
   cases        Case[]
   otps         OtpVerification[]
+  wallet                TenantWallet?
+  transactions          WalletTransaction[]
+  api_logs              ApiUsageLog[]
+  api_pricing_overrides TenantApiPricingOverride[]
 
   @@map("tenants")
 }
@@ -90,8 +94,9 @@ model User {
   @@index([manager_id])
 
   created_customers Customer[] @relation("CustomerCreator")
-  created_cases     Case[]     @relation("CaseCreator")
+  created_cases     Case[]            @relation("CaseCreator")
   created_otps      OtpVerification[] @relation("OtpCreator")
+  api_logs          ApiUsageLog[]
 
   @@map("users")
 }
@@ -111,9 +116,13 @@ model Customer {
 
   created_by_user_id Int
 
-  tenant         Tenant @relation(fields: [tenant_id], references: [id])
-  created_by     User   @relation("CustomerCreator", fields: [created_by_user_id], references: [id])
+  tenant         Tenant        @relation(fields: [tenant_id], references: [id])
+  created_by     User          @relation("CustomerCreator", fields: [created_by_user_id], references: [id])
   cases          Case[]
+  api_logs       ApiUsageLog[]
+  consents       CustomerConsent[]
+  gst_profiles   CustomerGSTProfile[]
+  itr_profiles   CustomerITRProfile[]
 
   @@unique([tenant_id, business_pan])
   @@map("customers")
@@ -139,10 +148,13 @@ model Case {
 
   created_by_user_id Int
 
-  tenant         Tenant      @relation(fields: [tenant_id], references: [id])
-  customer       Customer    @relation(fields: [customer_id], references: [id])
-  created_by     User        @relation("CaseCreator", fields: [created_by_user_id], references: [id])
-  applicants     Applicant[]
+  tenant         Tenant        @relation(fields: [tenant_id], references: [id])
+  customer       Customer      @relation(fields: [customer_id], references: [id])
+  created_by       User          @relation("CaseCreator", fields: [created_by_user_id], references: [id])
+  applicants       Applicant[]
+  api_logs         ApiUsageLog[]
+  data_pull_status CaseDataPullStatus?
+  consents         CustomerConsent[]
 
   // Empty relation placeholders for future integrations
   // gst_reports    GSTReport[]
@@ -204,4 +216,200 @@ model OtpVerification {
   @@index([tenant_id, target_type, target_id])
   @@index([mobile])
   @@map("otp_verifications")
+}
+
+// --- Wallet & Credit Billing Models ---
+
+model ApiPricing {
+  id                  Int      @id @default(autoincrement())
+  api_code            String   @unique
+  api_name            String?
+  default_credit_cost Int      @default(0)
+  is_active           Boolean  @default(true)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+  updated_by          Int?
+
+  @@map("api_pricing")
+}
+
+model TenantApiPricingOverride {
+  id                 Int      @id @default(autoincrement())
+  tenant_id          Int
+  api_code           String
+  custom_credit_cost Int
+  created_at         DateTime @default(now())
+  
+  tenant             Tenant   @relation(fields: [tenant_id], references: [id])
+
+  @@unique([tenant_id, api_code])
+  @@map("tenant_api_pricing_overrides")
+}
+
+enum WalletStatus {
+  ACTIVE
+  BLOCKED
+}
+
+model TenantWallet {
+  id         Int          @id @default(autoincrement())
+  tenant_id  Int          @unique
+  balance    Int          @default(0)
+  status     WalletStatus @default(ACTIVE)
+  updated_at DateTime     @updatedAt
+
+  tenant Tenant @relation(fields: [tenant_id], references: [id])
+
+  @@map("tenant_wallets")
+}
+
+enum TransactionType {
+  CREDIT
+  DEBIT
+}
+
+enum TransactionReferenceType {
+  API_CALL
+  ADMIN_TOPUP
+  REFUND
+  MANUAL_ADJUSTMENT
+}
+
+model WalletTransaction {
+  id               Int                      @id @default(autoincrement())
+  tenant_id        Int
+  amount           Int
+  transaction_type TransactionType
+  reference_type   TransactionReferenceType
+  reference_id     Int?
+  api_code         String?
+  remarks          String?
+  balance_after    Int
+  created_by       Int?
+  created_at       DateTime                 @default(now())
+
+  tenant Tenant @relation(fields: [tenant_id], references: [id])
+
+  @@index([tenant_id])
+  @@map("wallet_transactions")
+}
+
+enum ApiUsageStatus {
+  SUCCESS
+  FAILED
+  REFUNDED
+  BLOCKED_INSUFFICIENT_CREDITS
+}
+
+model ApiUsageLog {
+  id                   Int            @id @default(autoincrement())
+  tenant_id            Int
+  triggered_by_user_id Int
+  customer_id          Int
+  case_id              Int?
+  api_code             String
+  credits_used         Int            @default(0)
+  status               ApiUsageStatus
+  request_payload      Json?
+  response_status      String?
+  error_message        String?
+  reference_id         Int?
+  created_at           DateTime       @default(now())
+
+  tenant      Tenant   @relation(fields: [tenant_id], references: [id])
+  user        User     @relation(fields: [triggered_by_user_id], references: [id])
+  customer    Customer @relation(fields: [customer_id], references: [id])
+  case_entity Case?    @relation(fields: [case_id], references: [id])
+
+  @@index([tenant_id, api_code])
+  @@index([customer_id])
+  @@map("api_usage_logs")
+}
+
+// --- API Integrations & Financial Pulls ---
+
+enum ConsentType {
+  GST
+  ITR
+}
+
+enum ConsentSource {
+  DIRECT_LOGIN
+  LINK_SENT
+}
+
+enum ConsentStatus {
+  GRANTED
+  PENDING
+  REVOKED
+}
+
+model CustomerConsent {
+  id             Int           @id @default(autoincrement())
+  customer_id    Int
+  case_id        Int?
+  consent_type   ConsentType
+  consent_source ConsentSource
+  status         ConsentStatus
+  granted_at     DateTime?
+  created_at     DateTime      @default(now())
+
+  customer    Customer @relation(fields: [customer_id], references: [id])
+  case_entity Case?    @relation(fields: [case_id], references: [id])
+
+  @@map("customer_consents")
+}
+
+model CustomerGSTProfile {
+  id                 Int      @id @default(autoincrement())
+  customer_id        Int
+  gstin              String
+  filing_status      String
+  last_filed_period  String
+  annual_turnover    Float
+  raw_response       Json
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  customer Customer @relation(fields: [customer_id], references: [id])
+
+  @@map("customer_gst_profiles")
+}
+
+model CustomerITRProfile {
+  id               Int      @id @default(autoincrement())
+  customer_id      Int
+  pan              String
+  ay_2023_income   Float?
+  ay_2024_income   Float?
+  ay_2025_income   Float?
+  net_profit       Float?
+  tax_paid         Float?
+  raw_response     Json
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  customer Customer @relation(fields: [customer_id], references: [id])
+
+  @@map("customer_itr_profiles")
+}
+
+enum DataPullStatus {
+  PENDING
+  COMPLETE
+  FAILED
+}
+
+model CaseDataPullStatus {
+  id            Int            @id @default(autoincrement())
+  case_id       Int            @unique
+  bureau_status DataPullStatus @default(PENDING)
+  gst_status    DataPullStatus @default(PENDING)
+  itr_status    DataPullStatus @default(PENDING)
+  bank_status   DataPullStatus @default(PENDING)
+  updated_at    DateTime       @updatedAt
+
+  case_entity Case @relation(fields: [case_id], references: [id])
+
+  @@map("case_data_pull_statuses")
 }

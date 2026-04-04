@@ -108,8 +108,14 @@ async function getCaseById(case_id, tenant_id) {
       tenant_id: tenant_id
     },
     include: {
-      customer: true,
-      applicants: true
+      customer: {
+         include: {
+            gst_profiles: { take: 1, orderBy: { created_at: 'desc' } },
+            itr_profiles: { take: 1, orderBy: { created_at: 'desc' } }
+         }
+      },
+      applicants: true,
+      data_pull_status: true
     }
   });
 

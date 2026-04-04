@@ -7,7 +7,8 @@ import {
   Settings,
   Building,
   BarChart,
-  Briefcase
+  Briefcase,
+  Activity
 } from 'lucide-react';
 
 export const NAV_ITEMS = [
@@ -31,6 +32,28 @@ export const NAV_ITEMS = [
     label: 'Cred2Tech Team',
     path: '/users',
     icon: Users,
+    roles: ['SUPER_ADMIN'],
+  },
+
+  {
+    id: 'admin-pricing',
+    label: 'API Pricing',
+    path: '/admin/pricing',
+    icon: Settings,
+    roles: ['SUPER_ADMIN'],
+  },
+  {
+    id: 'admin-wallets',
+    label: 'Tenant Wallets',
+    path: '/admin/wallets',
+    icon: Briefcase,
+    roles: ['SUPER_ADMIN'],
+  },
+  {
+    id: 'admin-api-logs',
+    label: 'API Observability',
+    path: '/admin/logs',
+    icon: Activity,
     roles: ['SUPER_ADMIN'],
   },
 

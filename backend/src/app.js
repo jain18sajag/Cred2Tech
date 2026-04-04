@@ -21,6 +21,10 @@ const roleRoutes = require('./routes/role.routes');
 const customerRoutes = require('./routes/customer.routes');
 const caseRoutes = require('./routes/case.routes');
 const otpRoutes = require('./routes/otp.routes');
+const dsaWalletRoutes = require('./routes/dsa.wallet.routes');
+const adminWalletRoutes = require('./routes/admin.wallet.routes');
+const adminApiLogsRoutes = require('./routes/adminApiLogs.routes');
+const externalApiRoutes = require('./routes/externalApi.routes');
 
 app.use('/auth', authRoutes);
 app.use('/users', userRoutes);
@@ -30,6 +34,10 @@ app.use('/roles', roleRoutes);
 app.use('/customers', customerRoutes);
 app.use('/cases', caseRoutes);
 app.use('/otp', otpRoutes);
+app.use('/wallet', dsaWalletRoutes);
+app.use('/admin/wallet', adminWalletRoutes);
+app.use('/admin/api-logs', adminApiLogsRoutes);
+app.use('/external', externalApiRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err.stack);

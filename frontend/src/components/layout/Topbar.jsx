@@ -1,6 +1,6 @@
 import React from 'react';
 import { useLocation } from 'react-router-dom';
-import { Bell, HelpCircle } from 'lucide-react';
+import { Bell, HelpCircle, Wallet } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import Badge from '../ui/Badge';
 
@@ -23,6 +23,19 @@ const Topbar = () => {
     if (/^\/users\/\d+$/.test(location.pathname)) return 'User Details';
     return PAGE_TITLES[location.pathname] || 'DSA CRM Admin';
   };
+
+  const [walletBalance, setWalletBalance] = React.useState(null);
+
+  React.useEffect(() => {
+     if (user?.role?.name === 'DSA_ADMIN' || user?.role?.name === 'DSA_MEMBER') {
+         fetch('http://localhost:5000/wallet/balance', {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+         })
+         .then(res => res.json())
+         .then(data => setWalletBalance(data.balance))
+         .catch(err => console.error(err));
+     }
+  }, [user, location.pathname]); // refetch softly on route change
 
   return (
     <header style={{
@@ -53,6 +66,13 @@ const Topbar = () => {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {walletBalance !== null && (
+           <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 20 }}>
+              <Wallet size={16} color="var(--primary)" />
+              <span style={{ fontSize: 13, fontWeight: 700 }}>{walletBalance.toLocaleString()} Credits</span>
+           </div>
+        )}
+        
         <button className="btn btn-ghost btn-icon" title="Help">
           <HelpCircle size={18} color="var(--text-tertiary)" />
         </button>
