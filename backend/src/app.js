@@ -8,6 +8,17 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+const swaggerUi = require('swagger-ui-express');
+const fs = require('fs');
+
+try {
+  const swaggerDocument = JSON.parse(fs.readFileSync('./docs/swagger.json', 'utf8'));
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+  console.log("Swagger UI mounted cleanly at /api-docs");
+} catch (e) {
+  console.log("Swagger JSON not found at ./docs/swagger.json. Run node scripts/generate_swagger.js");
+}
+
 // Default route
 app.get('/', (req, res) => {
   res.json({ message: 'Welcome to the platform APIs' });

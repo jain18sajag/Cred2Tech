@@ -299,6 +299,7 @@ enum ApiUsageStatus {
   FAILED
   REFUNDED
   BLOCKED_INSUFFICIENT_CREDITS
+  BLOCKED_INACTIVE_API
 }
 
 model ApiUsageLog {
@@ -314,6 +315,7 @@ model ApiUsageLog {
   response_status      String?
   error_message        String?
   reference_id         Int?
+  idempotency_key      String?
   created_at           DateTime       @default(now())
 
   tenant      Tenant   @relation(fields: [tenant_id], references: [id])
@@ -323,6 +325,7 @@ model ApiUsageLog {
 
   @@index([tenant_id, api_code])
   @@index([customer_id])
+  @@unique([tenant_id, api_code, idempotency_key])
   @@map("api_usage_logs")
 }
 

@@ -4,20 +4,24 @@ import { Briefcase, ArrowUpRight, ArrowDownRight, Clock } from 'lucide-react';
 import FormField from '../components/ui/FormField';
 
 const SuperadminWalletManager = () => {
-  const [wallets, setWallets] = [useState([]), useState(true)][0];
+  const [wallets, setWallets] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
   
   const [modal, setModal] = useState({ isOpen: false, type: null, tenant: null, credits: '', remarks: '', loading: false });
 
-  useEffect(() => { fetchWallets(); }, []);
+  useEffect(() => { fetchWallets(); }, [page]);
 
   const fetchWallets = async () => {
     try {
-      const res = await fetch(`http://localhost:5000/admin/wallet/tenants/wallets`, {
+      setLoading(true);
+      const res = await fetch(`http://localhost:5000/admin/wallet/tenants/wallets?page=${page}&limit=50`, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
       });
       const data = await res.json();
-      setWallets(data);
+      setWallets(data.tenants || []);
+      setTotalPages(data.totalPages || 1);
     } catch(err) { toast.error("Failed to load wallets"); }
     finally { setLoading(false); }
   };
@@ -85,8 +89,19 @@ const SuperadminWalletManager = () => {
                      </td>
                   </tr>
                ))}
+               {wallets.length === 0 && (
+                  <tr><td colSpan="5" style={{ textAlign: 'center', padding: 24 }}>No tenants found</td></tr>
+               )}
             </tbody>
          </table>
+         
+         {totalPages > 1 && (
+            <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border)' }}>
+               <button className="btn btn-ghost btn-sm" disabled={page === 1} onClick={() => setPage(page - 1)}>← Prev</button>
+               <span style={{ fontSize: 13, fontWeight: 600 }}>Page {page} of {totalPages}</span>
+               <button className="btn btn-ghost btn-sm" disabled={page === totalPages} onClick={() => setPage(page + 1)}>Next →</button>
+            </div>
+         )}
       </div>
 
       {modal.isOpen && (

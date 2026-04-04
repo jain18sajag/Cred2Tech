@@ -1,10 +1,39 @@
 const prisma = require('../../config/db');
 
+// Future-proof Cache Adapter layer (Can be swapped with Redis easily)
+const localCache = new Map();
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+const cacheAdapter = {
+  get: async (key) => {
+    const cached = localCache.get(key);
+    if (cached && (Date.now() - cached.timestamp < CACHE_TTL_MS)) return cached.value;
+    return null;
+  },
+  set: async (key, value) => {
+    localCache.set(key, { value, timestamp: Date.now() });
+  },
+  clear: async () => {
+    localCache.clear();
+  }
+};
+
+async function clearPricingCache() {
+  await cacheAdapter.clear();
+}
+
 /**
  * Retrieves the cost of an API for a specific tenant,
  * falling back to global defaults if no override exists.
  */
 async function getApiCost(api_code, tenant_id) {
+  const cacheKey = `${api_code}_${tenant_id}`;
+  
+  const cachedCost = await cacheAdapter.get(cacheKey);
+  if (cachedCost !== null) {
+     return cachedCost;
+  }
+
   // 1. Check for a tenant specific override
   const override = await prisma.tenantApiPricingOverride.findUnique({
     where: {
@@ -15,9 +44,10 @@ async function getApiCost(api_code, tenant_id) {
     }
   });
 
-  if (override) {
-    return override.custom_credit_cost;
-  }
+    if (override) {
+      await cacheAdapter.set(cacheKey, override.custom_credit_cost);
+      return override.custom_credit_cost;
+    }
 
   // 2. Fallback to default pricing
   const defaultPricing = await prisma.apiPricing.findUnique({
@@ -25,10 +55,14 @@ async function getApiCost(api_code, tenant_id) {
   });
 
   if (!defaultPricing || !defaultPricing.is_active) {
+    // If inactive or missing, reject.
     throw new Error(`API Pricing not configured or inactive for: ${api_code}`);
   }
 
-  return defaultPricing.default_credit_cost;
+  const resolvedCost = defaultPricing.default_credit_cost;
+  await cacheAdapter.set(cacheKey, resolvedCost);
+
+  return resolvedCost;
 }
 
 /**
@@ -56,5 +90,6 @@ async function getTenantCostsMatrix(tenant_id) {
 
 module.exports = {
   getApiCost,
-  getTenantCostsMatrix
+  getTenantCostsMatrix,
+  clearPricingCache
 };

@@ -1,6 +1,10 @@
 const prisma = require('../../config/db');
 
 async function getApiLogs(req, res) {
+  // #swagger.tags = ['API Usage Logs']
+  // #swagger.summary = 'Filter global API Usage Logs'
+  // #swagger.description = 'Fetch logs natively, mapping pagination and filtering options.'
+  /* #swagger.parameters['tenant_id'] = { description: 'Filter by Tenant ID', in: 'query', type: 'integer' } */
   try {
     const { tenant_id, api_code, status, date_from, date_to, triggered_by_user_id, page = 1, limit = 50 } = req.query;
 
@@ -64,6 +68,9 @@ async function getTenantLogs(req, res) {
 }
 
 async function getLogsSummary(req, res) {
+  // #swagger.tags = ['API Usage Logs']
+  // #swagger.summary = 'Get aggregated visual KPIs'
+  /* #swagger.responses[200] = { description: 'Returns overall total calls, failed calls, credits consumed, and refunds grouped globally' } */
   try {
      const [totalCalls, creditsConsumed, failedCalls, refunds] = await Promise.all([
         prisma.apiUsageLog.count(),

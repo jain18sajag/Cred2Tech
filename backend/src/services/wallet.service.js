@@ -179,7 +179,18 @@ async function topupWallet({ tenantId, amount, adminUserId }) {
 }
 
 // Wrapper for executing paid APIs
-async function executePaidApi({ apiCode, tenantId, userId, customerId, caseId, requestPayload, handlerFunction }) {
+async function executePaidApi({ apiCode, tenantId, userId, customerId, caseId, requestPayload, idempotencyKey, handlerFunction }) {
+  // Idempotency check 
+  if (idempotencyKey) {
+     const previousLog = await prisma.apiUsageLog.findUnique({
+        where: { tenant_id_api_code_idempotency_key: { tenant_id: tenantId, api_code: apiCode, idempotency_key: idempotencyKey } }
+     });
+     if (previousLog) {
+         if (previousLog.status === 'SUCCESS') return previousLog.request_payload; // Or parse actual API cached response if needed
+         throw new Error('Duplicate execution blocked by idempotency key');
+     }
+  }
+
   // Free APIs immediately skip deduction
   if (apiCode === 'PAN_FETCH') {
      return await handlerFunction();
@@ -190,7 +201,8 @@ async function executePaidApi({ apiCode, tenantId, userId, customerId, caseId, r
   try {
      deductionResult = await deductCredits({ tenantId, userId, customerId, caseId, apiCode });
   } catch (error) {
-     if (error.status === 402 || error.message.includes("not found")) {
+     const isInactiveError = error.message.includes("inactive");
+     if (error.status === 402 || error.message.includes("not found") || isInactiveError) {
         // Log blocked attempt natively capturing context
         await prisma.apiUsageLog.create({
           data: {
@@ -200,8 +212,9 @@ async function executePaidApi({ apiCode, tenantId, userId, customerId, caseId, r
              case_id: caseId || null,
              api_code: apiCode,
              credits_used: 0,
-             status: 'BLOCKED_INSUFFICIENT_CREDITS',
-             error_message: error.message
+             status: isInactiveError ? 'BLOCKED_INACTIVE_API' : 'BLOCKED_INSUFFICIENT_CREDITS',
+             error_message: error.message,
+             idempotency_key: idempotencyKey
           }
         });
      }
@@ -209,17 +222,9 @@ async function executePaidApi({ apiCode, tenantId, userId, customerId, caseId, r
   }
 
   // 2. Execute Handler
+  let result;
   try {
-     const result = await handlerFunction();
-     
-     // Optionally update usage log with proper success payload responses mapping here
-     if (requestPayload) {
-        await prisma.apiUsageLog.update({
-           where: { id: deductionResult.usageLog.id },
-           data: { request_payload: requestPayload }
-        });
-     }
-     return result;
+     result = await handlerFunction();
   } catch (apiError) {
      // 3. Catch handler errors and REFUND seamlessly explicitly returning REFUNDED state!
      await refundCredits(tenantId, deductionResult.usageLog.id, deductionResult.cost, userId);
@@ -232,6 +237,15 @@ async function executePaidApi({ apiCode, tenantId, userId, customerId, caseId, r
 
      throw apiError;
   }
+  
+  // 4. Update usage log payload asynchronously to prevent blocking or refunding on local DB fails
+  if (requestPayload) {
+     prisma.apiUsageLog.update({
+        where: { id: deductionResult.usageLog.id },
+        data: { request_payload: requestPayload }
+     }).catch(e => console.error("Failed to commit requestPayload to ApiUsageLog:", e));
+  }
+  return result;
 }
 
 module.exports = {

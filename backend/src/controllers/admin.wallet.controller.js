@@ -1,5 +1,6 @@
 const prisma = require('../../config/db');
 const walletService = require('../services/wallet.service');
+const pricingService = require('../services/pricing.service');
 
 // Admin side management for Wallets
 
@@ -20,6 +21,10 @@ async function updatePricing(req, res) {
       where: { id: parseInt(id, 10) },
       data: { default_credit_cost: typeof credit_cost === 'number' ? credit_cost : parseInt(credit_cost, 10), is_active, updated_by: req.user.id }
     });
+    
+    // Admin updated pricing, immediately invalidate the memory caches
+    pricingService.clearPricingCache();
+    
     res.json(pricing);
   } catch (error) {
     res.status(500).json({ error: 'Failed to update pricing' });
@@ -27,6 +32,14 @@ async function updatePricing(req, res) {
 }
 
 async function topupWallet(req, res) {
+  // #swagger.tags = ['Admin Controls', 'Wallet']
+  // #swagger.summary = 'Topup a DSA Wallet'
+  // #swagger.description = 'Manually add credits to a DSA tenant wallet. Only usable by Superadmins.'
+  /* #swagger.parameters['tenant_id'] = { description: 'ID of the tenant', type: 'integer' } */
+  /* #swagger.requestBody = {
+       content: { 'application/json': { schema: { type: 'object', properties: { credits: { type: 'integer', example: 100 } } } } }
+  } */
+  /* #swagger.responses[200] = { description: 'Topup successful', schema: { type: 'object', properties: { message: { type: 'string', example: 'Topup successful' }, wallet: { $ref: '#/components/schemas/Tenant' } } } } */
   try {
     const { tenant_id } = req.params;
     const { credits } = req.body;
@@ -48,6 +61,12 @@ async function topupWallet(req, res) {
 }
 
 async function deductWallet(req, res) {
+  // #swagger.tags = ['Admin Controls', 'Wallet']
+  // #swagger.summary = 'Deduct from a DSA Wallet'
+  // #swagger.description = 'Manually subtract credits natively.'
+  /* #swagger.requestBody = {
+       content: { 'application/json': { schema: { type: 'object', properties: { credits: { type: 'integer', example: 50 }, remarks: { type: 'string', example: 'Manual deduction' } } } } }
+  } */
   try {
     const { tenant_id } = req.params;
     const { credits, remarks } = req.body;
@@ -83,16 +102,27 @@ async function deductWallet(req, res) {
 }
 
 async function getAllWallets(req, res) {
+   // #swagger.tags = ['Admin Controls']
+   // #swagger.summary = 'Get all DSA wallets'
+   /* #swagger.responses[200] = { description: 'List of all tenants and wallet balances natively offset paginated' } */
    try {
-     const tenants = await prisma.tenant.findMany({
-         where: { type: 'DSA' },
-         include: { 
-            wallet: true,
-            _count: { select: { api_logs: true } }
-         }
-     });
+     const page = parseInt(req.query.page, 10) || 1;
+     const limit = parseInt(req.query.limit, 10) || 50;
+     const offset = (page - 1) * limit;
 
-     // Map last transaction natively
+     const [tenants, total] = await Promise.all([
+         prisma.tenant.findMany({
+             where: { type: 'DSA' },
+             skip: offset,
+             take: limit,
+             include: { 
+                wallet: true,
+                _count: { select: { api_logs: true } }
+             }
+         }),
+         prisma.tenant.count({ where: { type: 'DSA' } })
+     ]);
+
      const mapped = await Promise.all(tenants.map(async t => {
         const lastTx = await prisma.walletTransaction.findFirst({
            where: { tenant_id: t.id },
@@ -107,21 +137,35 @@ async function getAllWallets(req, res) {
         };
      }));
 
-     res.json(mapped);
+     res.json({ tenants: mapped, total, page, totalPages: Math.ceil(total / limit) });
    } catch (error) {
       res.status(500).json({ error: 'Failed to fetch wallets' });
    }
 }
 
 async function getLedger(req, res) {
+   // #swagger.tags = ['Admin Controls', 'Wallet']
+   // #swagger.summary = 'Fetch Tenant Wallet Ledger'
+   /* #swagger.responses[200] = {
+       description: 'Paginated historical transaction records',
+       schema: { type: 'object', properties: { ledger: { type: 'array', items: { $ref: '#/components/schemas/WalletTransaction' } }, total: { type: 'integer' }, page: { type: 'integer' }, totalPages: { type: 'integer' } } }
+   } */
    try {
       const { tenant_id } = req.params;
-      const ledger = await prisma.walletTransaction.findMany({
-         where: { tenant_id: parseInt(tenant_id, 10) },
-         orderBy: { created_at: 'desc' },
-         take: 100
-      });
-      res.json(ledger);
+      const page = parseInt(req.query.page, 10) || 1;
+      const limit = parseInt(req.query.limit, 10) || 50;
+      
+      const [ledger, total] = await Promise.all([
+          prisma.walletTransaction.findMany({
+             where: { tenant_id: parseInt(tenant_id, 10) },
+             orderBy: { created_at: 'desc' },
+             skip: (page - 1) * limit,
+             take: limit
+          }),
+          prisma.walletTransaction.count({ where: { tenant_id: parseInt(tenant_id, 10) }})
+      ]);
+
+      res.json({ ledger, total, page, totalPages: Math.ceil(total / limit) });
    } catch(e) {
       res.status(500).json({ error: 'Failed' });
    }
