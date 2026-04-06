@@ -108,9 +108,15 @@ const CustomersListPage = () => {
                         onClick={() => navigate(`/customers/add?caseId=${c.id}`)}
                         className="text-primary-600 hover:text-primary-900 mr-4 font-semibold"
                       >
-                        Resume
+                        Resume Wizard
                       </button>
                     )}
+                    <button
+                      onClick={() => navigate(`/customers/${c.customer_id}`)}
+                      className="text-primary-600 hover:text-primary-900 mr-4 font-semibold"
+                    >
+                      View Profile
+                    </button>
                     {/* Placeholder for future delete capability */}
                     <button
                       className="text-gray-400 cursor-not-allowed hover:text-gray-500 font-semibold"

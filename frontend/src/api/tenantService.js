@@ -22,3 +22,8 @@ export const publicRegisterDSA = async (data) => {
   const response = await axios.post(`${baseURL}/tenants/public-register`, data);
   return response.data;
 };
+
+export const getTenantSummary = async (tenantId) => {
+  const response = await api.get(`/admin/tenants/${tenantId}/summary`);
+  return response.data;
+};

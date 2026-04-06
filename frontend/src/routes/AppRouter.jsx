@@ -21,6 +21,7 @@ const NotFoundPage = lazy(() => import('../pages/NotFoundPage'));
 const DSARegisterPage = lazy(() => import('../pages/DSARegisterPage'));
 const CustomersListPage = lazy(() => import('../pages/CustomersListPage'));
 const AddCustomerWizardPage = lazy(() => import('../pages/AddCustomerWizardPage'));
+const CustomerProfilePage = lazy(() => import('../pages/CustomerProfilePage'));
 const SuperadminPricingPage = lazy(() => import('../pages/SuperadminPricingPage'));
 const SuperadminWalletManager = lazy(() => import('../pages/SuperadminWalletManager'));
 const SuperadminApiLogsPage = lazy(() => import('../pages/SuperadminApiLogsPage'));
@@ -99,6 +100,14 @@ const AppRouter = () => (
               element={
                 <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER']}>
                   <AddCustomerWizardPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/customers/:customer_id"
+              element={
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN']}>
+                  <CustomerProfilePage />
                 </ProtectedRoute>
               }
             />

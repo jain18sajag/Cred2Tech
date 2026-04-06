@@ -24,5 +24,20 @@ export const caseService = {
   updateProduct: async (caseId, product_type) => {
     const response = await axiosInstance.patch(`/cases/${caseId}/product`, { product_type });
     return response.data;
+  },
+
+  getCaseSummary: async (caseId) => {
+    const response = await axiosInstance.get(`/cases/${caseId}/summary`);
+    return response.data;
+  },
+
+  getCoBorrowers: async (caseId) => {
+    const response = await axiosInstance.get(`/cases/${caseId}/co-borrowers`);
+    return response.data;
+  },
+
+  getActivityLog: async (caseId) => {
+    const response = await axiosInstance.get(`/cases/${caseId}/activity-log`);
+    return response.data;
   }
 };

@@ -97,6 +97,7 @@ model User {
   created_cases     Case[]            @relation("CaseCreator")
   created_otps      OtpVerification[] @relation("OtpCreator")
   api_logs          ApiUsageLog[]
+  activity_logs     ActivityLog[]
 
   @@map("users")
 }
@@ -110,6 +111,9 @@ model Customer {
   business_name      String?
   business_mobile    String?
   business_email     String?
+  entity_type        String?
+  industry           String?
+  business_vintage   String?
   mobile_verified    Boolean   @default(false)
   created_at         DateTime  @default(now())
   updated_at         DateTime  @updatedAt
@@ -120,6 +124,7 @@ model Customer {
   created_by     User          @relation("CustomerCreator", fields: [created_by_user_id], references: [id])
   cases          Case[]
   api_logs       ApiUsageLog[]
+  activity_logs  ActivityLog[]
   consents       CustomerConsent[]
   gst_profiles   CustomerGSTProfile[]
   itr_profiles   CustomerITRProfile[]
@@ -142,6 +147,14 @@ model Case {
   tenant_id          Int
   customer_id        Int
   product_type       String?   // LAP, HL, WC, TL, Machinery, BL, Other
+  loan_amount        Float?
+  lender_name        String?
+  property_type      String?
+  occupancy          String?
+  property_value     Float?
+  location           String?
+  ltv_ratio          Float?
+  dsa_notes          String?
   stage              CaseStage @default(DRAFT)
   created_at         DateTime  @default(now())
   updated_at         DateTime  @updatedAt
@@ -153,6 +166,7 @@ model Case {
   created_by       User          @relation("CaseCreator", fields: [created_by_user_id], references: [id])
   applicants       Applicant[]
   api_logs         ApiUsageLog[]
+  activity_logs    ActivityLog[]
   data_pull_status CaseDataPullStatus?
   consents         CustomerConsent[]
 
@@ -176,13 +190,34 @@ model Applicant {
   pan_number     String?
   mobile         String?
   email          String?
+  cibil_score    Int?
+  emi            Float?
   otp_verified   Boolean       @default(false)
+  bureau_fetched Boolean       @default(false)
   created_at     DateTime      @default(now())
   updated_at     DateTime      @updatedAt
 
   case           Case          @relation(fields: [case_id], references: [id], onDelete: Cascade)
 
   @@map("applicants")
+}
+
+model ActivityLog {
+  id                   Int      @id @default(autoincrement())
+  case_id              Int?
+  customer_id          Int?
+  activity_type        String
+  description          String?
+  performed_by_user_id Int?
+  created_at           DateTime @default(now())
+
+  case_entity Case?     @relation(fields: [case_id], references: [id])
+  customer    Customer? @relation(fields: [customer_id], references: [id])
+  user        User?     @relation(fields: [performed_by_user_id], references: [id])
+
+  @@index([case_id])
+  @@index([customer_id])
+  @@map("activity_logs")
 }
 
 enum OtpPurpose {
