@@ -25,6 +25,7 @@ const CustomerProfilePage = lazy(() => import('../pages/CustomerProfilePage'));
 const SuperadminPricingPage = lazy(() => import('../pages/SuperadminPricingPage'));
 const SuperadminWalletManager = lazy(() => import('../pages/SuperadminWalletManager'));
 const SuperadminApiLogsPage = lazy(() => import('../pages/SuperadminApiLogsPage'));
+const LenderConfigPage = lazy(() => import('../pages/LenderConfigPage'));
 
 const PageLoader = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -84,6 +85,9 @@ const AppRouter = () => (
             } />
             <Route path="/admin/logs" element={
                <ProtectedRoute allowedRoles={['SUPER_ADMIN']}><SuperadminApiLogsPage /></ProtectedRoute>
+            } />
+            <Route path="/admin/lenders" element={
+               <ProtectedRoute allowedRoles={['SUPER_ADMIN', 'CRED2TECH_MEMBER']}><LenderConfigPage /></ProtectedRoute>
             } />
 
             {/* Customers Pipeline / Wizard */}

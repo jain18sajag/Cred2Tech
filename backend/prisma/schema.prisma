@@ -451,3 +451,93 @@ model CaseDataPullStatus {
 
   @@map("case_data_pull_statuses")
 }
+
+// --- Lender Configuration Matrix Models ---
+
+enum LenderStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model Lender {
+  id         String       @id @default(uuid())
+  name       String
+  code       String       @unique
+  status     LenderStatus @default(ACTIVE)
+  created_at DateTime     @default(now())
+  updated_at DateTime     @updatedAt
+
+  created_by Int?
+  updated_by Int?
+
+  products   LenderProduct[]
+
+  @@map("lenders")
+}
+
+enum LenderProductType {
+  HL
+  LAP
+}
+
+model LenderProduct {
+  id           Int                @id @default(autoincrement())
+  lender_id    String
+  product_type LenderProductType
+  status       LenderStatus       @default(ACTIVE)
+  
+  lender       Lender             @relation(fields: [lender_id], references: [id])
+  schemes      Scheme[]
+
+  @@unique([lender_id, product_type])
+  @@map("lender_products")
+}
+
+model Scheme {
+  id          Int            @id @default(autoincrement())
+  product_id  Int
+  scheme_name String
+  status      LenderStatus   @default(ACTIVE)
+  created_at  DateTime       @default(now())
+  updated_at  DateTime       @updatedAt
+
+  created_by  Int?
+  updated_by  Int?
+
+  product          LenderProduct          @relation(fields: [product_id], references: [id])
+  parameter_values SchemeParameterValue[]
+
+  @@map("schemes")
+}
+
+model ParameterMaster {
+  id                Int                    @id @default(autoincrement())
+  parameter_key     String                 @unique
+  parameter_label   String
+  category          String
+  data_type         String
+  display_order     Int
+  is_editable_label Boolean                @default(false)
+
+  values            SchemeParameterValue[]
+
+  @@map("parameter_master")
+}
+
+model SchemeParameterValue {
+  id           Int      @id @default(autoincrement())
+  scheme_id    Int
+  parameter_id Int
+  value        Json
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+  
+  created_by   Int?
+  updated_by   Int?
+
+  scheme       Scheme          @relation(fields: [scheme_id], references: [id])
+  parameter    ParameterMaster @relation(fields: [parameter_id], references: [id])
+
+  @@unique([scheme_id, parameter_id])
+  @@map("scheme_parameter_values")
+}

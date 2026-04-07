@@ -36,6 +36,7 @@ const dsaWalletRoutes = require('./routes/dsa.wallet.routes');
 const adminWalletRoutes = require('./routes/admin.wallet.routes');
 const adminApiLogsRoutes = require('./routes/adminApiLogs.routes');
 const adminTenantRoutes = require('./routes/admin.tenant.routes');
+const adminLenderRoutes = require('./routes/admin.lender.routes');
 const externalApiRoutes = require('./routes/externalApi.routes');
 
 app.use('/auth', authRoutes);
@@ -50,6 +51,7 @@ app.use('/wallet', dsaWalletRoutes);
 app.use('/admin/wallet', adminWalletRoutes);
 app.use('/admin/api-logs', adminApiLogsRoutes);
 app.use('/admin/tenants', adminTenantRoutes);
+app.use('/admin/lenders', adminLenderRoutes);
 app.use('/external', externalApiRoutes);
 
 app.use((err, req, res, next) => {

@@ -56,6 +56,13 @@ export const NAV_ITEMS = [
     icon: Activity,
     roles: ['SUPER_ADMIN'],
   },
+  {
+    id: 'admin-lenders',
+    label: 'Lender Config',
+    path: '/admin/lenders',
+    icon: Settings,
+    roles: ['SUPER_ADMIN', 'CRED2TECH_MEMBER'],
+  },
 
   // DSA_ADMIN Views
   {
