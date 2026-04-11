@@ -193,7 +193,39 @@ async function executePaidApi({ apiCode, tenantId, userId, customerId, caseId, r
 
   // Free APIs immediately skip deduction
   if (apiCode === 'PAN_FETCH') {
-     return await handlerFunction();
+     let result;
+     try {
+       result = await handlerFunction();
+       await prisma.apiUsageLog.create({
+         data: {
+           tenant_id: tenantId,
+           triggered_by_user_id: userId,
+           customer_id: customerId,
+           case_id: caseId || null,
+           api_code: apiCode,
+           credits_used: 0,
+           status: 'SUCCESS',
+           request_payload: requestPayload,
+           idempotency_key: idempotencyKey
+         }
+       });
+       return result;
+     } catch (apiError) {
+       await prisma.apiUsageLog.create({
+         data: {
+           tenant_id: tenantId,
+           triggered_by_user_id: userId,
+           customer_id: customerId,
+           case_id: caseId || null,
+           api_code: apiCode,
+           credits_used: 0,
+           status: 'FAILED',
+           error_message: apiError.message,
+           idempotency_key: idempotencyKey
+         }
+       });
+       throw apiError;
+     }
   }
 
   // 1. Deduct strict logic

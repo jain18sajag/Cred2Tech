@@ -149,28 +149,45 @@ const AddCustomerWizardPage = () => {
 
   const handleVerifyPan = async () => {
     if (!formData.business_pan || formData.business_pan.length < 10) return toast.error('Valid PAN required');
+    if (!formData.customer_id || !caseId) return toast.error('Please verify mobile first to generate a case');
     setPanVerifying(true);
-    setExistingCustomer(null);
+    
     try {
-      const customer = await customerService.checkExistingByPan(formData.business_pan);
-      if (customer) {
-        setExistingCustomer(customer);
-        setFormData(prev => ({
-          ...prev,
-          customer_id: customer.id,
-          business_name: customer.business_name || prev.business_name,
-          business_mobile: customer.business_mobile || prev.business_mobile,
-          business_email: customer.business_email || prev.business_email,
-          mobile_verified: customer.mobile_verified || prev.mobile_verified
-        }));
-        toast.success('Existing customer found.');
-      }
+      const activeCustomerId = formData.customer_id;
+
+      const res = await fetch(`http://localhost:5000/external/pan/fetch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+        body: JSON.stringify({
+           customer_id: activeCustomerId,
+           case_id: caseId,
+           consentMethod: 'DIRECT_LOGIN',
+           pan: formData.business_pan
+        })
+      });
+      const data = await res.json();
+      
+      if (!res.ok) throw new Error(data.error_message || data.error || 'Failed to verify PAN intelligence');
+      
+      const detailed = data.raw_response?.gstnDetailed?.[0] || {};
+      const generatedName = detailed.legalNameOfBusiness || detailed.tradeNameOfBusiness;
+
+      setFormData(prev => ({
+         ...prev,
+         business_name: generatedName && !prev.business_name ? generatedName : prev.business_name,
+         pan_profile: data
+      }));
+
+      toast.success('PAN Verified Successfully!');
+
     } catch(err) {
-      toast.error('Failed to verify PAN');
+      const errMsg = typeof err === 'string' ? err : (err?.message || 'Failed to verify PAN');
+      toast.error(typeof errMsg === 'object' ? JSON.stringify(errMsg) : errMsg);
     } finally {
       setPanVerifying(false);
     }
   };
+
 
   const handleSendPrimaryOtp = async () => {
     try {
@@ -449,9 +466,9 @@ const AddCustomerWizardPage = () => {
                   <FormField label="PAN NUMBER" name="business_pan" required disabled={!!caseId || formData.mobile_verified}>
                     <div style={{ display: 'flex', gap: 10 }}>
                       <input type="text" value={formData.business_pan} onChange={e => setFormData({...formData, business_pan: e.target.value.toUpperCase()})} className="form-control" placeholder="E.G. AABCE1234F" disabled={!!caseId || formData.mobile_verified} style={{ textTransform: 'uppercase' }} />
-                      {!caseId && !formData.mobile_verified && (
-                        <button type="button" onClick={handleVerifyPan} disabled={panVerifying || !formData.business_pan} className="btn btn-secondary">
-                          {panVerifying ? 'Wait...' : 'Verify Schema'}
+                      {formData.mobile_verified && (
+                        <button type="button" onClick={handleVerifyPan} disabled={panVerifying || !formData.business_pan || formData.pan_profile?.status === 'SUCCESS'} className="btn btn-secondary">
+                          {panVerifying ? 'Wait...' : (formData.pan_profile?.status === 'SUCCESS' ? 'Verified' : 'Verify pan')}
                         </button>
                       )}
                     </div>
@@ -461,7 +478,7 @@ const AddCustomerWizardPage = () => {
                     <div style={{ display: 'flex', gap: 10 }}>
                       <input type="tel" value={formData.business_mobile} onChange={e => setFormData({...formData, business_mobile: e.target.value})} className="form-control" placeholder="9820012345" disabled={formData.mobile_verified} />
                       {!formData.mobile_verified ? (
-                        <button type="button" onClick={handleSendPrimaryOtp} disabled={saving || !formData.business_mobile} className="btn btn-primary" style={{ padding: '0 20px' }}>Send OTP</button>
+                        <button type="button" onClick={handleSendPrimaryOtp} disabled={saving || !formData.business_mobile || !formData.business_pan} className="btn btn-primary" style={{ padding: '0 20px' }}>Send OTP</button>
                       ) : (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--success)', fontWeight: 600, padding: '0 10px', whiteSpace: 'nowrap' }}>
                           <CheckCircle2 size={18} /> Verified

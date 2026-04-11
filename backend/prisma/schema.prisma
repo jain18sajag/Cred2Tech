@@ -128,9 +128,50 @@ model Customer {
   consents       CustomerConsent[]
   gst_profiles   CustomerGSTProfile[]
   itr_profiles   CustomerITRProfile[]
+  pan_profiles   CustomerPanProfile[]
 
   @@unique([tenant_id, business_pan])
   @@map("customers")
+}
+
+model CustomerPanProfile {
+  id                        Int       @id @default(autoincrement())
+  customer_id               Int
+  pan                       String    @unique
+  gstin                     String?
+  constitution_of_business  String?
+  legal_name                String?
+  trade_name                String?
+  principal_state           String?
+  principal_city            String?
+  principal_pincode         String?
+  principal_address         String?
+  director_names            Json?
+  annual_turnover_range     String?
+  turnover_min              Float?
+  turnover_max              Float?
+  gross_total_income        String?
+  income_financial_year     String?
+  raw_response              Json
+  created_at                DateTime  @default(now())
+
+  customer                  Customer  @relation(fields: [customer_id], references: [id])
+  gstin_records             CustomerPanGstinRecord[]
+
+  @@map("customer_pan_profiles")
+}
+
+model CustomerPanGstinRecord {
+  id                Int       @id @default(autoincrement())
+  pan_profile_id    Int
+  gstin             String
+  registration_name String?
+  status            String?
+  created_at        DateTime  @default(now())
+
+  pan_profile       CustomerPanProfile @relation(fields: [pan_profile_id], references: [id])
+
+  @@map("customer_pan_gstin_records")
 }
 
 enum CaseStage {
@@ -369,6 +410,7 @@ model ApiUsageLog {
 enum ConsentType {
   GST
   ITR
+  PAN
 }
 
 enum ConsentSource {
@@ -441,6 +483,7 @@ enum DataPullStatus {
 model CaseDataPullStatus {
   id            Int            @id @default(autoincrement())
   case_id       Int            @unique
+  pan_status    DataPullStatus @default(PENDING)
   bureau_status DataPullStatus @default(PENDING)
   gst_status    DataPullStatus @default(PENDING)
   itr_status    DataPullStatus @default(PENDING)

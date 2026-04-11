@@ -6,8 +6,10 @@ export const customerService = {
       const response = await axiosInstance.get(`/customers/check-existing-by-pan?pan=${pan}`);
       return response.data;
     } catch (error) {
-      if (error.response?.status === 404) return null;
-      throw error;
+      // If customer doesn't exist or any issue occurs, we gracefully return null 
+      // so the flow falls back to creating the stub customer.
+      console.warn("checkExistingByPan returned an error (likely 404):", error?.response?.data || error);
+      return null;
     }
   },
 
