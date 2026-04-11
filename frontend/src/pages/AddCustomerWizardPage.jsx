@@ -7,6 +7,7 @@ import FormField from '../components/ui/FormField';
 import { toast } from 'react-hot-toast';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { Search, CheckCircle2, ChevronRight, Check, AlertCircle } from 'lucide-react';
+import GstAnalyticsForm from '../components/GstAnalyticsForm';
 
 const AddCustomerWizardPage = () => {
   const navigate = useNavigate();
@@ -565,35 +566,13 @@ const AddCustomerWizardPage = () => {
                  <h3 style={{ fontSize: 16, fontWeight: 700 }}>GST Profile</h3>
                  <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 4 }}>Extrapolated from Business PAN: {formData.business_pan}</p>
                </div>
-               <div style={{ padding: 24 }}>
-                 {formData.gst_completed ? (
-                    <div style={{ padding: 20, backgroundColor: 'var(--success-subtle)', borderRadius: 'var(--radius)', border: '1px solid #A5D6A7' }}>
-                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#2E7D32', fontWeight: 600, marginBottom: 12 }}>
-                         <CheckCircle2 size={20} /> GST Pulled & Cached Successfully
-                       </div>
-                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, fontSize: 13, color: '#1B5E20' }}>
-                          <div><strong>Turnover:</strong> ₹{formData.gst_profile?.annual_turnover?.toLocaleString()}</div>
-                          <div><strong>Status:</strong> {formData.gst_profile?.filing_status}</div>
-                          <div><strong>Last Filed:</strong> {formData.gst_profile?.last_filed_period}</div>
-                       </div>
-                    </div>
-                 ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                       {walletBalance < costs.GST_FETCH && (
-                          <div style={{ padding: 12, borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: 'var(--error)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600}}>
-                             <AlertCircle size={16} /> Insufficient credits to pull GST. Wallet has {walletBalance}, needs {costs.GST_FETCH}.
-                          </div>
-                       )}
-                       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                         <input type="checkbox" required id="gstConsent" style={{ width: 18, height: 18 }} />
-                         <label htmlFor="gstConsent" style={{ fontSize: 14 }}>I confirm I obtained verifiable Customer Consent via Direct Login to pull GST records.</label>
-                       </div>
-                       <button type="button" className="btn btn-secondary" style={{ width: 'fit-content' }} onClick={handleGenerateGst} disabled={saving || walletBalance < costs.GST_FETCH}>
-                          {saving ? 'Processing...' : `💳 Generate GST Report (~${costs.GST_FETCH} Credits)`}
-                       </button>
-                    </div>
-                 )}
-               </div>
+                <div style={{ padding: 0 }}>
+                  <GstAnalyticsForm 
+                     caseId={caseId} 
+                     customerId={formData.customer_id} 
+                     onComplete={() => setFormData(prev => ({...prev, gst_completed: true}))} 
+                  />
+                </div>
             </div>
 
             <div className="card">

@@ -57,65 +57,6 @@ async function bureauPull(req, res) {
   }
 }
 
-async function gstFetch(req, res) {
-  try {
-    const { customer_id, case_id, consentMethod, gstin } = req.body;
-    if (!gstin) return res.status(400).json({ error: "GSTIN is required" });
-
-    // Ensure customer belongs to tenant
-    const customer = await prisma.customer.findFirst({ where: { id: parseInt(customer_id, 10), tenant_id: req.user.tenant_id }});
-    if (!customer) throw new Error("Unauthorized");
-
-    await handleConsent(customer.id, case_id ? parseInt(case_id, 10) : null, 'GST', consentMethod || 'DIRECT_LOGIN');
-
-    const result = await executePaidApi({
-      apiCode: 'GST_FETCH',
-      tenantId: req.user.tenant_id,
-      userId: req.user.id,
-      customerId: customer.id,
-      caseId: case_id ? parseInt(case_id, 10) : null,
-      requestPayload: req.body,
-      handlerFunction: async () => {
-         // Mock API
-         await new Promise(res => setTimeout(res, 800));
-         const mockedResponse = {
-            gstin: gstin,
-            filingStatus: "Active",
-            lastFiledPeriod: "Mar 2024",
-            annualTurnover: Math.random() * (10000000 - 1000000) + 1000000
-         };
-
-         // Save specific profile
-         const profile = await prisma.customerGSTProfile.create({
-            data: {
-               customer_id: customer.id,
-               gstin: mockedResponse.gstin,
-               filing_status: mockedResponse.filingStatus,
-               last_filed_period: mockedResponse.lastFiledPeriod,
-               annual_turnover: mockedResponse.annualTurnover,
-               raw_response: mockedResponse
-            }
-         });
-
-         // Upsert tracker
-         if (case_id) {
-           await prisma.caseDataPullStatus.upsert({
-              where: { case_id: parseInt(case_id, 10) },
-              create: { case_id: parseInt(case_id, 10), gst_status: 'COMPLETE' },
-              update: { gst_status: 'COMPLETE' }
-           });
-         }
-
-         return profile;
-      }
-    });
-
-    res.json({ status: "SUCCESS", creditsUsed: 0, gstProfile: result });
-  } catch (error) {
-    if (error.status === 402) return res.status(402).json({ error: error.message });
-    res.status(500).json({ error: error.message });
-  }
-}
 
 async function itrFetch(req, res) {
   try {
@@ -197,7 +138,6 @@ async function bankAnalysis(req, res) {
 
 module.exports = {
   bureauPull,
-  gstFetch,
   itrFetch,
   bankAnalysis
 };

@@ -62,6 +62,7 @@ model Tenant {
   transactions          WalletTransaction[]
   api_logs              ApiUsageLog[]
   api_pricing_overrides TenantApiPricingOverride[]
+  gst_requests          GstrAnalyticsRequest[]
 
   @@map("tenants")
 }
@@ -129,6 +130,7 @@ model Customer {
   gst_profiles   CustomerGSTProfile[]
   itr_profiles   CustomerITRProfile[]
   pan_profiles   CustomerPanProfile[]
+  gst_requests   GstrAnalyticsRequest[]
 
   @@unique([tenant_id, business_pan])
   @@map("customers")
@@ -210,9 +212,9 @@ model Case {
   activity_logs    ActivityLog[]
   data_pull_status CaseDataPullStatus?
   consents         CustomerConsent[]
+  gst_requests     GstrAnalyticsRequest[]
 
   // Empty relation placeholders for future integrations
-  // gst_reports    GSTReport[]
   // itr_reports    ITRReport[]
   // bank_statements BankStatementMetadata[]
 
@@ -454,6 +456,70 @@ model CustomerGSTProfile {
   customer Customer @relation(fields: [customer_id], references: [id])
 
   @@map("customer_gst_profiles")
+}
+
+enum GstrRequestMode {
+  AUTH_LINK
+  IN_SYSTEM
+}
+
+enum GstrAuthType {
+  OTP
+  PASSWORD
+}
+
+enum GstrAnalyticsStatus {
+  INITIATED
+  AUTH_LINK_CREATED
+  OTP_PENDING
+  OTP_VERIFIED
+  PROCESSING
+  DATA_READY
+  REPORT_READY
+  CALLBACK_RECEIVED
+  COMPLETED
+  FAILED
+  EXPIRED
+}
+
+model GstrAnalyticsRequest {
+  id                 Int      @id @default(autoincrement())
+  tenant_id          Int
+  customer_id        Int
+  case_id            Int?
+  mode               GstrRequestMode
+  auth_type          GstrAuthType?
+  gstin              String
+  username           String?
+  from_date          String
+  to_date            String
+  entity_details     Boolean  @default(false)
+  pdf_url_requested  Boolean  @default(false)
+  emails             Json?    
+  mobile_numbers     Json?    
+  callback_url       String?
+  provider_request_id String? @unique
+  auth_link          String?
+  status             GstrAnalyticsStatus @default(INITIATED)
+  provider_message   String?
+  raw_gst_data       Json?
+  report_json_url    String?
+  report_excel_url   String?
+  report_pdf_url     String?
+  callback_payload   Json?
+  wallet_transaction_id Int?
+  otp_attempts       Int      @default(0)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+  created_by_user_id Int
+
+  tenant         Tenant   @relation(fields: [tenant_id], references: [id])
+  customer       Customer @relation(fields: [customer_id], references: [id])
+  case_entity    Case?    @relation(fields: [case_id], references: [id])
+
+  @@index([tenant_id])
+  @@index([provider_request_id])
+  @@map("gstr_analytics_requests")
 }
 
 model CustomerITRProfile {
