@@ -93,7 +93,7 @@ async function fetchReport(requestId) {
 
     try {
         const response = await axios.post(
-            `${baseUrl}/account-aggregator-switch/fetch-report`,
+            `${baseUrl}/gstr-analytics/fetch-report`,
             { requestId },
             {
                 headers: {

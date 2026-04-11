@@ -211,12 +211,12 @@ async function syncGstData(req, res) {
         if (['PROCESSING', 'DATA_READY'].includes(currentStatus)) {
             try {
                 const reportRes = await gstService.fetchReport(dbReq.provider_request_id);
-                if (reportRes.status === 'SUCCESS' && reportRes.message === 'Completed') {
+                if (reportRes.pdfUrl || reportRes.jsonDataUrl || reportRes.excelUrl) {
                     currentStatus = 'REPORT_READY';
                     await prisma.gstrAnalyticsRequest.update({
                         where: { id: dbReq.id },
                         data: {
-                            report_json_url: reportRes.jsonUrl || dbReq.report_json_url,
+                            report_json_url: reportRes.jsonDataUrl || dbReq.report_json_url,
                             report_excel_url: reportRes.excelUrl || dbReq.report_excel_url,
                             report_pdf_url: reportRes.pdfUrl || dbReq.report_pdf_url,
                             status: 'REPORT_READY'
@@ -281,8 +281,8 @@ async function handleSignzyCallback(req, res) {
             provider_message: resultObj.message || 'Callback Received'
         };
 
-        if (resultObj.jsonUrl || resultObj.pdfUrl || resultObj.excelUrl) {
-            updateData.report_json_url = resultObj.jsonUrl || dbReq.report_json_url;
+        if (resultObj.jsonDataUrl || resultObj.pdfUrl || resultObj.excelUrl) {
+            updateData.report_json_url = resultObj.jsonDataUrl || dbReq.report_json_url;
             updateData.report_pdf_url = resultObj.pdfUrl || dbReq.report_pdf_url;
             updateData.report_excel_url = resultObj.excelUrl || dbReq.report_excel_url;
             updateData.status = 'REPORT_READY';
