@@ -65,6 +65,7 @@ const GstAnalyticsForm = ({ caseId, customerId, onComplete }) => {
                 auth_type: mode === 'IN_SYSTEM' ? authType : null,
                 gstin: formData.gstin,
                 username: formData.username,
+                password: formData.password,
                 from_date: formData.from_date,
                 to_date: formData.to_date,
                 emails: formData.emails ? formData.emails.split(',').map(s => s.trim()) : [],
