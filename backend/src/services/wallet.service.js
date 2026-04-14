@@ -28,7 +28,7 @@ async function checkCredits(tenantId, apiCode) {
   return { wallet, cost };
 }
 
-async function deductCredits({ tenantId, userId, customerId, caseId, apiCode }) {
+async function deductCredits({ tenantId, userId, customerId, caseId, apiCode, idempotencyKey }) {
   // Pull dynamic price hook externally before we drop into isolated transaction (prevents dirty reads on complex join queries)
   const cost = await pricingService.getApiCost(apiCode, tenantId);
 
@@ -232,7 +232,7 @@ async function executePaidApi({ apiCode, tenantId, userId, customerId, caseId, r
   // 1. Deduct strict logic
   let deductionResult;
   try {
-    deductionResult = await deductCredits({ tenantId, userId, customerId, caseId, apiCode });
+    deductionResult = await deductCredits({ tenantId, userId, customerId, caseId, apiCode, idempotencyKey });
   } catch (error) {
     const isInactiveError = error.message.includes("inactive");
     if (error.status === 402 || error.message.includes("not found") || isInactiveError) {

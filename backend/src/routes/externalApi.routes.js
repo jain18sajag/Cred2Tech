@@ -5,6 +5,7 @@ const panController = require('../controllers/external.pan.controller');
 const { authenticate } = require('../middleware/auth.middleware');
 
 const gstController = require('../controllers/external.gst.controller');
+const itrController = require('../controllers/external.itr.controller');
 
 // Unauthenticated webhook
 router.post('/webhooks/signzy/gst', express.json(), gstController.handleSignzyCallback);
@@ -12,7 +13,7 @@ router.post('/webhooks/signzy/gst', express.json(), gstController.handleSignzyCa
 router.use(authenticate);
 
 router.post('/bureau-pull', externalApiController.bureauPull);
-router.post('/itr-fetch', externalApiController.itrFetch);
+router.post('/itr/pull', itrController.pullItrData);
 router.post('/bank-analysis', externalApiController.bankAnalysis);
 
 // GST Integration

@@ -138,6 +138,5 @@ async function bankAnalysis(req, res) {
 
 module.exports = {
   bureauPull,
-  itrFetch,
   bankAnalysis
 };

@@ -8,6 +8,7 @@ import { toast } from 'react-hot-toast';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { Search, CheckCircle2, ChevronRight, Check, AlertCircle } from 'lucide-react';
 import GstAnalyticsForm from '../components/GstAnalyticsForm';
+import ItrPullForm from '../components/ItrPullForm';
 
 const AddCustomerWizardPage = () => {
   const navigate = useNavigate();
@@ -592,20 +593,15 @@ const AddCustomerWizardPage = () => {
                        </div>
                     </div>
                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                       {walletBalance < costs.ITR_FETCH && (
-                          <div style={{ padding: 12, borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: 'var(--error)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600}}>
-                             <AlertCircle size={16} /> Insufficient credits to pull ITR. Wallet has {walletBalance}, needs {costs.ITR_FETCH}.
-                          </div>
-                       )}
-                       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                         <input type="checkbox" required id="itrConsent" style={{ width: 18, height: 18 }} />
-                         <label htmlFor="itrConsent" style={{ fontSize: 14 }}>I confirm I obtained Customer Consent via OTP/Login to pull ITR details.</label>
-                       </div>
-                       <button type="button" className="btn btn-secondary" style={{ width: 'fit-content' }} onClick={handleGenerateItr} disabled={saving || walletBalance < costs.ITR_FETCH}>
-                          {saving ? 'Processing...' : `💳 Generate ITR Report (~${costs.ITR_FETCH} Credits)`}
-                       </button>
-                    </div>
+                 <ItrPullForm 
+                     caseId={caseId}
+                     customerId={formData.customer_id}
+                     prefillPan={formData.business_pan}
+                     walletBalance={walletBalance}
+                     itrCost={costs.ITR_FETCH}
+                     existingItrProfile={formData.itr_profile}
+                     onComplete={(profile) => setFormData(prev => ({...prev, itr_completed: true, itr_profile: profile}))}
+                 />
                  )}
                </div>
             </div>

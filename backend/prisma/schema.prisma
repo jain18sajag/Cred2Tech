@@ -526,12 +526,14 @@ model CustomerITRProfile {
   id               Int      @id @default(autoincrement())
   customer_id      Int
   pan              String
+  username         String?
   ay_2023_income   Float?
   ay_2024_income   Float?
   ay_2025_income   Float?
   net_profit       Float?
   tax_paid         Float?
   raw_response     Json
+  parsed_data      Json?
   created_at       DateTime @default(now())
   updated_at       DateTime @updatedAt
 
