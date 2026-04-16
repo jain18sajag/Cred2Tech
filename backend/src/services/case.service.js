@@ -111,7 +111,7 @@ async function getCaseById(case_id, tenant_id) {
       customer: {
          include: {
             gst_profiles: { take: 1, orderBy: { created_at: 'desc' } },
-            itr_profiles: { take: 1, orderBy: { created_at: 'desc' } }
+            itr_analytics: { take: 1, orderBy: { created_at: 'desc' } }
          }
       },
       applicants: true,

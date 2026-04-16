@@ -117,26 +117,7 @@ async function itrFetch(req, res) {
   }
 }
 
-async function bankAnalysis(req, res) {
-  try {
-    const { customer_id, case_id } = req.body;
-    const result = await executePaidApi({
-      apiCode: 'BANK_ANALYSIS',
-      tenantId: req.user.tenant_id,
-      userId: req.user.id,
-      customerId: parseInt(customer_id, 10),
-      caseId: case_id ? parseInt(case_id, 10) : null,
-      requestPayload: req.body,
-      handlerFunction: callBankAnalysisApi
-    });
-    res.json({ success: true, ...result });
-  } catch (error) {
-    if (error.status === 402) return res.status(402).json({ error: error.message });
-    res.status(500).json({ error: error.message });
-  }
-}
 
 module.exports = {
-  bureauPull,
-  bankAnalysis
+  bureauPull
 };

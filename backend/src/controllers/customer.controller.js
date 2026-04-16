@@ -110,7 +110,7 @@ async function getProfile(req, res) {
        api_status: {
           bureau: resolveApiStatus(customer.api_logs, 'BUREAU_PULL'),
           gst: resolveApiStatus(customer.api_logs, 'GST_FETCH'),
-          itr: resolveApiStatus(customer.api_logs, 'ITR_FETCH')
+          itr: resolveApiStatus(customer.api_logs, 'ITR_ANALYTICS')
        }
     });
   } catch (error) {
@@ -137,7 +137,7 @@ async function getApiAvailability(req, res) {
      const apiStatus = {
         bureau: resolveApiStatus(customer.api_logs, 'BUREAU_PULL'),
         gst: resolveApiStatus(customer.api_logs, 'GST_FETCH'),
-        itr: resolveApiStatus(customer.api_logs, 'ITR_FETCH')
+        itr: resolveApiStatus(customer.api_logs, 'ITR_ANALYTICS')
      };
 
      const latestCase = customer.cases[0] || {};

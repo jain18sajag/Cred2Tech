@@ -8,7 +8,8 @@ import { toast } from 'react-hot-toast';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { Search, CheckCircle2, ChevronRight, Check, AlertCircle } from 'lucide-react';
 import GstAnalyticsForm from '../components/GstAnalyticsForm';
-import ItrPullForm from '../components/ItrPullForm';
+import ItrAnalyticsForm from '../components/ItrAnalyticsForm';
+import BankStatementUpload from '../components/BankStatementUpload';
 
 const AddCustomerWizardPage = () => {
   const navigate = useNavigate();
@@ -32,7 +33,7 @@ const AddCustomerWizardPage = () => {
     product_type: ''
   });
 
-  const [costs, setCosts] = useState({ GST_FETCH: 0, ITR_FETCH: 0 });
+  const [costs, setCosts] = useState({ GST_FETCH: 0, ITR_ANALYTICS: 0, BANK_ANALYSIS: 0 });
   const [walletBalance, setWalletBalance] = useState(0);
 
   useEffect(() => {
@@ -40,8 +41,9 @@ const AddCustomerWizardPage = () => {
        .then(res => res.json())
        .then(data => {
           const gst = data.find(d => d.api_code === 'GST_FETCH')?.tenant_cost || 0;
-          const itr = data.find(d => d.api_code === 'ITR_FETCH')?.tenant_cost || 0;
-          setCosts({ GST_FETCH: gst, ITR_FETCH: itr });
+          const itr = data.find(d => d.api_code === 'ITR_ANALYTICS')?.tenant_cost || 0;
+          const bank = data.find(d => d.api_code === 'BANK_ANALYSIS')?.tenant_cost || 0;
+          setCosts({ GST_FETCH: gst, ITR_ANALYTICS: itr, BANK_ANALYSIS: bank });
        }).catch(console.error);
 
      fetch('http://localhost:5000/wallet/balance', { headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` } })
@@ -577,32 +579,85 @@ const AddCustomerWizardPage = () => {
             </div>
 
             <div className="card">
-               <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
-                 <h3 style={{ fontSize: 16, fontWeight: 700 }}>ITR Assessment</h3>
-                 <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 4 }}>Last 3 Years via Direct Fetch</p>
+               <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                 <div>
+                   <h3 style={{ fontSize: 16, fontWeight: 700 }}>ITR Analytics</h3>
+                   <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 4 }}>Structured financial analytics via ITR portal credentials</p>
+                 </div>
+                 <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>One fetch per applicant — PAN + portal password</p>
                </div>
-               <div style={{ padding: 24 }}>
-                 {formData.itr_completed ? (
-                    <div style={{ padding: 20, backgroundColor: 'var(--success-subtle)', borderRadius: 'var(--radius)', border: '1px solid #A5D6A7' }}>
-                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#2E7D32', fontWeight: 600, marginBottom: 12 }}>
-                         <CheckCircle2 size={20} /> ITR Cached Successfully
-                       </div>
-                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, fontSize: 13, color: '#1B5E20' }}>
-                          <div><strong>Net Profit:</strong> ₹{formData.itr_profile?.net_profit?.toLocaleString()}</div>
-                          <div><strong>Taxes Paid:</strong> ₹{formData.itr_profile?.tax_paid?.toLocaleString()}</div>
-                       </div>
-                    </div>
-                 ) : (
-                 <ItrPullForm 
-                     caseId={caseId}
-                     customerId={formData.customer_id}
-                     prefillPan={formData.business_pan}
-                     walletBalance={walletBalance}
-                     itrCost={costs.ITR_FETCH}
-                     existingItrProfile={formData.itr_profile}
-                     onComplete={(profile) => setFormData(prev => ({...prev, itr_completed: true, itr_profile: profile}))}
-                 />
-                 )}
+               <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  <ItrAnalyticsForm
+                      caseId={caseId}
+                      customerId={formData.customer_id}
+                      applicantId={null}
+                      applicantType="PRIMARY"
+                      applicantName={formData.business_name || formData.business_pan || 'Primary Business'}
+                      prefillPan={formData.business_pan}
+                      walletBalance={walletBalance}
+                      itrCost={costs.ITR_ANALYTICS}
+                      onComplete={(data) => setFormData(prev => ({...prev, itr_completed: true, itr_analytics: data}))}
+                  />
+
+                  {formData.applicants && formData.applicants.map((coApp, idx) => (
+                      <ItrAnalyticsForm
+                          key={idx}
+                          caseId={caseId}
+                          customerId={formData.customer_id}
+                          applicantId={coApp.id}
+                          applicantType="CO_APPLICANT"
+                          applicantName={coApp.pan_number || `Co-Applicant ${idx + 1}`}
+                          prefillPan={coApp.pan_number || ''}
+                          walletBalance={walletBalance}
+                          itrCost={costs.ITR_ANALYTICS}
+                          onComplete={(data) => console.log(`Co-App ${idx} ITR complete`)}
+                      />
+                  ))}
+
+                  <div style={{ padding: '14px 16px', background: 'var(--primary-subtle)', borderRadius: 'var(--radius)', border: '1px solid #d0ccff', color: 'var(--primary-dark)', fontSize: 13 }}>
+                    ITR Analytics includes P&L, Balance Sheet, Ratio Analysis, and an Excel report downloadable per applicant.
+                  </div>
+               </div>
+            </div>
+
+            {/* Bank Statement Section */}
+            <div className="card">
+               <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                   <div style={{ fontSize: 20 }}>🏢</div> 
+                   <h3 style={{ fontSize: 16, fontWeight: 700 }}>Bank Statement Upload</h3>
+                 </div>
+                 <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>Upload 12-month bank statement for each applicant — PDF or Excel</p>
+               </div>
+               <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  <BankStatementUpload 
+                      caseId={caseId}
+                      customerId={formData.customer_id}
+                      applicantId={null} 
+                      applicantType="PRIMARY"
+                      applicantName={formData.business_name || formData.business_pan || 'Primary Business'}
+                      walletBalance={walletBalance}
+                      analyzeCost={costs.BANK_ANALYSIS}
+                      onComplete={(status, payload) => console.log('Primary bank complete')}
+                  />
+                  
+                  {formData.applicants && formData.applicants.map((coApp, idx) => (
+                      <BankStatementUpload 
+                          key={idx}
+                          caseId={caseId}
+                          customerId={formData.customer_id}
+                          applicantId={coApp.id} 
+                          applicantType="CO_APPLICANT"
+                          applicantName={coApp.pan_number || `Co-Applicant ${idx+1}`}
+                          walletBalance={walletBalance}
+                          analyzeCost={costs.BANK_ANALYSIS}
+                          onComplete={(status, payload) => console.log(`Co-App ${idx} bank complete`)}
+                      />
+                  ))}
+                  
+                  <div style={{ padding: '16px', background: 'var(--primary-subtle)', borderRadius: 'var(--radius)', border: '1px solid #d0ccff', color: 'var(--primary-dark)', fontSize: 13, marginTop: 8 }}>
+                    Bank statement analysis (average monthly balance, credits, debits) will appear in the next step's income summary.
+                  </div>
                </div>
             </div>
 

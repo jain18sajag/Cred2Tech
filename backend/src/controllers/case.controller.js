@@ -132,7 +132,7 @@ async function getSummary(req, res) {
            esr: false,
            bureau: hasSuccessLog('BUREAU_PULL'),
            gst: hasSuccessLog('GST_FETCH'),
-           itr: hasSuccessLog('ITR_FETCH')
+           itr: hasSuccessLog('ITR_ANALYTICS')
         }
      });
   } catch(error) {
