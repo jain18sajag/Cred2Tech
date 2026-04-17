@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
 import { CheckCircle2, AlertCircle, RefreshCw, FileText, Download } from 'lucide-react';
 import FormField from './ui/FormField';
+import api from '../api/axiosInstance';
 
 const GstAnalyticsForm = ({ caseId, customerId, onComplete }) => {
     const [mode, setMode] = useState('IN_SYSTEM');
@@ -29,14 +30,10 @@ const GstAnalyticsForm = ({ caseId, customerId, onComplete }) => {
 
     const fetchRequests = async () => {
         try {
-            const res = await fetch(`http://localhost:5000/external/gst/requests?case_id=${caseId}`, {
-                headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-            });
-            const data = await res.json();
-            if (data.success) {
-                setActiveRequests(data.data);
-                // check if any is completed
-                if (data.data.some(r => r.status === 'REPORT_READY' || r.status === 'COMPLETED')) {
+            const res = await api.get(`/external/gst/requests?case_id=${caseId}`);
+            if (res.data.success) {
+                setActiveRequests(res.data.data);
+                if (res.data.data.some(r => r.status === 'REPORT_READY' || r.status === 'COMPLETED')) {
                     onComplete && onComplete();
                 }
             }
@@ -73,15 +70,7 @@ const GstAnalyticsForm = ({ caseId, customerId, onComplete }) => {
                 pdf_url: true,
                 entity_details: true
             };
-
-            const res = await fetch(`http://localhost:5000/external/gst/create`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-                body: JSON.stringify(payload)
-            });
-
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Failed to create GST Request');
+            await api.post(`/external/gst/create`, payload);
 
             toast.success("GST Request initiated successfully");
             await fetchRequests();
@@ -89,7 +78,7 @@ const GstAnalyticsForm = ({ caseId, customerId, onComplete }) => {
             // clear sensitive
             setFormData(prev => ({...prev, password: ''}));
         } catch (error) {
-            toast.error(error.message);
+            toast.error(error.response?.data?.error || error.message);
         } finally {
             setLoading(false);
         }
@@ -101,19 +90,12 @@ const GstAnalyticsForm = ({ caseId, customerId, onComplete }) => {
 
         setLoading(true);
         try {
-            const res = await fetch(`http://localhost:5000/external/gst/submit-otp`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-                body: JSON.stringify({ request_id: requestId, otp })
-            });
-
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'OTP submission failed');
+            await api.post(`/external/gst/submit-otp`, { request_id: requestId, otp });
 
             toast.success("OTP Verified. Authorizing sync...");
             await fetchRequests();
         } catch (error) {
-            toast.error(error.message);
+            toast.error(error.response?.data?.error || error.message);
         } finally {
             setLoading(false);
         }
@@ -122,14 +104,8 @@ const GstAnalyticsForm = ({ caseId, customerId, onComplete }) => {
     const handleSync = async (requestId) => {
         setLoading(true);
         try {
-            const res = await fetch(`http://localhost:5000/external/gst/sync`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-                body: JSON.stringify({ request_id: requestId })
-            });
-
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Sync failed');
+            const res = await api.post(`/external/gst/sync`, { request_id: requestId });
+            const data = res.data;
 
             if (data.dataSynced || data.status === 'REPORT_READY') {
                 toast.success("Data synced successfully!");
@@ -138,7 +114,7 @@ const GstAnalyticsForm = ({ caseId, customerId, onComplete }) => {
             }
             await fetchRequests();
         } catch (error) {
-            toast.error(error.message);
+            toast.error(error.response?.data?.error || error.message);
         } finally {
             setLoading(false);
         }

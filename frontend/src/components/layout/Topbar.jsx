@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { Bell, HelpCircle, Wallet } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import Badge from '../ui/Badge';
+import api from '../../api/axiosInstance';
 
 const PAGE_TITLES = {
   '/': 'Dashboard',
@@ -28,11 +29,8 @@ const Topbar = () => {
 
   React.useEffect(() => {
      if (user?.role?.name === 'DSA_ADMIN' || user?.role?.name === 'DSA_MEMBER') {
-         fetch('http://localhost:5000/wallet/balance', {
-            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-         })
-         .then(res => res.json())
-         .then(data => setWalletBalance(data.balance))
+         api.get('/wallet/balance')
+         .then(res => setWalletBalance(res.data.balance))
          .catch(err => console.error(err));
      }
   }, [user, location.pathname]); // refetch softly on route change

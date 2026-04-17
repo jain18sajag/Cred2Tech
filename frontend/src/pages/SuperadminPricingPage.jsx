@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
 import { Settings, Save } from 'lucide-react';
 import FormField from '../components/ui/FormField';
+import api from '../api/axiosInstance';
 
 const SuperadminPricingPage = () => {
   const [pricing, setPricing] = useState([]);
@@ -15,11 +16,8 @@ const SuperadminPricingPage = () => {
 
   const fetchPricing = async () => {
     try {
-      const res = await fetch(`http://localhost:5000/admin/wallet/api-pricing`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-      });
-      const data = await res.json();
-      setPricing(data);
+      const res = await api.get(`/admin/wallet/api-pricing`);
+      setPricing(res.data);
     } catch (err) {
       toast.error('Failed to load pricing');
     } finally {
@@ -34,13 +32,7 @@ const SuperadminPricingPage = () => {
 
   const handleSave = async (id) => {
     try {
-      const res = await fetch(`http://localhost:5000/admin/wallet/api-pricing/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-        body: JSON.stringify(editForm)
-      });
-      
-      if (!res.ok) throw new Error('Failed to update');
+      await api.patch(`/admin/wallet/api-pricing/${id}`, editForm);
       toast.success('Pricing updated!');
       setEditingId(null);
       fetchPricing();

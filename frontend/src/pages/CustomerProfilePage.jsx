@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { customerService } from '../api/customerService';
 import { caseService } from '../api/caseService';
-import api from '../api/axiosConfig';
+import api from '../api/axiosInstance';
 import PageHeader from '../components/ui/PageHeader';
 import Badge from '../components/ui/Badge';
 import LoadingSpinner from '../components/ui/LoadingSpinner';

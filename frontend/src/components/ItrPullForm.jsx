@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
 import { CheckCircle2, AlertCircle, RefreshCw, FileText, Download } from 'lucide-react';
 import FormField from './ui/FormField';
+import api from '../api/axiosInstance';
 
 const ItrPullForm = ({ caseId, customerId, prefillPan, walletBalance, itrCost, onComplete, existingItrProfile }) => {
     const [authType, setAuthType] = useState('PASSWORD');
@@ -40,14 +41,8 @@ const ItrPullForm = ({ caseId, customerId, prefillPan, walletBalance, itrCost, o
                 payload.sessionId = formData.sessionId;
             }
 
-            const res = await fetch(`http://localhost:5000/external/itr/pull`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-                body: JSON.stringify(payload)
-            });
-
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Failed to pull ITR');
+            const res = await api.post(`/external/itr/pull`, payload);
+            const data = res.data;
 
             toast.success("ITR Data Pulled Successfully");
             setProfile(data.itrProfile);
@@ -56,7 +51,7 @@ const ItrPullForm = ({ caseId, customerId, prefillPan, walletBalance, itrCost, o
             // Clear sensitive fields from state immediately
             setFormData(prev => ({...prev, password: '', sessionId: ''}));
         } catch (error) {
-            toast.error(error.message);
+            toast.error(error.response?.data?.error || error.message);
         } finally {
             setLoading(false);
         }

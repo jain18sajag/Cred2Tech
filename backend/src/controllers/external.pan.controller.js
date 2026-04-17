@@ -200,7 +200,8 @@ exports.fetchPanIntelligence = async (req, res) => {
 
     } catch (error) {
         console.error('PAN Fetch error:', error);
-        res.status(error.status || 500).json({
+        const statusCode = error.status === 401 ? 502 : (error.status || 500);
+        res.status(statusCode).json({
             status: "FAILED",
             error_message: error.message
         });

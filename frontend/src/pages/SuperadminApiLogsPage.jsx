@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Activity, Clock, FileText, CheckCircle2, AlertCircle, XCircle } from 'lucide-react';
+import api from '../api/axiosInstance';
 
 const SuperadminApiLogsPage = () => {
   const [logs, setLogs] = useState([]);
@@ -20,10 +21,8 @@ const SuperadminApiLogsPage = () => {
 
   const fetchSummary = async () => {
      try {
-        const res = await fetch(`http://localhost:5000/admin/api-logs/summary`, {
-           headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-        });
-        setSummary(await res.json());
+         const res = await api.get(`/admin/api-logs/summary`);
+         setSummary(res.data);
      } catch (e) {
         console.error("Summary load fail");
      }
@@ -33,12 +32,9 @@ const SuperadminApiLogsPage = () => {
     try {
       setLoading(true);
       const q = new URLSearchParams(filters);
-      const res = await fetch(`http://localhost:5000/admin/api-logs?${q.toString()}`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-      });
-      const data = await res.json();
-      setLogs(data.logs || []);
-      setTotalPages(data.totalPages || 1);
+      const res = await api.get(`/admin/api-logs?${q.toString()}`);
+      setLogs(res.data.logs || []);
+      setTotalPages(res.data.totalPages || 1);
     } catch(err) {
       console.error(err);
     } finally {

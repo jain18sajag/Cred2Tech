@@ -10,6 +10,7 @@ import { Search, CheckCircle2, ChevronRight, Check, AlertCircle } from 'lucide-r
 import GstAnalyticsForm from '../components/GstAnalyticsForm';
 import ItrAnalyticsForm from '../components/ItrAnalyticsForm';
 import BankStatementUpload from '../components/BankStatementUpload';
+import api from '../api/axiosInstance';
 
 const AddCustomerWizardPage = () => {
   const navigate = useNavigate();
@@ -37,18 +38,18 @@ const AddCustomerWizardPage = () => {
   const [walletBalance, setWalletBalance] = useState(0);
 
   useEffect(() => {
-     fetch('http://localhost:5000/wallet/api-costs', { headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` } })
-       .then(res => res.json())
-       .then(data => {
+     api.get('/wallet/api-costs')
+       .then(res => {
+          const data = res.data;
           const gst = data.find(d => d.api_code === 'GST_FETCH')?.tenant_cost || 0;
           const itr = data.find(d => d.api_code === 'ITR_ANALYTICS')?.tenant_cost || 0;
           const bank = data.find(d => d.api_code === 'BANK_ANALYSIS')?.tenant_cost || 0;
           setCosts({ GST_FETCH: gst, ITR_ANALYTICS: itr, BANK_ANALYSIS: bank });
-       }).catch(console.error);
+       })
+       .catch(err => console.error(err));
 
-     fetch('http://localhost:5000/wallet/balance', { headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` } })
-       .then(res => res.json())
-       .then(data => setWalletBalance(data.balance))
+     api.get('/wallet/balance')
+       .then(res => setWalletBalance(res.data.balance))
        .catch(console.error);
   }, []);
 
@@ -152,42 +153,31 @@ const AddCustomerWizardPage = () => {
     return { targetCaseId, targetCustomerId };
   };
 
-  const handleVerifyPan = async () => {
+  const handleVerifyPan = async (isCoapplicant = false, idx = null) => {
     if (!formData.business_pan || formData.business_pan.length < 10) return toast.error('Valid PAN required');
     if (!formData.customer_id || !caseId) return toast.error('Please verify mobile first to generate a case');
     setPanVerifying(true);
     
     try {
-      const activeCustomerId = formData.customer_id;
-
-      const res = await fetch(`http://localhost:5000/external/pan/fetch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-        body: JSON.stringify({
-           customer_id: activeCustomerId,
-           case_id: caseId,
-           consentMethod: 'DIRECT_LOGIN',
-           pan: formData.business_pan
-        })
+      const res = await api.post(`/external/pan/fetch`, { 
+        pan_number: isCoapplicant ? formData.applicants[idx].pan_number : formData.business_pan, 
+        customer_id: formData.customer_id 
       });
-      const data = await res.json();
-      
-      if (!res.ok) throw new Error(data.error_message || data.error || 'Failed to verify PAN intelligence');
-      
-      const detailed = data.raw_response?.gstnDetailed?.[0] || {};
-      const generatedName = detailed.legalNameOfBusiness || detailed.tradeNameOfBusiness;
+      const data = res.data;
 
+      const entityName = data.providerResponse?.data?.full_name || data.providerResponse?.data?.entityName || '';
+      
       setFormData(prev => ({
          ...prev,
-         business_name: generatedName && !prev.business_name ? generatedName : prev.business_name,
+         business_name: entityName && !prev.business_name ? entityName : prev.business_name,
          pan_profile: data
       }));
 
       toast.success('PAN Verified Successfully!');
 
     } catch(err) {
-      const errMsg = typeof err === 'string' ? err : (err?.message || 'Failed to verify PAN');
-      toast.error(typeof errMsg === 'object' ? JSON.stringify(errMsg) : errMsg);
+      const errMsg = err.response?.data?.error || err.message || 'Failed to verify PAN';
+      toast.error(errMsg);
     } finally {
       setPanVerifying(false);
     }
@@ -208,8 +198,8 @@ const AddCustomerWizardPage = () => {
       else toast.success('OTP sent');
       
       setOtpModal({ isOpen: true, targetType: 'CUSTOMER', targetId: targetCustomerId, mobile: formData.business_mobile, purpose: 'PRIMARY_APPLICANT', otpInput: '', loading: false });
-    } catch(err) {
-      toast.error(err.message || 'Failed to send OTP');
+    } catch(e) {
+      toast.error(e.response?.data?.error || e.message);
     } finally {
       setSaving(false);
     }
@@ -335,30 +325,22 @@ const AddCustomerWizardPage = () => {
 
       setCurrentStep(2);
     } catch (error) {
-      toast.error(error.message || 'Failed to complete Step 1');
+      toast.error(error.response?.data?.error || error.message);
     } finally {
       setSaving(false);
     }
   };
 
-  const handleGenerateGst = async () => {
+  const handleGenerateGst = async (months) => {
     if (!formData.customer_id) return toast.error("Customer ID missing. Please go back and resave.");
-    const gstin = formData.business_pan + "1Z1"; // Extrapolate base mock GSTIN
     
     try {
       setSaving(true);
-      const res = await fetch(`http://localhost:5000/external/gst-fetch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-        body: JSON.stringify({
-           customer_id: formData.customer_id,
-           case_id: caseId,
-           consentMethod: 'DIRECT_LOGIN',
-           gstin: gstin
-        })
+      const res = await api.post(`/external/gst-fetch`, {
+         customer_id: formData.customer_id, case_id: caseId,
+         months, gstin: formData.gstin || '27XXXXX1234X1Z5'
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to fetch GST");
+      const data = res.data;
       
       setFormData(prev => ({...prev, gst_completed: true, gst_profile: data.gstProfile }));
       toast.success("GST Report Generated successfully!");
@@ -370,24 +352,17 @@ const AddCustomerWizardPage = () => {
     }
   };
 
-  const handleGenerateItr = async () => {
+  const handleGenerateItr = async (years) => {
     if (!formData.customer_id) return toast.error("Customer ID missing.");
     
     try {
       setSaving(true);
-      const res = await fetch(`http://localhost:5000/external/itr-fetch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-        body: JSON.stringify({
-           customer_id: formData.customer_id,
-           case_id: caseId,
-           consentMethod: 'DIRECT_LOGIN',
-           pan: formData.business_pan
-        })
+      const res = await api.post(`/external/itr-fetch`, {
+         customer_id: formData.customer_id, case_id: caseId,
+         years, pan: formData.business_pan
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to fetch ITR");
-      
+      const data = res.data;
+
       setFormData(prev => ({...prev, itr_completed: true, itr_profile: data.itrProfile }));
       toast.success("ITR Report Generated successfully!");
     } catch (err) {

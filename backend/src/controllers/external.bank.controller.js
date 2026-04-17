@@ -66,7 +66,8 @@ async function analyze(req, res) {
         console.error("Bank Analyze Error: ", error);
         
         let statusCode = 500;
-        if (error.status === 402) statusCode = 402;
+        if (error.status === 401) statusCode = 502; // Prevents frontend JWT interceptor logout
+        else if (error.status === 402) statusCode = 402;
         else if (error.status === 409) statusCode = 409;
         else if (error.status >= 400 && error.status < 500) statusCode = error.status;
 
@@ -120,7 +121,8 @@ async function syncStatus(req, res) {
         res.status(200).json({ success: true, status: mappedStatus, rawStatus: statusStr, requestData: updated });
     } catch (error) {
         console.error("Bank Sync Error: ", error);
-        res.status(error.status || 500).json({ error: error.message || "Failed to sync status" });
+        const statusCode = error.status === 401 ? 502 : (error.status || 500);
+        res.status(statusCode).json({ error: error.message || "Failed to sync status" });
     }
 }
 
@@ -159,7 +161,8 @@ async function downloadData(req, res) {
         res.status(200).json({ success: true, downloadUrls: { excel: excelUrl, json: jsonUrl }, requestData: updated });
     } catch (error) {
          console.error("Bank Download Error: ", error);
-         res.status(error.status || 500).json({ error: error.message || "Failed to download URLs" });
+         const statusCode = error.status === 401 ? 502 : (error.status || 500);
+         res.status(statusCode).json({ error: error.message || "Failed to download URLs" });
     }
 }
 

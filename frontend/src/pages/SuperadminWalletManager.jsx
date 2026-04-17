@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
 import { Briefcase, ArrowUpRight, ArrowDownRight, Clock } from 'lucide-react';
 import FormField from '../components/ui/FormField';
+import api from '../api/axiosInstance';
 
 const SuperadminWalletManager = () => {
   const [wallets, setWallets] = useState([]);
@@ -16,12 +17,9 @@ const SuperadminWalletManager = () => {
   const fetchWallets = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`http://localhost:5000/admin/wallet/tenants/wallets?page=${page}&limit=50`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-      });
-      const data = await res.json();
-      setWallets(data.tenants || []);
-      setTotalPages(data.totalPages || 1);
+      const res = await api.get(`/admin/wallet/tenants/wallets?page=${page}&limit=50`);
+      setWallets(res.data.tenants || []);
+      setTotalPages(res.data.totalPages || 1);
     } catch(err) { toast.error("Failed to load wallets"); }
     finally { setLoading(false); }
   };
@@ -30,20 +28,17 @@ const SuperadminWalletManager = () => {
      if (!modal.credits || modal.credits <= 0) return toast.error("Enter valid positive credits");
      try {
          setModal(prev => ({...prev, loading: true}));
-         const endpoint = `http://localhost:5000/admin/wallet/tenants/${modal.tenant.tenant_id}/wallet/${modal.type === 'TOPUP' ? 'topup' : 'deduct'}`;
-         const res = await fetch(endpoint, {
-             method: 'POST',
-             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-             body: JSON.stringify({ credits: parseInt(modal.credits, 10), remarks: modal.remarks })
+         const endpoint = `/admin/wallet/tenants/${modal.tenant.tenant_id}/wallet/${modal.type === 'TOPUP' ? 'topup' : 'deduct'}`;
+         await api.post(endpoint, {
+             credits: parseInt(modal.credits, 10),
+             remarks: modal.remarks
          });
-         const data = await res.json();
-         if (!res.ok) throw new Error(data.error);
 
          toast.success(`Successfully ${modal.type === 'TOPUP' ? 'added' : 'deducted'} credits!`);
          setModal({ isOpen: false, type: null, tenant: null, credits: '', remarks: '', loading: false });
          fetchWallets();
      } catch(err) {
-         toast.error(err.message);
+         toast.error(err.response?.data?.error || err.message);
          setModal(prev => ({...prev, loading: false}));
      }
   };

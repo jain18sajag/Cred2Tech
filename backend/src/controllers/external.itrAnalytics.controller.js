@@ -78,7 +78,7 @@ async function analyze(req, res) {
         });
     } catch (error) {
         console.error('ITR Analytics Analyze Error:', error);
-        const code = error.status === 402 ? 402 : error.status === 409 ? 409 : error.status >= 400 && error.status < 500 ? error.status : 500;
+        const code = error.status === 401 ? 502 : error.status === 402 ? 402 : error.status === 409 ? 409 : error.status >= 400 && error.status < 500 ? error.status : 500;
         res.status(code).json({ error: error.message || 'Failed to initiate ITR analytics' });
     }
 }
@@ -152,7 +152,8 @@ async function sync(req, res) {
             }).catch(() => {});
         }
 
-        res.status(error.status || 500).json({ error: error.message || 'Failed to sync ITR analytics' });
+        const statusCode = error.status === 401 ? 502 : (error.status || 500);
+        res.status(statusCode).json({ error: error.message || 'Failed to sync ITR analytics' });
     }
 }
 

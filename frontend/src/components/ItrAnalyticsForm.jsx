@@ -5,6 +5,7 @@ import {
     FileText, ChevronDown, ChevronUp, X
 } from 'lucide-react';
 import FormField from './ui/FormField';
+import api from '../api/axiosInstance';
 
 const ItrAnalyticsForm = ({
     caseId,
@@ -30,7 +31,6 @@ const ItrAnalyticsForm = ({
     const [isOpen, setIsOpen] = useState(false);
 
     const roleLabel = applicantType === 'PRIMARY' ? 'Primary Borrower' : 'Co-Applicant';
-    const token = () => localStorage.getItem('token');
 
     const handleAnalyze = async () => {
         if (!pan) return toast.error('PAN is required');
@@ -38,19 +38,14 @@ const ItrAnalyticsForm = ({
 
         setLoading(true);
         try {
-            const res = await fetch('http://localhost:5000/external/itr/analyze', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token()}` },
-                body: JSON.stringify({
-                    customer_id: customerId,
-                    case_id: caseId,
-                    applicant_id: applicantId,
-                    pan: pan.toUpperCase(),
-                    password
-                })
+            const res = await api.post('/external/itr/analyze', {
+                customer_id: customerId,
+                case_id: caseId,
+                applicant_id: applicantId,
+                pan: pan.toUpperCase(),
+                password
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Failed to initiate ITR analytics');
+            const data = res.data;
 
             toast.success('ITR analytics request submitted successfully');
             setReferenceId(data.referenceId);
@@ -58,7 +53,7 @@ const ItrAnalyticsForm = ({
             setIsOpen(false);
             setPassword(''); // Clear sensitive field immediately
         } catch (error) {
-            toast.error(error.message);
+            toast.error(error.response?.data?.error || error.message);
         } finally {
             setLoading(false);
         }
@@ -68,13 +63,8 @@ const ItrAnalyticsForm = ({
         if (!referenceId) return;
         setLoading(true);
         try {
-            const res = await fetch('http://localhost:5000/external/itr/sync', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token()}` },
-                body: JSON.stringify({ reference_id: referenceId })
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Failed to sync ITR analytics');
+            const res = await api.post('/external/itr/sync', { reference_id: referenceId });
+            const data = res.data;
 
             if (data.status === 'COMPLETED') {
                 setStatus('COMPLETED');
@@ -89,7 +79,7 @@ const ItrAnalyticsForm = ({
                 toast('Still processing... try again shortly', { icon: '⏳' });
             }
         } catch (error) {
-            toast.error(error.message);
+            toast.error(error.response?.data?.error || error.message);
         } finally {
             setLoading(false);
         }

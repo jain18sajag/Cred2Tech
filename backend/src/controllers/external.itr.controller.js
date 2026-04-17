@@ -83,7 +83,8 @@ async function pullItrData(req, res) {
         console.error("ITR Pull Error: ", error);
         
         let statusCode = 500;
-        if (error.status === 402) statusCode = 402; // Insufficient internal wallet credits
+        if (error.status === 401) statusCode = 502;
+        else if (error.status === 402) statusCode = 402; // Insufficient internal wallet credits
         else if (error.status === 409) statusCode = 409; // Upstream downstream
         else if (error.status >= 400 && error.status < 500) statusCode = error.status; // Provider validation fail
 

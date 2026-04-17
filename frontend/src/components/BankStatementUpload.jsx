@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
 import { CheckCircle2, AlertCircle, RefreshCw, UploadCloud, FileText, Briefcase, Plus, X, Download } from 'lucide-react';
+import api from '../api/axiosInstance';
 
 const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, applicantName, walletBalance, analyzeCost, existingStatus, onComplete }) => {
     const [status, setStatus] = useState(existingStatus?.status || 'INITIATED');
@@ -14,14 +15,6 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
     // UI state
     const [isUploadOpen, setIsUploadOpen] = useState(false);
     const [downloadAttempted, setDownloadAttempted] = useState(false);
-
-    useEffect(() => {
-        // Auto-fetch download links if the state is completed but links were never fetched
-        if (status === 'COMPLETED' && reportId && !downloads.excel && !downloads.json && !downloadAttempted) {
-            setDownloadAttempted(true);
-            fetchDownloads();
-        }
-    }, [status, reportId, downloads, downloadAttempted]);
 
     const handleFileChange = (index, field, value) => {
         const newFiles = [...files];
@@ -62,21 +55,15 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
                 files: validFiles
             };
 
-            const res = await fetch(`http://localhost:5000/external/bank/analyze`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-                body: JSON.stringify(payload)
-            });
-
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Failed to start analysis');
+            const res = await api.post(`/external/bank/analyze`, payload);
+            const data = res.data;
 
             toast.success("Bank Analysis Successfully Scheduled");
             setReportId(data.bankRequest.report_id);
             setStatus('ANALYZING');
             setIsUploadOpen(false); // Close the inline drop-down securely
         } catch (error) {
-            toast.error(error.message);
+            toast.error(error.response?.data?.error || error.message);
         } finally {
             setLoading(false);
         }
@@ -85,24 +72,18 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
     const pollStatus = async () => {
         try {
             setLoading(true);
-            const res = await fetch(`http://localhost:5000/external/bank/sync`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-                body: JSON.stringify({ report_id: reportId })
-            });
-            const data = await res.json();
+            const res = await api.post(`/external/bank/sync`, { report_id: reportId });
+            const data = res.data;
             
-            if (res.ok) {
-                setStatus(data.status);
+            setStatus(data.status);
                 if (data.status === 'COMPLETED') {
                     toast.success("Bank Analysis processing completed.");
                     await fetchDownloads();
                 } else if (data.status === 'FAILED') {
                     toast.error(`Analysis failed at provider: ${data.rawStatus || 'Unknown Error'}`);
                 }
-            }
         } catch (error) {
-            console.error("Sync error:", error);
+            console.error("Sync error:", error.response?.data?.error || error.message);
         } finally {
             setLoading(false);
         }
@@ -111,20 +92,15 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
     const fetchDownloads = async () => {
         setStatus('LOADING_LINKS');
         try {
-            const res = await fetch(`http://localhost:5000/external/bank/download`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-                body: JSON.stringify({ report_id: reportId })
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Failed to fetch download links');
+            const res = await api.post(`/external/bank/download`, { report_id: reportId });
+            const data = res.data;
             
             setDownloads(data.downloadUrls);
             setStatus('COMPLETED');
             onComplete && onComplete('COMPLETED', data.downloadUrls);
         } catch (error) {
             setStatus('FAILED_DOWNLOAD'); // Stop the loop by changing state
-            toast.error(error.message);
+            toast.error(error.response?.data?.error || error.message);
         }
     };
 
@@ -182,6 +158,11 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
                                 <a href={downloads.json} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px', color: '#64748b' }}>
                                     <FileText size={14} /> JSON
                                 </a>
+                            )}
+                            {(!downloads.pdf && !downloads.excel && !downloads.json) && (
+                                <button type="button" className="btn btn-primary btn-sm" style={{ fontWeight: 600 }} onClick={fetchDownloads} disabled={loading}>
+                                    {loading ? 'Fetching...' : 'Fetch Reports'}
+                                </button>
                             )}
                             <button type="button" className="btn btn-secondary btn-sm" style={{ fontWeight: 600, backgroundColor: '#f8fafc', borderColor: '#cbd5e1' }} onClick={() => setIsUploadOpen(!isUploadOpen)}>
                                 Replace
