@@ -1,4 +1,5 @@
 const axios = require('axios');
+const FormData = require('form-data');
 
 // Internal memory caching for simplistic auth token lifecycle management
 let _cachedToken = null;
@@ -8,10 +9,10 @@ let _tokenExpiry = null;
 function clearTokenCache() { _cachedToken = null; _tokenExpiry = null; }
 
 async function getProviderConfig() {
-    const rawBase = (process.env.SIGNZY_BASE_URL || 'https://api-preproduction.signzy.app').replace(/\/+$/, '');
-    const username = process.env.SIGNZY_USERNAME;
-    const password = process.env.SIGNZY_PASSWORD;
-    const apiKey   = process.env.SIGNZY_AUTH_TOKEN;
+    const rawBase = (process.env.SIGNZY_BASE_URL || 'https://api-preproduction.signzy.app').trim().replace(/\/+$/, '');
+    const username = process.env.SIGNZY_USERNAME?.trim();
+    const password = process.env.SIGNZY_PASSWORD?.trim();
+    const apiKey   = process.env.SIGNZY_AUTH_TOKEN?.trim();
 
     if (!username || !password) {
         throw new Error('Signzy provider config missing (SIGNZY_USERNAME / SIGNZY_PASSWORD for Statement Analysis)');
@@ -46,6 +47,25 @@ function handleResponse(response) {
     }
     // Signzy Statement analysis puts things directly on body or inside 'result'
     return response.data;
+}
+
+// Helper to convert base64 payload into Signzy's internal persisted file URL
+async function uploadFileToSignzy(base64Content, fileName) {
+    try {
+        const form = new FormData();
+        form.append('file', Buffer.from(base64Content, 'base64'), { filename: fileName || 'statement.pdf' });
+        
+        const res = await axios.post('https://persist.signzy.tech/api/files/upload', form, {
+            headers: { ...form.getHeaders() }
+        });
+        
+        if (res.data?.file?.directURL) {
+            return res.data.file.directURL;
+        }
+        throw new Error('No directURL received from Signzy persist API');
+    } catch (error) {
+        throw new Error(`Signzy File Upload Error: ${error.message}`);
+    }
 }
 
 async function authenticate() {
@@ -84,15 +104,25 @@ async function authenticate() {
 
 async function analyzeStatement(filesPayload) {
     const token = await authenticate();
-    const { apiBase } = await getProviderConfig();
+    const { apiBase, apiKey } = await getProviderConfig();
     
     try {
+        const preparedFiles = [];
+        for (const fileObj of filesPayload) {
+            if (fileObj.fileBase64) {
+                const url = await uploadFileToSignzy(fileObj.fileBase64, fileObj.fileName);
+                preparedFiles.push({ fileUrl: url, password: fileObj.password || undefined });
+            } else if (fileObj.fileUrl) {
+                preparedFiles.push({ fileUrl: fileObj.fileUrl, password: fileObj.password || undefined });
+            }
+        }
+
         const response = await axios.post(
             `${apiBase}/statementanalysis/analyze-statement`,
-            { files: filesPayload },
+            { authToken: token, files: preparedFiles },
             {
                 headers: {
-                    'Authorization': `Bearer ${token}`,
+                    'Authorization': apiKey,
                     'Content-Type': 'application/json'
                 }
             }
@@ -105,15 +135,15 @@ async function analyzeStatement(filesPayload) {
 
 async function retrieveWorkOrder(reportId) {
     const token = await authenticate();
-    const { apiBase } = await getProviderConfig();
+    const { apiBase, apiKey } = await getProviderConfig();
     
     try {
         const response = await axios.post(
             `${apiBase}/statementanalysis/retrieve-work-order`,
-            { reportId },
+            { authToken: token, reportId },
             {
                 headers: {
-                    'Authorization': `Bearer ${token}`,
+                    'Authorization': apiKey,
                     'Content-Type': 'application/json'
                 }
             }
@@ -126,15 +156,15 @@ async function retrieveWorkOrder(reportId) {
 
 async function downloadReport(reportId, fileType = 'excel and json') {
     const token = await authenticate();
-    const { apiBase } = await getProviderConfig();
+    const { apiBase, apiKey } = await getProviderConfig();
     
     try {
         const response = await axios.post(
             `${apiBase}/statementanalysis/download-report`,
-            { reportId, fileType },
+            { authToken: token, reportId, fileType },
             {
                 headers: {
-                    'Authorization': `Bearer ${token}`,
+                    'Authorization': apiKey,
                     'Content-Type': 'application/json'
                 }
             }

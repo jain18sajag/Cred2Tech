@@ -27,11 +27,12 @@ async function analyze(req, res) {
                 // Trigger provider API securely isolated in backend
                 const providerRes = await bankService.analyzeStatement(files);
                 
-                // Assuming providerRes returns an object with reportId
-                const reportId = providerRes.reportId || providerRes.result?.reportId || providerRes.id;
+                // Assuming providerRes returns an object with report or result
+                const reportId = providerRes.report?.reportId || providerRes.reportId || providerRes.result?.reportId || providerRes.id;
                 
                 if (!reportId) {
-                    throw new Error("Failed to extract reportId from provider response");
+                    console.error("[SIGNZY BANK ANALYZE - UNEXPECTED RESPONSE PAYLOAD]:", JSON.stringify(providerRes, null, 2));
+                    throw new Error(`Failed to extract reportId from provider response. Provider returned: ${JSON.stringify(providerRes).substring(0, 150)}`);
                 }
 
                 const bankRequest = await prisma.bankStatementAnalysisRequest.create({
@@ -43,6 +44,7 @@ async function analyze(req, res) {
                         report_id: reportId.toString(),
                         status: 'ANALYZING',
                         files_payload: files,
+                        raw_analyze_response: providerRes,
                         created_by_user_id: userId
                     }
                 });
@@ -89,7 +91,7 @@ async function syncStatus(req, res) {
         }
 
         const providerRes = await bankService.retrieveWorkOrder(report_id);
-        const statusStr = providerRes.status || providerRes.result?.status;
+        const statusStr = providerRes.report?.reportStatus || providerRes.status || providerRes.result?.status;
 
         // Map provider status
         let mappedStatus = existingRequest.status;
@@ -101,7 +103,8 @@ async function syncStatus(req, res) {
             where: { report_id },
             data: { 
                 status: mappedStatus,
-                provider_message: statusStr
+                provider_message: statusStr,
+                raw_retrieve_response: providerRes
             }
         });
 
@@ -148,7 +151,8 @@ async function downloadData(req, res) {
             where: { report_id },
             data: {
                 report_excel_url: excelUrl,
-                report_json_url: jsonUrl
+                report_json_url: jsonUrl,
+                raw_download_response: providerRes
             }
         });
 

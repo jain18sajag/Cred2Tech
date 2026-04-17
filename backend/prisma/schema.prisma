@@ -218,6 +218,7 @@ model Case {
   gst_requests     GstrAnalyticsRequest[]
   bank_statements  BankStatementAnalysisRequest[]
   itr_analytics    ItrAnalyticsRequest[]
+  bureau_checks    BureauVerification[]
 
   @@map("cases")
 }
@@ -244,6 +245,7 @@ model Applicant {
   case            Case          @relation(fields: [case_id], references: [id], onDelete: Cascade)
   bank_statements BankStatementAnalysisRequest[]
   itr_analytics   ItrAnalyticsRequest[]
+  bureau_checks   BureauVerification[]
 
   @@map("applicants")
 }
@@ -581,6 +583,11 @@ model BankStatementAnalysisRequest {
   report_json_url    String?
   report_excel_url   String?
   files_payload      Json?
+  
+  raw_analyze_response   Json?
+  raw_retrieve_response  Json?
+  raw_download_response  Json?
+
   wallet_transaction_id Int?
   
   created_at         DateTime @default(now())
@@ -616,6 +623,40 @@ model CaseDataPullStatus {
   case_entity Case @relation(fields: [case_id], references: [id])
 
   @@map("case_data_pull_statuses")
+}
+
+// --- Bureau Verification Models ---
+
+model BureauVerification {
+  id                String   @id @default(uuid())
+  case_id           Int
+  applicant_id      Int
+  applicant_type    String   // PRIMARY or CO_APPLICANT
+  request_id        String   @unique
+  stan              String
+  mobile_number     String
+  score             String?
+  raw_response      Json?
+  status            String
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  case_entity       Case      @relation(fields: [case_id], references: [id])
+  applicant         Applicant @relation(fields: [applicant_id], references: [id])
+
+  @@map("bureau_verifications")
+}
+
+model BureauVerificationLog {
+  id                String   @id @default(uuid())
+  case_id           Int
+  applicant_id      Int
+  request_payload   Json
+  response_payload  Json
+  status            String
+  created_at        DateTime @default(now())
+
+  @@map("bureau_verification_logs")
 }
 
 // --- Lender Configuration Matrix Models ---

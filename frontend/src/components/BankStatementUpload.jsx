@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
-import { CheckCircle2, AlertCircle, RefreshCw, UploadCloud, FileText, Briefcase, Plus, X } from 'lucide-react';
+import { CheckCircle2, AlertCircle, RefreshCw, UploadCloud, FileText, Briefcase, Plus, X, Download } from 'lucide-react';
 
 const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, applicantName, walletBalance, analyzeCost, existingStatus, onComplete }) => {
     const [status, setStatus] = useState(existingStatus?.status || 'INITIATED');
@@ -13,6 +13,15 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
     
     // UI state
     const [isUploadOpen, setIsUploadOpen] = useState(false);
+    const [downloadAttempted, setDownloadAttempted] = useState(false);
+
+    useEffect(() => {
+        // Auto-fetch download links if the state is completed but links were never fetched
+        if (status === 'COMPLETED' && reportId && !downloads.excel && !downloads.json && !downloadAttempted) {
+            setDownloadAttempted(true);
+            fetchDownloads();
+        }
+    }, [status, reportId, downloads, downloadAttempted]);
 
     const handleFileChange = (index, field, value) => {
         const newFiles = [...files];
@@ -114,7 +123,7 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
             setStatus('COMPLETED');
             onComplete && onComplete('COMPLETED', data.downloadUrls);
         } catch (error) {
-            setStatus('COMPLETED'); // Fallback to completed state
+            setStatus('FAILED_DOWNLOAD'); // Stop the loop by changing state
             toast.error(error.message);
         }
     };
@@ -137,6 +146,7 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
                     {status === 'INITIATED' && "No statement uploaded yet"}
                     {status === 'ANALYZING' && <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><RefreshCw size={14} className="spin" color="var(--warning)" /> Auto-Scanning Statements...</span>}
                     {status === 'FAILED' && <span style={{ color: 'var(--error)' }}>Failed to process. Try again.</span>}
+                    {status === 'FAILED_DOWNLOAD' && <span style={{ color: 'var(--error)' }}>Analysis Complete but Failed to retrieve secure links.</span>}
                     {status === 'COMPLETED' && "Statement processed and analysed"}
                     {status === 'LOADING_LINKS' && "Retrieving secure reports..."}
                 </div>
@@ -145,7 +155,7 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'flex-end' }}>
                     
                     {/* Status Pills */}
-                    {status === 'COMPLETED' ? (
+                    {(status === 'COMPLETED' || status === 'FAILED_DOWNLOAD') ? (
                         <span style={{ background: '#dcfce7', color: '#166534', padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
                             <CheckCircle2 size={14} /> Uploaded
                         </span>
@@ -158,15 +168,29 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
                     {/* Action Buttons */}
                     {status === 'COMPLETED' ? (
                         <div style={{ display: 'flex', gap: 8 }}>
+                            {downloads.pdf && (
+                                <a href={downloads.pdf} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px' }}>
+                                    <FileText size={14} /> PDF
+                                </a>
+                            )}
                             {downloads.excel && (
-                                <a href={downloads.excel} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" title="Download Excel" style={{ padding: '0 8px' }}>
-                                    <FileText size={16} />
+                                <a href={downloads.excel} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px' }}>
+                                    <Download size={14} /> Excel
+                                </a>
+                            )}
+                            {downloads.json && (
+                                <a href={downloads.json} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px', color: '#64748b' }}>
+                                    <FileText size={14} /> JSON
                                 </a>
                             )}
                             <button type="button" className="btn btn-secondary btn-sm" style={{ fontWeight: 600, backgroundColor: '#f8fafc', borderColor: '#cbd5e1' }} onClick={() => setIsUploadOpen(!isUploadOpen)}>
                                 Replace
                             </button>
                         </div>
+                    ) : status === 'FAILED_DOWNLOAD' ? (
+                        <button type="button" className="btn btn-sm" style={{ backgroundColor: '#fee2e2', color: '#b91c1c', borderColor: '#fca5a5', fontWeight: 600 }} onClick={() => { setDownloadAttempted(false); fetchDownloads(); }} disabled={loading}>
+                            {loading ? '...' : 'Retry Download'}
+                        </button>
                     ) : status === 'ANALYZING' ? (
                         <button type="button" className="btn btn-sm" style={{ backgroundColor: '#fef3c7', color: '#92400e', borderColor: '#fcd34d', fontWeight: 600 }} onClick={pollStatus} disabled={loading}>
                             {loading ? '...' : 'Check Status'}

@@ -38,6 +38,7 @@ const adminApiLogsRoutes = require('./routes/adminApiLogs.routes');
 const adminTenantRoutes = require('./routes/admin.tenant.routes');
 const adminLenderRoutes = require('./routes/admin.lender.routes');
 const externalApiRoutes = require('./routes/externalApi.routes');
+const bureauRoutes = require('./routes/bureau.routes');
 
 app.use('/auth', authRoutes);
 app.use('/users', userRoutes);
@@ -53,6 +54,7 @@ app.use('/admin/api-logs', adminApiLogsRoutes);
 app.use('/admin/tenants', adminTenantRoutes);
 app.use('/admin/lenders', adminLenderRoutes);
 app.use('/external', externalApiRoutes);
+app.use('/verification', bureauRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err.stack);

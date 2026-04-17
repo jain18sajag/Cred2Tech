@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { customerService } from '../api/customerService';
 import { caseService } from '../api/caseService';
+import api from '../api/axiosConfig';
 import PageHeader from '../components/ui/PageHeader';
 import Badge from '../components/ui/Badge';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
@@ -31,6 +32,19 @@ const CustomerProfilePage = () => {
         };
         fetchAll();
     }, [customer_id]);
+
+    const handleFetchBureau = async () => {
+        if (!profile?.case_id) return toast.error("No active case found to run Bureau checks on.");
+        try {
+            setLoading(true);
+            const res = await api.post(`/verification/bureau/run/${profile.case_id}`);
+            if(res.data.status === 'SUCCESS') window.location.reload();
+        } catch(e) {
+            alert(e.response?.data?.error || "Bureau fetch failed");
+        } finally {
+            setLoading(false);
+        }
+    };
 
     if(loading) return <div className="p-8 flex justify-center"><LoadingSpinner /></div>;
     if(!profile) return <div className="p-8 text-center text-gray-500">Failed to map customer profile payload. Ensure tenant bindings map securely.</div>;
@@ -108,7 +122,7 @@ const CustomerProfilePage = () => {
                       <div className="mt-6 pt-4 border-t">
                           <h4 className="text-sm font-semibold mb-3">Instant Execution Actions</h4>
                           <div className="flex flex-col gap-2">
-                              <button className="btn btn-primary w-full justify-center" disabled={!availability?.can_pull_bureau}>
+                              <button className="btn btn-primary w-full justify-center" onClick={handleFetchBureau} disabled={!availability?.can_pull_bureau}>
                                   Fetch Bureau Score
                               </button>
                               <button className="btn btn-primary w-full justify-center" disabled={!availability?.can_pull_gst}>

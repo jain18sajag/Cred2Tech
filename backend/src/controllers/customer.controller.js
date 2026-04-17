@@ -89,6 +89,7 @@ async function getProfile(req, res) {
 
     res.json({
        customer_id: customer.id,
+       case_id: latestCase.id,
        customer_name: customer.business_name || 'N/A',
        entity_type: customer.entity_type,
        industry: customer.industry,
@@ -145,6 +146,7 @@ async function getApiAvailability(req, res) {
      const otpVerified = primaryApplicant ? primaryApplicant.otp_verified : false;
 
      res.json({
+        case_id: latestCase.id,
         can_pull_gst: apiStatus.gst !== 'COMPLETE',
         can_pull_itr: apiStatus.itr !== 'COMPLETE',
         can_pull_bureau: apiStatus.bureau !== 'COMPLETE' && otpVerified,

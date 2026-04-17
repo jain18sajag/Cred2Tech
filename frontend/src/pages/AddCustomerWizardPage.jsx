@@ -104,7 +104,8 @@ const AddCustomerWizardPage = () => {
         gst_completed: caseData.data_pull_status?.gst_status === 'COMPLETE',
         gst_profile: caseData.customer?.gst_profiles?.[0]?.raw_response || null,
         itr_completed: caseData.data_pull_status?.itr_status === 'COMPLETE',
-        itr_profile: caseData.customer?.itr_profiles?.[0]?.raw_response || null
+        customer_itr_profile: caseData.customer?.itr_analytics?.[0] || null,
+        customer_bank_profile: caseData.customer?.bank_statements?.[0] || null
       });
 
       if (caseData.applicants && caseData.applicants.length > 0) {
@@ -596,6 +597,7 @@ const AddCustomerWizardPage = () => {
                       prefillPan={formData.business_pan}
                       walletBalance={walletBalance}
                       itrCost={costs.ITR_ANALYTICS}
+                      existingRecord={formData.customer_itr_profile}
                       onComplete={(data) => setFormData(prev => ({...prev, itr_completed: true, itr_analytics: data}))}
                   />
 
@@ -610,6 +612,7 @@ const AddCustomerWizardPage = () => {
                           prefillPan={coApp.pan_number || ''}
                           walletBalance={walletBalance}
                           itrCost={costs.ITR_ANALYTICS}
+                          existingRecord={coApp.itr_analytics?.[0] || null}
                           onComplete={(data) => console.log(`Co-App ${idx} ITR complete`)}
                       />
                   ))}
@@ -638,6 +641,7 @@ const AddCustomerWizardPage = () => {
                       applicantName={formData.business_name || formData.business_pan || 'Primary Business'}
                       walletBalance={walletBalance}
                       analyzeCost={costs.BANK_ANALYSIS}
+                      existingStatus={formData.customer_bank_profile}
                       onComplete={(status, payload) => console.log('Primary bank complete')}
                   />
                   
@@ -651,6 +655,7 @@ const AddCustomerWizardPage = () => {
                           applicantName={coApp.pan_number || `Co-Applicant ${idx+1}`}
                           walletBalance={walletBalance}
                           analyzeCost={costs.BANK_ANALYSIS}
+                          existingStatus={coApp.bank_statements?.[0] || null}
                           onComplete={(status, payload) => console.log(`Co-App ${idx} bank complete`)}
                       />
                   ))}
