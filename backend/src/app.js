@@ -40,21 +40,25 @@ const adminLenderRoutes = require('./routes/admin.lender.routes');
 const externalApiRoutes = require('./routes/externalApi.routes');
 const bureauRoutes = require('./routes/bureau.routes');
 
-app.use('/auth', authRoutes);
-app.use('/users', userRoutes);
-app.use('/tenants', tenantRoutes);
-app.use('/analytics', analyticsRoutes);
-app.use('/roles', roleRoutes);
-app.use('/customers', customerRoutes);
-app.use('/cases', caseRoutes);
-app.use('/otp', otpRoutes);
-app.use('/wallet', dsaWalletRoutes);
-app.use('/admin/wallet', adminWalletRoutes);
-app.use('/admin/api-logs', adminApiLogsRoutes);
-app.use('/admin/tenants', adminTenantRoutes);
-app.use('/admin/lenders', adminLenderRoutes);
-app.use('/external', externalApiRoutes);
-app.use('/verification', bureauRoutes);
+const apiRouter = express.Router();
+
+apiRouter.use('/auth', authRoutes);
+apiRouter.use('/users', userRoutes);
+apiRouter.use('/tenants', tenantRoutes);
+apiRouter.use('/analytics', analyticsRoutes);
+apiRouter.use('/roles', roleRoutes);
+apiRouter.use('/customers', customerRoutes);
+apiRouter.use('/cases', caseRoutes);
+apiRouter.use('/otp', otpRoutes);
+apiRouter.use('/wallet', dsaWalletRoutes);
+apiRouter.use('/admin/wallet', adminWalletRoutes);
+apiRouter.use('/admin/api-logs', adminApiLogsRoutes);
+apiRouter.use('/admin/tenants', adminTenantRoutes);
+apiRouter.use('/admin/lenders', adminLenderRoutes);
+apiRouter.use('/external', externalApiRoutes);
+apiRouter.use('/verification', bureauRoutes);
+
+app.use('/api', apiRouter);
 
 app.use((err, req, res, next) => {
   console.error(err.stack);
