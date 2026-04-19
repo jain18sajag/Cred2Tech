@@ -2,16 +2,26 @@ import React, { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
 import { CheckCircle2, AlertCircle, RefreshCw, UploadCloud, FileText, Briefcase, Plus, X, Download } from 'lucide-react';
 import api from '../api/axiosInstance';
+import { downloadDocument } from '../api/documentHelper';
 
 const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, applicantName, walletBalance, analyzeCost, existingStatus, onComplete }) => {
     const [status, setStatus] = useState(existingStatus?.status || 'INITIATED');
     const [reportId, setReportId] = useState(existingStatus?.report_id || null);
-    const [downloads, setDownloads] = useState({ excel: existingStatus?.report_excel_url, json: existingStatus?.report_json_url });
-    
+    // documentIds: our internal stored file IDs — used for secure serving via /api/documents/:id
+    const [documentIds, setDocumentIds] = useState({
+        excel: existingStatus?.bank_excel_document_id || null,
+        json: existingStatus?.bank_json_document_id || null,
+    });
+    // sourceUrls: vendor URLs kept as audit fallback only for pre-existing records
+    const [sourceUrls, setSourceUrls] = useState({
+        excel: existingStatus?.report_excel_url || null,
+        json: existingStatus?.report_json_url || null,
+    });
+
     // Store physical file data
     const [files, setFiles] = useState([{ fileName: '', fileBase64: '', password: '' }]);
     const [loading, setLoading] = useState(false);
-    
+
     // UI state
     const [isUploadOpen, setIsUploadOpen] = useState(false);
     const [downloadAttempted, setDownloadAttempted] = useState(false);
@@ -25,7 +35,7 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
     const handleFileUpload = (index, e) => {
         const file = e.target.files[0];
         if (!file) return;
-        
+
         const reader = new FileReader();
         reader.readAsDataURL(file);
         reader.onload = () => {
@@ -74,14 +84,14 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
             setLoading(true);
             const res = await api.post(`/external/bank/sync`, { report_id: reportId });
             const data = res.data;
-            
+
             setStatus(data.status);
-                if (data.status === 'COMPLETED') {
-                    toast.success("Bank Analysis processing completed.");
-                    await fetchDownloads();
-                } else if (data.status === 'FAILED') {
-                    toast.error(`Analysis failed at provider: ${data.rawStatus || 'Unknown Error'}`);
-                }
+            if (data.status === 'COMPLETED') {
+                toast.success("Bank Analysis processing completed.");
+                await fetchDownloads();
+            } else if (data.status === 'FAILED') {
+                toast.error(`Analysis failed at provider: ${data.rawStatus || 'Unknown Error'}`);
+            }
         } catch (error) {
             console.error("Sync error:", error.response?.data?.error || error.message);
         } finally {
@@ -94,12 +104,22 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
         try {
             const res = await api.post(`/external/bank/download`, { report_id: reportId });
             const data = res.data;
-            
-            setDownloads(data.downloadUrls);
+
+            if (res.status === 202 || data.success === false) {
+                setStatus('COMPLETED'); // Keep state as COMPLETED so button remains
+                toast(data.message || 'Report is still generating. Please click Fetch Reports again in a few minutes.', {
+                    icon: '⏳',
+                });
+                return;
+            }
+
+            // Prefer internal document IDs for serving — fall back to source URLs for old records
+            setDocumentIds(data.documentIds || { excel: null, json: null });
+            setSourceUrls(data.sourceUrls || { excel: null, json: null });
             setStatus('COMPLETED');
-            onComplete && onComplete('COMPLETED', data.downloadUrls);
+            onComplete && onComplete('COMPLETED', data.documentIds);
         } catch (error) {
-            setStatus('FAILED_DOWNLOAD'); // Stop the loop by changing state
+            setStatus('FAILED_DOWNLOAD');
             toast.error(error.response?.data?.error || error.message);
         }
     };
@@ -129,7 +149,7 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
 
                 {/* Right: Actions */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'flex-end' }}>
-                    
+
                     {/* Status Pills */}
                     {(status === 'COMPLETED' || status === 'FAILED_DOWNLOAD') ? (
                         <span style={{ background: '#dcfce7', color: '#166534', padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -144,22 +164,40 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
                     {/* Action Buttons */}
                     {status === 'COMPLETED' ? (
                         <div style={{ display: 'flex', gap: 8 }}>
-                            {downloads.pdf && (
-                                <a href={downloads.pdf} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px' }}>
-                                    <FileText size={14} /> PDF
-                                </a>
+                            {/* Prefer internal document IDs; fall back to source URL for legacy records */}
+                            {(documentIds.excel || sourceUrls.excel) && (
+                                documentIds.excel ? (
+                                    <button
+                                        type="button"
+                                        className="btn btn-secondary btn-sm"
+                                        style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px' }}
+                                        onClick={() => downloadDocument(documentIds.excel, 'bank_statement.xlsx').catch(e => toast.error(e.message))}
+                                    >
+                                        <Download size={14} /> Excel
+                                    </button>
+                                ) : (
+                                    <a href={sourceUrls.excel} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px' }}>
+                                        <Download size={14} /> Excel
+                                    </a>
+                                )
                             )}
-                            {downloads.excel && (
-                                <a href={downloads.excel} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px' }}>
-                                    <Download size={14} /> Excel
-                                </a>
+                            {(documentIds.json || sourceUrls.json) && (
+                                documentIds.json ? (
+                                    <button
+                                        type="button"
+                                        className="btn btn-ghost btn-sm"
+                                        style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px', color: '#64748b' }}
+                                        onClick={() => downloadDocument(documentIds.json, 'bank_statement.json').catch(e => toast.error(e.message))}
+                                    >
+                                        <FileText size={14} /> JSON
+                                    </button>
+                                ) : (
+                                    <a href={sourceUrls.json} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px', color: '#64748b' }}>
+                                        <FileText size={14} /> JSON
+                                    </a>
+                                )
                             )}
-                            {downloads.json && (
-                                <a href={downloads.json} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px', color: '#64748b' }}>
-                                    <FileText size={14} /> JSON
-                                </a>
-                            )}
-                            {(!downloads.pdf && !downloads.excel && !downloads.json) && (
+                            {(!documentIds.excel && !documentIds.json && !sourceUrls.excel && !sourceUrls.json) && (
                                 <button type="button" className="btn btn-primary btn-sm" style={{ fontWeight: 600 }} onClick={fetchDownloads} disabled={loading}>
                                     {loading ? 'Fetching...' : 'Fetch Reports'}
                                 </button>
@@ -188,7 +226,7 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
             {isUploadOpen && (
                 <div style={{ padding: '24px', backgroundColor: '#f8fafc', borderTop: '1px solid var(--border)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-                        <UploadCloud size={18} color="#64748b" /> 
+                        <UploadCloud size={18} color="#64748b" />
                         <span style={{ fontWeight: 600, fontSize: 14 }}>Upload Statements Securely</span>
                     </div>
 
@@ -204,22 +242,22 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
                                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                                         <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>Select Bank Statement</label>
-                                        <input 
-                                            type="file" 
+                                        <input
+                                            type="file"
                                             accept=".pdf,.xlsx,.xls"
-                                            className="form-control" 
-                                            onChange={e => handleFileUpload(index, e)} 
+                                            className="form-control"
+                                            onChange={e => handleFileUpload(index, e)}
                                             style={{ backgroundColor: '#f1f5f9', border: '1px dashed #cbd5e1', padding: '10px' }}
                                         />
                                         {file.fileName && <div style={{ fontSize: 12, color: 'var(--success)', marginTop: 4 }}>✓ Attached: {file.fileName}</div>}
                                     </div>
-                                    
-                                    <input 
-                                        type="text" 
-                                        className="form-control" 
-                                        placeholder="PDF Password (Optional - if your bank locks the statement)" 
-                                        value={file.password} 
-                                        onChange={e => handleFileChange(index, 'password', e.target.value)} 
+
+                                    <input
+                                        type="text"
+                                        className="form-control"
+                                        placeholder="PDF Password (Optional - if your bank locks the statement)"
+                                        value={file.password}
+                                        onChange={e => handleFileChange(index, 'password', e.target.value)}
                                         style={{ backgroundColor: '#f1f5f9', border: 'none', borderLeft: '3px solid #fcd34d' }}
                                     />
                                 </div>

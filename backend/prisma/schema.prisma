@@ -65,6 +65,7 @@ model Tenant {
   gst_requests          GstrAnalyticsRequest[]
   bank_statements       BankStatementAnalysisRequest[]
   itr_analytics         ItrAnalyticsRequest[]
+  documents             Document[]
 
   @@map("tenants")
 }
@@ -134,6 +135,7 @@ model Customer {
   gst_requests    GstrAnalyticsRequest[]
   bank_statements BankStatementAnalysisRequest[]
   itr_analytics   ItrAnalyticsRequest[]
+  documents       Document[]
 
   @@unique([tenant_id, business_pan])
   @@map("customers")
@@ -219,6 +221,7 @@ model Case {
   bank_statements  BankStatementAnalysisRequest[]
   itr_analytics    ItrAnalyticsRequest[]
   bureau_checks    BureauVerification[]
+  documents        Document[]
 
   @@map("cases")
 }
@@ -246,6 +249,7 @@ model Applicant {
   bank_statements BankStatementAnalysisRequest[]
   itr_analytics   ItrAnalyticsRequest[]
   bureau_checks   BureauVerification[]
+  documents       Document[]
 
   @@map("applicants")
 }
@@ -508,12 +512,16 @@ model GstrAnalyticsRequest {
   status             GstrAnalyticsStatus @default(INITIATED)
   provider_message   String?
   raw_gst_data       Json?
-  report_json_url    String?
-  report_excel_url   String?
-  report_pdf_url     String?
+  report_json_url    String?   // Source audit URL — NOT used for serving
+  report_excel_url   String?   // Source audit URL — NOT used for serving
+  report_pdf_url     String?   // Source audit URL — NOT used for serving
   callback_payload   Json?
   wallet_transaction_id Int?
   otp_attempts       Int      @default(0)
+  // Document storage references (populated after vendor URL ingestion)
+  gst_pdf_document_id   Int?
+  gst_excel_document_id Int?
+  gst_json_document_id  Int?
   created_at         DateTime @default(now())
   updated_at         DateTime @updatedAt
   created_by_user_id Int
@@ -545,9 +553,11 @@ model ItrAnalyticsRequest {
   pan                String
   reference_id       String?            @unique
   status             ItrAnalyticsStatus @default(INITIATED)
-  excel_url          String?
+  excel_url          String?            // Source audit URL — NOT used for serving
   analytics_payload  Json?
   provider_message   String?
+  // Document storage reference (populated after vendor URL ingestion)
+  itr_document_id    Int?
   created_at         DateTime           @default(now())
   updated_at         DateTime           @updatedAt
   created_by_user_id Int
@@ -589,6 +599,10 @@ model BankStatementAnalysisRequest {
   raw_download_response  Json?
 
   wallet_transaction_id Int?
+
+  // Document storage references (populated after vendor URL ingestion)
+  bank_excel_document_id Int?
+  bank_json_document_id  Int?
   
   created_at         DateTime @default(now())
   updated_at         DateTime @updatedAt
@@ -747,4 +761,77 @@ model SchemeParameterValue {
 
   @@unique([scheme_id, parameter_id])
   @@map("scheme_parameter_values")
+}
+
+// ─── Document Storage System ──────────────────────────────────────────────────
+
+enum DocumentType {
+  GST_REPORT_PDF
+  GST_REPORT_EXCEL
+  GST_REPORT_JSON
+  ITR_EXCEL
+  BANK_EXCEL
+  BANK_JSON
+  OTHER
+}
+
+enum DocumentSource {
+  VENDOR_DOWNLOAD   // Downloaded from a vendor-provided URL (Signzy etc.)
+  DIRECT_UPLOAD     // Uploaded directly by user
+  SYSTEM_GENERATED  // Created internally
+}
+
+enum DocumentStatus {
+  ACTIVE
+  FAILED
+  DELETED
+}
+
+enum StorageProvider {
+  LOCAL
+  CLOUDFLARE_R2
+  S3
+}
+
+model Document {
+  id                  Int              @id @default(autoincrement())
+  tenant_id           Int
+  customer_id         Int?
+  case_id             Int?
+  applicant_id        Int?
+
+  document_type       DocumentType
+  source_type         DocumentSource
+  /// Original vendor URL kept for audit/debug — app NEVER uses this to serve
+  source_url          String?
+
+  storage_provider    StorageProvider  @default(LOCAL)
+  /// Relative path/key within the storage root — never exposed to frontend
+  storage_path        String
+
+  file_name           String           // System-generated safe filename
+  original_file_name  String?          // Filename as received (for display only)
+  mime_type           String
+  extension           String
+  file_size_bytes     Int?
+  checksum_md5        String?
+
+  status              DocumentStatus   @default(ACTIVE)
+  uploaded_by_user_id Int?
+  metadata            Json?            // Extensible — store any extra provider data
+  deleted_at          DateTime?
+
+  created_at          DateTime         @default(now())
+  updated_at          DateTime         @updatedAt
+
+  tenant     Tenant     @relation(fields: [tenant_id], references: [id])
+  customer   Customer?  @relation(fields: [customer_id], references: [id])
+  case_entity Case?     @relation(fields: [case_id], references: [id])
+  applicant   Applicant? @relation(fields: [applicant_id], references: [id])
+
+  @@index([tenant_id])
+  @@index([customer_id])
+  @@index([case_id])
+  @@index([tenant_id, document_type])
+  @@map("documents")
 }

@@ -1,6 +1,7 @@
 const prisma = require('../../config/db');
 const { executePaidApi } = require('../services/wallet.service');
 const gstService = require('../services/externalApis/gst.service');
+const documentService = require('../services/document.service');
 
 async function createGstRequest(req, res) {
     try {
@@ -72,7 +73,7 @@ async function createGstRequest(req, res) {
                     status = 'AUTH_LINK_CREATED';
                 } else {
                     // IN_SYSTEM setup
-                    const callbackUrl = process.env.APP_BASE_URL + "/api/webhooks/signzy/gst";
+                    const callbackUrl = process.env.APP_BASE_URL + "/api/external/webhooks/signzy/gst";
                     const payload = {
                         gstin,
                         username,
@@ -115,7 +116,7 @@ async function createGstRequest(req, res) {
                         pdf_url_requested: pdf_url || false,
                         emails: emails || [],
                         mobile_numbers: mobile_numbers || [],
-                        callback_url: mode === 'AUTH_LINK' || mode === 'IN_SYSTEM' ? (process.env.APP_BASE_URL + "/api/webhooks/signzy/gst") : null,
+                        callback_url: mode === 'AUTH_LINK' || mode === 'IN_SYSTEM' ? (process.env.APP_BASE_URL + "/api/external/webhooks/signzy/gst") : null,
                         provider_request_id: requestId,
                         auth_link: authLink,
                         status: status,
@@ -213,13 +214,54 @@ async function syncGstData(req, res) {
                 const reportRes = await gstService.fetchReport(dbReq.provider_request_id);
                 if (reportRes.pdfUrl || reportRes.jsonDataUrl || reportRes.excelUrl) {
                     currentStatus = 'REPORT_READY';
+
+                    // Ingest vendor report URLs into our storage (non-fatal if fails)
+                    let pdfDocId   = dbReq.gst_pdf_document_id;
+                    let excelDocId = dbReq.gst_excel_document_id;
+                    let jsonDocId  = dbReq.gst_json_document_id;
+
+                    const ingestionBase = {
+                        tenantId: dbReq.tenant_id,
+                        customerId: dbReq.customer_id,
+                        caseId: dbReq.case_id,
+                        uploadedByUserId: dbReq.created_by_user_id,
+                        metadata: { gst_request_id: dbReq.id, gstin: dbReq.gstin, source: 'signzy_gst_sync' }
+                    };
+
+                    const gstIngestionJobs = [];
+                    if (reportRes.pdfUrl && !pdfDocId) {
+                        gstIngestionJobs.push(
+                            documentService.ingestFromUrl({ ...ingestionBase, vendorUrl: reportRes.pdfUrl, documentType: 'GST_REPORT_PDF', originalFileName: `gst_report_${dbReq.gstin}.pdf` })
+                                .then(doc => { pdfDocId = doc.id; })
+                                .catch(e => console.error('[gst.controller] PDF ingestion failed:', e.message))
+                        );
+                    }
+                    if (reportRes.excelUrl && !excelDocId) {
+                        gstIngestionJobs.push(
+                            documentService.ingestFromUrl({ ...ingestionBase, vendorUrl: reportRes.excelUrl, documentType: 'GST_REPORT_EXCEL', originalFileName: `gst_report_${dbReq.gstin}.xlsx` })
+                                .then(doc => { excelDocId = doc.id; })
+                                .catch(e => console.error('[gst.controller] Excel ingestion failed:', e.message))
+                        );
+                    }
+                    if (reportRes.jsonDataUrl && !jsonDocId) {
+                        gstIngestionJobs.push(
+                            documentService.ingestFromUrl({ ...ingestionBase, vendorUrl: reportRes.jsonDataUrl, documentType: 'GST_REPORT_JSON', originalFileName: `gst_report_${dbReq.gstin}.json` })
+                                .then(doc => { jsonDocId = doc.id; })
+                                .catch(e => console.error('[gst.controller] JSON ingestion failed:', e.message))
+                        );
+                    }
+                    await Promise.allSettled(gstIngestionJobs);
+
                     await prisma.gstrAnalyticsRequest.update({
                         where: { id: dbReq.id },
                         data: {
-                            report_json_url: reportRes.jsonDataUrl || dbReq.report_json_url,
-                            report_excel_url: reportRes.excelUrl || dbReq.report_excel_url,
-                            report_pdf_url: reportRes.pdfUrl || dbReq.report_pdf_url,
-                            status: 'REPORT_READY'
+                            report_json_url: reportRes.jsonDataUrl || dbReq.report_json_url,   // Audit only
+                            report_excel_url: reportRes.excelUrl || dbReq.report_excel_url,   // Audit only
+                            report_pdf_url: reportRes.pdfUrl || dbReq.report_pdf_url,         // Audit only
+                            status: 'REPORT_READY',
+                            gst_pdf_document_id:   pdfDocId   || undefined,
+                            gst_excel_document_id: excelDocId || undefined,
+                            gst_json_document_id:  jsonDocId  || undefined,
                         }
                     });
                     dataSynced = true;

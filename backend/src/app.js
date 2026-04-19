@@ -39,6 +39,7 @@ const adminTenantRoutes = require('./routes/admin.tenant.routes');
 const adminLenderRoutes = require('./routes/admin.lender.routes');
 const externalApiRoutes = require('./routes/externalApi.routes');
 const bureauRoutes = require('./routes/bureau.routes');
+const documentRoutes = require('./routes/document.routes');
 
 const apiRouter = express.Router();
 
@@ -57,6 +58,7 @@ apiRouter.use('/admin/tenants', adminTenantRoutes);
 apiRouter.use('/admin/lenders', adminLenderRoutes);
 apiRouter.use('/external', externalApiRoutes);
 apiRouter.use('/verification', bureauRoutes);
+apiRouter.use('/documents', documentRoutes);
 
 app.use('/api', apiRouter);
 

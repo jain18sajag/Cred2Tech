@@ -1,6 +1,7 @@
 const prisma = require('../../config/db');
 const itrAnalyticsService = require('../services/externalApis/itrAnalytics.service');
 const { executePaidApi } = require('../services/wallet.service');
+const documentService = require('../services/document.service');
 
 /**
  * POST /external/itr/analyze
@@ -118,13 +119,36 @@ async function sync(req, res) {
         const analyticsData = providerRes.data || providerRes;
         const statusMessage = providerRes.statusMessage || null;
 
+        // Ingest vendor excel URL into our own storage
+        let itrDocumentId = existing.itr_document_id;
+        if (excelUrl && !itrDocumentId) {
+            try {
+                const doc = await documentService.ingestFromUrl({
+                    vendorUrl: excelUrl,
+                    documentType: 'ITR_EXCEL',
+                    tenantId: existing.tenant_id,
+                    customerId: existing.customer_id,
+                    caseId: existing.case_id,
+                    applicantId: existing.applicant_id,
+                    uploadedByUserId: existing.created_by_user_id,
+                    originalFileName: `itr_analytics_${existing.pan}.xlsx`,
+                    metadata: { reference_id, pan: existing.pan, source: 'signzy_itr_analytics' }
+                });
+                itrDocumentId = doc.id;
+            } catch (ingestionErr) {
+                console.error('[itr.controller] ITR excel ingestion failed:', ingestionErr.message);
+                // Non-fatal: continue to mark as COMPLETED even if storage fails
+            }
+        }
+
         const updated = await prisma.itrAnalyticsRequest.update({
             where: { reference_id },
             data: {
                 status: 'COMPLETED',
-                excel_url: excelUrl,
+                excel_url: excelUrl,          // Kept for audit — NOT used for serving
                 analytics_payload: analyticsData,
-                provider_message: statusMessage
+                provider_message: statusMessage,
+                itr_document_id: itrDocumentId || undefined,
             }
         });
 
@@ -138,7 +162,8 @@ async function sync(req, res) {
         res.status(200).json({
             success: true,
             status: 'COMPLETED',
-            excel_url: excelUrl,
+            documentId: itrDocumentId || null,   // Use /api/documents/:id/download to fetch
+            excel_url: excelUrl,                  // Source URL for audit transparency
             analytics_payload: analyticsData
         });
     } catch (error) {
@@ -183,7 +208,8 @@ async function download(req, res) {
 
         res.status(200).json({
             success: true,
-            excel_url: record.excel_url,
+            documentId: record.itr_document_id || null,  // Use /api/documents/:id/download
+            excel_url: record.excel_url,                  // Source URL for audit transparency
             analytics_payload: record.analytics_payload,
             pan: record.pan,
             status: record.status

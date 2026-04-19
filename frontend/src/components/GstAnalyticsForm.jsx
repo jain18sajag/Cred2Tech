@@ -3,6 +3,7 @@ import { toast } from 'react-hot-toast';
 import { CheckCircle2, AlertCircle, RefreshCw, FileText, Download } from 'lucide-react';
 import FormField from './ui/FormField';
 import api from '../api/axiosInstance';
+import { downloadDocument } from '../api/documentHelper';
 
 const GstAnalyticsForm = ({ caseId, customerId, onComplete }) => {
     const [mode, setMode] = useState('IN_SYSTEM');
@@ -233,21 +234,41 @@ const GstAnalyticsForm = ({ caseId, customerId, onComplete }) => {
 
                                 {(req.status === 'REPORT_READY' || req.status === 'COMPLETED') && (
                                     <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
-                                        {req.report_pdf_url && (
+                                        {/* PDF: prefer internal document, fallback to source URL for legacy records */}
+                                        {req.gst_pdf_document_id ? (
+                                            <button type="button" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                                                onClick={() => downloadDocument(req.gst_pdf_document_id, `gst_${req.gstin}.pdf`).catch(e => toast.error(e.message))}>
+                                                <FileText size={14} /> PDF Report
+                                            </button>
+                                        ) : req.report_pdf_url ? (
                                             <a href={req.report_pdf_url} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                                 <FileText size={14} /> PDF Report
                                             </a>
-                                        )}
-                                        {req.report_excel_url && (
+                                        ) : null}
+
+                                        {/* Excel */}
+                                        {req.gst_excel_document_id ? (
+                                            <button type="button" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                                                onClick={() => downloadDocument(req.gst_excel_document_id, `gst_${req.gstin}.xlsx`).catch(e => toast.error(e.message))}>
+                                                <Download size={14} /> Excel Report
+                                            </button>
+                                        ) : req.report_excel_url ? (
                                             <a href={req.report_excel_url} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                                 <Download size={14} /> Excel Report
                                             </a>
-                                        )}
-                                         {req.report_json_url && (
+                                        ) : null}
+
+                                        {/* JSON */}
+                                        {req.gst_json_document_id ? (
+                                            <button type="button" className="btn btn-ghost btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                                                onClick={() => downloadDocument(req.gst_json_document_id, `gst_${req.gstin}.json`).catch(e => toast.error(e.message))}>
+                                                <Download size={14} /> Raw JSON
+                                            </button>
+                                        ) : req.report_json_url ? (
                                             <a href={req.report_json_url} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                                 <Download size={14} /> Raw JSON
                                             </a>
-                                        )}
+                                        ) : null}
                                     </div>
                                 )}
                             </div>

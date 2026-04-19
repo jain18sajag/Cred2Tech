@@ -2,10 +2,11 @@ import React, { useState } from 'react';
 import { toast } from 'react-hot-toast';
 import {
     CheckCircle2, AlertCircle, RefreshCw,
-    FileText, ChevronDown, ChevronUp, X
+    FileText, ChevronDown, ChevronUp, X, Download
 } from 'lucide-react';
 import FormField from './ui/FormField';
 import api from '../api/axiosInstance';
+import { downloadDocument } from '../api/documentHelper';
 
 const ItrAnalyticsForm = ({
     caseId,
@@ -21,6 +22,9 @@ const ItrAnalyticsForm = ({
 }) => {
     const [status, setStatus] = useState(existingRecord?.status || 'INITIATED');
     const [referenceId, setReferenceId] = useState(existingRecord?.reference_id || null);
+    // documentId is the internal stored file ID — use this for secure serving
+    const [documentId, setDocumentId] = useState(existingRecord?.itr_document_id || null);
+    // excelUrl kept only for audit/fallback display, NOT used for download
     const [excelUrl, setExcelUrl] = useState(existingRecord?.excel_url || null);
     const [analyticsPayload, setAnalyticsPayload] = useState(existingRecord?.analytics_payload || null);
 
@@ -68,10 +72,11 @@ const ItrAnalyticsForm = ({
 
             if (data.status === 'COMPLETED') {
                 setStatus('COMPLETED');
-                setExcelUrl(data.excel_url);
+                setDocumentId(data.documentId || null);
+                setExcelUrl(data.excel_url || null);  // Audit reference only
                 setAnalyticsPayload(data.analytics_payload);
                 toast.success('ITR analytics ready!');
-                onComplete && onComplete({ excel_url: data.excel_url, analytics_payload: data.analytics_payload });
+                onComplete && onComplete({ documentId: data.documentId, excel_url: data.excel_url, analytics_payload: data.analytics_payload });
             } else if (data.status === 'FAILED') {
                 setStatus('FAILED');
                 toast.error('ITR analytics processing failed at provider');
@@ -191,16 +196,20 @@ const ItrAnalyticsForm = ({
                         </button>
                     ) : status === 'COMPLETED' ? (
                         <div style={{ display: 'flex', gap: 8 }}>
-                            {excelUrl && (
-                                <a
-                                    href={excelUrl}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    style={{ backgroundColor: '#f0fdf4', color: '#166534', border: '1px solid #86efac', padding: '6px 14px', borderRadius: 6, fontWeight: 600, fontSize: 13, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
+                            {documentId ? (
+                                <button
+                                    type="button"
+                                    style={{ backgroundColor: '#f0fdf4', color: '#166534', border: '1px solid #86efac', padding: '6px 14px', borderRadius: 6, fontWeight: 600, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                                    onClick={() => downloadDocument(documentId, `itr_analytics.xlsx`).catch(e => toast.error('Download failed: ' + e.message))}
                                 >
+                                    <Download size={13} /> Excel
+                                </button>
+                            ) : excelUrl ? (
+                                // Fallback for records ingested before document storage was implemented
+                                <a href={excelUrl} target="_blank" rel="noreferrer" style={{ backgroundColor: '#f0fdf4', color: '#166534', border: '1px solid #86efac', padding: '6px 14px', borderRadius: 6, fontWeight: 600, fontSize: 13, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}>
                                     <FileText size={13} /> Excel
                                 </a>
-                            )}
+                            ) : null}
                             <button
                                 type="button"
                                 style={{ backgroundColor: '#f8fafc', color: '#334155', border: '1px solid #cbd5e1', padding: '6px 14px', borderRadius: 6, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
@@ -295,11 +304,20 @@ const ItrAnalyticsForm = ({
                                     ))}
                                 </div>
                             )}
-                            {excelUrl && (
+                            {documentId ? (
+                                <button
+                                    type="button"
+                                    onClick={() => downloadDocument(documentId, 'itr_analytics.xlsx').catch(e => toast.error('Download failed: ' + e.message))}
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, backgroundColor: '#f0fdf4', color: '#166534', border: '1px solid #86efac', padding: '8px 16px', borderRadius: 6, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
+                                >
+                                    <Download size={14} /> Download Full Excel Report
+                                </button>
+                            ) : excelUrl ? (
+                                // Fallback for records without document storage
                                 <a href={excelUrl} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, backgroundColor: '#f0fdf4', color: '#166534', border: '1px solid #86efac', padding: '8px 16px', borderRadius: 6, fontWeight: 600, fontSize: 13, textDecoration: 'none' }}>
                                     <FileText size={14} /> Download Full Excel Report
                                 </a>
-                            )}
+                            ) : null}
                         </div>
                     )}
                 </div>

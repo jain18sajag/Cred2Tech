@@ -12,7 +12,7 @@ async function getProviderConfig() {
     const rawBase = (process.env.SIGNZY_BASE_URL || 'https://api-preproduction.signzy.app').trim().replace(/\/+$/, '');
     const username = process.env.SIGNZY_USERNAME?.trim();
     const password = process.env.SIGNZY_PASSWORD?.trim();
-    const apiKey   = process.env.SIGNZY_AUTH_TOKEN?.trim();
+    const apiKey = process.env.SIGNZY_AUTH_TOKEN?.trim();
 
     if (!username || !password) {
         throw new Error('Signzy provider config missing (SIGNZY_USERNAME / SIGNZY_PASSWORD for Statement Analysis)');
@@ -30,7 +30,7 @@ async function getProviderConfig() {
 function parseError(error) {
     const providerError = error.response?.data;
     const errorMessage = providerError?.error?.message || providerError?.message || error.message || 'Provider failure';
-    
+
     const enhancedError = new Error(`${errorMessage}`);
     if (error.response?.status) {
         enhancedError.status = error.response.status;
@@ -54,11 +54,11 @@ async function uploadFileToSignzy(base64Content, fileName) {
     try {
         const form = new FormData();
         form.append('file', Buffer.from(base64Content, 'base64'), { filename: fileName || 'statement.pdf' });
-        
+
         const res = await axios.post('https://persist.signzy.tech/api/files/upload', form, {
             headers: { ...form.getHeaders() }
         });
-        
+
         if (res.data?.file?.directURL) {
             return res.data.file.directURL;
         }
@@ -88,7 +88,7 @@ async function authenticate() {
                 }
             }
         );
-        
+
         const data = handleResponse(response);
         if (data.authToken) {
             _cachedToken = data.authToken;
@@ -105,7 +105,7 @@ async function authenticate() {
 async function analyzeStatement(filesPayload) {
     const token = await authenticate();
     const { apiBase, apiKey } = await getProviderConfig();
-    
+
     try {
         const preparedFiles = [];
         for (const fileObj of filesPayload) {
@@ -136,7 +136,7 @@ async function analyzeStatement(filesPayload) {
 async function retrieveWorkOrder(reportId) {
     const token = await authenticate();
     const { apiBase, apiKey } = await getProviderConfig();
-    
+
     try {
         const response = await axios.post(
             `${apiBase}/statementanalysis/retrieve-work-order`,
@@ -157,7 +157,7 @@ async function retrieveWorkOrder(reportId) {
 async function downloadReport(reportId, fileType = 'excel and json') {
     const token = await authenticate();
     const { apiBase, apiKey } = await getProviderConfig();
-    
+
     try {
         const response = await axios.post(
             `${apiBase}/statementanalysis/download-report`,

@@ -1,6 +1,7 @@
 const prisma = require('../../config/db');
 const bankService = require('../services/externalApis/bank.service');
 const { executePaidApi } = require('../services/wallet.service');
+const documentService = require('../services/document.service');
 
 // Note: Pre-analysis is optional and can be skipped. We will directly analyze here.
 async function analyze(req, res) {
@@ -143,22 +144,96 @@ async function downloadData(req, res) {
         }
 
         const providerRes = await bankService.downloadReport(report_id, 'excel and json');
-        // Signzy returns { result: { excelUrl: "...", jsonUrl: "..." } } typically, adjust based on exact payload
         
         const resultPayload = providerRes.result || providerRes;
+
+        if (resultPayload.statusCode === 202 || resultPayload.status === 'IN PROGRESS') {
+            return res.status(202).json({ 
+                success: false, 
+                message: resultPayload.message || "Report is still generating. Please try again in a few moments." 
+            });
+        }
+
         const excelUrl = resultPayload.excelUrl || resultPayload.excel;
         const jsonUrl = resultPayload.jsonUrl || resultPayload.json;
 
+        if (!excelUrl && !jsonUrl) {
+             return res.status(400).json({ 
+                 error: "Download links are missing from vendor response.", 
+                 response: resultPayload 
+             });
+        }
+
+        // Ingest vendor URLs into our own storage (runs in parallel for speed)
+        const tenantId = req.user.tenant_id;
+        const userId = req.user.id;
+
+        let excelDocId = existingRequest.bank_excel_document_id;
+        let jsonDocId  = existingRequest.bank_json_document_id;
+
+        const ingestionJobs = [];
+
+        if (excelUrl && !excelDocId) {
+            ingestionJobs.push(
+                documentService.ingestFromUrl({
+                    vendorUrl: excelUrl,
+                    documentType: 'BANK_EXCEL',
+                    tenantId,
+                    customerId: existingRequest.customer_id,
+                    caseId: existingRequest.case_id,
+                    applicantId: existingRequest.applicant_id,
+                    uploadedByUserId: userId,
+                    originalFileName: `bank_statement_${report_id}.xlsx`,
+                    metadata: { report_id, source: 'signzy_bank_download' }
+                }).then(doc => { excelDocId = doc.id; }).catch(err => {
+                    console.error('[bank.controller] Excel ingestion failed:', err.message);
+                })
+            );
+        }
+
+        if (jsonUrl && !jsonDocId) {
+            ingestionJobs.push(
+                documentService.ingestFromUrl({
+                    vendorUrl: jsonUrl,
+                    documentType: 'BANK_JSON',
+                    tenantId,
+                    customerId: existingRequest.customer_id,
+                    caseId: existingRequest.case_id,
+                    applicantId: existingRequest.applicant_id,
+                    uploadedByUserId: userId,
+                    originalFileName: `bank_statement_${report_id}.json`,
+                    metadata: { report_id, source: 'signzy_bank_download' }
+                }).then(doc => { jsonDocId = doc.id; }).catch(err => {
+                    console.error('[bank.controller] JSON ingestion failed:', err.message);
+                })
+            );
+        }
+
+        await Promise.allSettled(ingestionJobs);
+
+        // Persist document IDs + keep vendor URLs in source fields for audit
         const updated = await prisma.bankStatementAnalysisRequest.update({
             where: { report_id },
             data: {
-                report_excel_url: excelUrl,
-                report_json_url: jsonUrl,
-                raw_download_response: providerRes
+                report_excel_url: excelUrl,        // Audit/source — NOT used for serving
+                report_json_url: jsonUrl,          // Audit/source — NOT used for serving
+                raw_download_response: providerRes,
+                bank_excel_document_id: excelDocId || undefined,
+                bank_json_document_id:  jsonDocId  || undefined,
             }
         });
 
-        res.status(200).json({ success: true, downloadUrls: { excel: excelUrl, json: jsonUrl }, requestData: updated });
+        // Return document IDs for frontend to use our endpoints — NOT vendor URLs
+        res.status(200).json({
+            success: true,
+            documentIds: {
+                excel: excelDocId || null,
+                json:  jsonDocId  || null,
+            },
+            // Preserve for backward compatibility: still include vendor URLs but label them clearly
+            sourceUrls: { excel: excelUrl, json: jsonUrl },
+            requestData: updated
+        });
     } catch (error) {
          console.error("Bank Download Error: ", error);
          const statusCode = error.status === 401 ? 502 : (error.status || 500);
