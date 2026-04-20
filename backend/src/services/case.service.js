@@ -20,7 +20,15 @@ async function createCase(customer_id, product_type, tenant_id, user_id) {
       customer_id: customer.id,
       created_by_user_id: user_id,
       product_type: product_type || null,
-      stage: 'DRAFT'
+      stage: 'DRAFT',
+      applicants: {
+        create: {
+          type: 'PRIMARY',
+          mobile: customer.business_mobile,
+          email: customer.business_email,
+          pan_number: customer.business_pan
+        }
+      }
     }
   });
 
@@ -127,6 +135,21 @@ async function getCaseById(case_id, tenant_id) {
 
   if (!existingCase) {
     throw new Error('Case not found or unauthorized.');
+  }
+
+  // Ensure primary applicant exists for old cases (backfill/fix)
+  if (!existingCase.applicants.some(a => a.type === 'PRIMARY')) {
+     const primaryApp = await prisma.applicant.create({
+        data: {
+           case_id: existingCase.id,
+           type: 'PRIMARY',
+           mobile: existingCase.customer.business_mobile,
+           email: existingCase.customer.business_email,
+           pan_number: existingCase.customer.business_pan,
+           otp_verified: existingCase.customer.mobile_verified // If customer mobile was verified, mark applicant verified
+        }
+     });
+     existingCase.applicants.push(primaryApp);
   }
 
   return existingCase;

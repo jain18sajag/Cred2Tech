@@ -55,8 +55,9 @@ async function getApiCost(api_code, tenant_id) {
   });
 
   if (!defaultPricing || !defaultPricing.is_active) {
-    // If inactive or missing, reject.
-    throw new Error(`API Pricing not configured or inactive for: ${api_code}`);
+    // If inactive or missing, default to 0 instead of rejecting as requested.
+    await cacheAdapter.set(cacheKey, 0);
+    return 0;
   }
 
   const resolvedCost = defaultPricing.default_credit_cost;

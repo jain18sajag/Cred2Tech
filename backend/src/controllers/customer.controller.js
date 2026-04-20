@@ -102,6 +102,8 @@ async function getProfile(req, res) {
        property_value: latestCase.property_value,
        ltv_ratio: latestCase.ltv_ratio,
        co_borrowers: coBorrowers,
+       primary_applicant_id: primaryApplicant.id || null,
+       primary_applicant_bureau_fetched: primaryApplicant.bureau_fetched || false,
        activity_log: customer.activity_logs.map(log => ({
           timestamp: log.created_at,
           activity_type: log.activity_type,

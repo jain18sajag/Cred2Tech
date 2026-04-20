@@ -18,10 +18,10 @@ async function runBureauCheck({ caseId, applicantId, mobileNumber, firstName, la
 
   // Idempotency Check: Prevent duplicate scores for the exact same applicant within the system
   const existingCheck = await prisma.bureauVerification.findFirst({
-    where: { 
-      case_id: parseInt(caseId), 
-      applicant_id: parseInt(applicantId), 
-      status: 'SUCCESS' 
+    where: {
+      case_id: parseInt(caseId),
+      applicant_id: parseInt(applicantId),
+      status: 'SUCCESS'
     }
   });
 
@@ -35,7 +35,7 @@ async function runBureauCheck({ caseId, applicantId, mobileNumber, firstName, la
 
   const requestId = crypto.randomUUID();
   const stan = crypto.randomUUID();
-  
+
   // Hash Generation: SHA256(clientCode|requestId|APIKey|Salt)
   const rawString = `${clientCode}|${requestId}|${apiKey}|${salt}`;
   const hash = crypto.createHash('sha256').update(rawString).digest('hex');
@@ -62,26 +62,30 @@ async function runBureauCheck({ caseId, applicantId, mobileNumber, firstName, la
 
   try {
     const { data } = await axios.post(`${baseUrl}/verification-service/verifyID`, payload, {
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000 // 30-second timeout — fail fast instead of hanging indefinitely
     });
 
     responsePayload = data;
-    
+
     if (data && data.responseCode === '000' || data.status === 'SUCCESS') {
-       apiStatus = 'SUCCESS';
-       
-       // Map to structured format extracting score
-       // Assuming response structure: data.verifiedData.ResponseData.data.score based on requirements
-       if (data.verifiedData && data.verifiedData.ResponseData && data.verifiedData.ResponseData.data) {
-           score = data.verifiedData.ResponseData.data.score?.toString() || null;
-       }
+      apiStatus = 'SUCCESS';
+
+      // Map to structured format extracting score
+      // Assuming response structure: data.verifiedData.ResponseData.data.score based on requirements
+      if (data.verifiedData && data.verifiedData.ResponseData && data.verifiedData.ResponseData.data) {
+        score = data.verifiedData.ResponseData.data.score?.toString() || null;
+      }
     } else {
-       apiStatus = 'FAILED';
+      apiStatus = 'FAILED';
     }
   } catch (error) {
     apiStatus = 'FAILED';
+    const is504 = error.response?.status === 504 || error.code === 'ECONNABORTED';
     responsePayload = {
-      message: error.message,
+      message: is504
+        ? 'Bureau provider gateway timed out (504). The Veri5 sandbox may be slow or your IP may need whitelisting.'
+        : error.message,
       data: error.response?.data,
       status: error.response?.status
     };
@@ -89,40 +93,40 @@ async function runBureauCheck({ caseId, applicantId, mobileNumber, firstName, la
 
   // 1. Audit Logging Native (Logs ALL traces regardless of crash)
   await prisma.bureauVerificationLog.create({
-     data: {
-        case_id: parseInt(caseId),
-        applicant_id: parseInt(applicantId),
-        request_payload: payload,
-        response_payload: responsePayload || {},
-        status: apiStatus
-     }
+    data: {
+      case_id: parseInt(caseId),
+      applicant_id: parseInt(applicantId),
+      request_payload: payload,
+      response_payload: responsePayload || {},
+      status: apiStatus
+    }
   });
 
   // 2. Structured Verification Data Point
   const verificationRecord = await prisma.bureauVerification.create({
-     data: {
-        case_id: parseInt(caseId),
-        applicant_id: parseInt(applicantId),
-        applicant_type: applicantType,
-        request_id: requestId,
-        stan: stan,
-        mobile_number: mobileNumber,
-        score: score,
-        raw_response: responsePayload || {},
-        status: apiStatus
-     }
+    data: {
+      case_id: parseInt(caseId),
+      applicant_id: parseInt(applicantId),
+      applicant_type: applicantType,
+      request_id: requestId,
+      stan: stan,
+      mobile_number: mobileNumber,
+      score: score,
+      raw_response: responsePayload || {},
+      status: apiStatus
+    }
   });
 
   // 3. Mark Applicant Native Boolean Flag if SUCCESS
   if (apiStatus === 'SUCCESS') {
-     await prisma.applicant.update({
-        where: { id: parseInt(applicantId) },
-        data: { bureau_fetched: true, cibil_score: score ? parseInt(score) : null }
-     });
+    await prisma.applicant.update({
+      where: { id: parseInt(applicantId) },
+      data: { bureau_fetched: true, cibil_score: score ? parseInt(score) : null }
+    });
   }
 
   if (apiStatus === 'FAILED') {
-     throw new Error(responsePayload?.message || "Failed to execute Bureau Verification");
+    throw new Error(responsePayload?.message || "Failed to execute Bureau Verification");
   }
 
   return verificationRecord;

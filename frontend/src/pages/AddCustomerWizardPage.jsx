@@ -145,7 +145,11 @@ const AddCustomerWizardPage = () => {
       targetCaseId = newCase.id;
       
       setCaseId(targetCaseId);
-      setFormData(prev => ({...prev, customer_id: targetCustomerId}));
+      setFormData(prev => ({
+        ...prev, 
+        customer_id: targetCustomerId,
+        applicants: newCase.applicants || [] // Sync the newly created PRIMARY applicant
+      }));
       navigate(`?caseId=${targetCaseId}`, { replace: true });
       localStorage.setItem('draftCaseId', targetCaseId);
     }
@@ -373,6 +377,38 @@ const AddCustomerWizardPage = () => {
     }
   };
 
+  const handleRunBureau = async (applicantId) => {
+    if (!caseId) return toast.error("Case ID missing");
+    if (saving) return; // prevent double-click race
+    try {
+      setSaving(true);
+      const res = await api.post(`/verification/bureau/run/${caseId}`, { applicantId });
+      const data = res.data;
+
+      if (data.status === 'FAILED') {
+        const errMsg = data.errors?.[0]?.error || 'Bureau fetch failed';
+        toast.error(errMsg);
+        return;
+      }
+
+      if (data.status === 'PARTIAL_SUCCESS') {
+        toast.error(`Partial failure: ${data.errors?.[0]?.error || 'Some applicants failed'}`);
+      } else {
+        toast.success("Bureau pull success!");
+      }
+
+      // Update local state to reflect bureau_fetched
+      const updatedApps = formData.applicants.map(a => 
+        a.id === applicantId ? { ...a, bureau_fetched: true } : a
+      );
+      setFormData(prev => ({ ...prev, applicants: updatedApps }));
+    } catch(err) {
+      toast.error(err.response?.data?.error || "Bureau fetch failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleStep2Submit = async (e) => { e.preventDefault(); setCurrentStep(3); };
   const handleStep3Submit = async (e) => {
     e.preventDefault();
@@ -491,13 +527,13 @@ const AddCustomerWizardPage = () => {
               </div>
               
               <div style={{ padding: 24 }}>
-                {formData.applicants.length === 0 ? (
+                {formData.applicants.filter(a => a.type === 'CO_APPLICANT').length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '30px', border: '1px dashed var(--border-strong)', borderRadius: 'var(--radius)', color: 'var(--text-tertiary)' }}>
                     No Co-Applicants appended to this profile yet.
                   </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                    {formData.applicants.map((app, idx) => (
+                    {formData.applicants.filter(a => a.type === 'CO_APPLICANT').map((app, idx) => (
                       <div key={idx} style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border)', padding: 24, borderRadius: 'var(--radius)', position: 'relative' }}>
                         <div style={{ position: 'absolute', top: 18, right: 24, display: 'flex', gap: 12 }}>
                            <button type="button" onClick={() => removeApplicant(idx)} style={{ color: 'var(--error)', fontSize: 13, fontWeight: 600, border: 'none', background: 'none' }}>Remove ×</button>
@@ -540,6 +576,43 @@ const AddCustomerWizardPage = () => {
 
         {currentStep === 2 && ( 
           <form onSubmit={handleStep2Submit} style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+            {/* Bureau Section - NEW */}
+            <div className="card">
+               <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                 <div>
+                   <h3 style={{ fontSize: 16, fontWeight: 700 }}>Bureau Verification</h3>
+                   <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 4 }}>Verify credit scores before analysis</p>
+                 </div>
+                 <div style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>Check OTP status in Step 1 if disabled</div>
+               </div>
+               <div style={{ padding: 24 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {formData.applicants.sort((a,b) => a.type === 'PRIMARY' ? -1 : 1).map((app, idx) => (
+                      <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--bg-base)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                           <div style={{ width: 8, height: 8, borderRadius: '50%', background: app.bureau_fetched ? 'var(--success)' : 'var(--warning)' }} />
+                           <div>
+                             <p style={{ fontSize: 14, fontWeight: 600 }}>{app.type === 'PRIMARY' ? 'Primary Borrower' : `Co-Applicant #${formData.applicants.filter(x => x.type === 'CO_APPLICANT').indexOf(app) + 1}`}</p>
+                             <p style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{app.pan_number || 'PAN Pending'} • {app.type}</p>
+                           </div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                           {app.cibil_score && <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--primary)' }}>CIBIL: {app.cibil_score}</span>}
+                           <button 
+                             type="button"
+                             className={`btn btn-sm ${app.bureau_fetched ? 'btn-secondary' : 'btn-primary'}`}
+                             onClick={() => handleRunBureau(app.id)}
+                             disabled={saving || !app.otp_verified || app.bureau_fetched}
+                           >
+                             {app.bureau_fetched ? 'Verified' : 'Run Bureau'}
+                           </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+               </div>
+            </div>
+
             <div className="card">
                <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
                  <h3 style={{ fontSize: 16, fontWeight: 700 }}>GST Profile</h3>
