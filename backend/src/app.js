@@ -87,4 +87,11 @@ async function seedRolesIfMissing() {
 
 seedRolesIfMissing();
 
+const seedLendersIfMissing = require('./utils/seed_lenders');
+const seedDataMatrix = require('./utils/seed_matrix');
+
+seedLendersIfMissing().then(() => {
+   seedDataMatrix();
+});
+
 module.exports = app;

@@ -22,6 +22,7 @@ exports.createLender = async (req, res) => {
     });
     res.json(lender);
   } catch (error) {
+    console.error('Error creating lender:', error);
     if (error.code === 'P2002') return res.status(400).json({ error: 'Code already exists.' });
     res.status(500).json({ error: 'Failed' });
   }
