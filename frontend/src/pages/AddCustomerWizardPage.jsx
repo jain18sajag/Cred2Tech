@@ -31,7 +31,12 @@ const AddCustomerWizardPage = () => {
     business_email: '',
     mobile_verified: false,
     applicants: [],
-    product_type: ''
+    product_type: '',
+    // Property (Step 3)
+    property_type: '',
+    occupancy_status: 'Self Occupied',
+    ownership_type: 'Sole Owner',
+    market_value: ''
   });
 
   const [costs, setCosts] = useState({ GST_FETCH: 0, ITR_ANALYTICS: 0, BANK_ANALYSIS: 0 });
@@ -102,6 +107,10 @@ const AddCustomerWizardPage = () => {
         mobile_verified: caseData.customer?.mobile_verified || false,
         applicants: caseData.applicants || [],
         product_type: caseData.product_type || '',
+        property_type: caseData.property?.property_type || '',
+        occupancy_status: caseData.property?.occupancy_status || 'Self Occupied',
+        ownership_type: caseData.property?.ownership_type || 'Sole Owner',
+        market_value: caseData.property?.market_value || '',
         gst_completed: caseData.data_pull_status?.gst_status === 'COMPLETE',
         gst_profile: caseData.customer?.gst_profiles?.[0]?.raw_response || null,
         itr_completed: caseData.data_pull_status?.itr_status === 'COMPLETE',
@@ -410,17 +419,36 @@ const AddCustomerWizardPage = () => {
   };
 
   const handleStep2Submit = async (e) => { e.preventDefault(); setCurrentStep(3); };
+
+  const PROPERTY_REQUIRED = ['LAP', 'HL'];
+
   const handleStep3Submit = async (e) => {
     e.preventDefault();
-    if (!formData.product_type) return toast.error("Please select a product");
+    if (!formData.product_type) return toast.error('Please select a loan product.');
+    const needsProperty = PROPERTY_REQUIRED.includes(formData.product_type);
+    if (needsProperty && !formData.property_type) return toast.error('Property type is required for LAP/HL.');
+    if (needsProperty && !formData.market_value)  return toast.error('Market value is required for LAP/HL.');
+
     try {
       setSaving(true);
-      await caseService.updateProduct(caseId, formData.product_type);
+      const payload = {
+        product_type: formData.product_type,
+        property: needsProperty ? {
+          property_type:    formData.property_type,
+          occupancy_status: formData.occupancy_status,
+          ownership_type:   formData.ownership_type,
+          market_value:     parseFloat(formData.market_value)
+        } : null
+      };
+      await caseService.updateProductProperty(caseId, payload);
       localStorage.removeItem('draftCaseId');
-      toast.success("Case submitted successfully!");
-      navigate('/customers', { replace: true });
-    } catch (error) { toast.error('Failed to update details'); } 
-    finally { setSaving(false); }
+      toast.success('Product & property saved!');
+      navigate(`/cases/${caseId}/income-summary`);
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Failed to save product details.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (loading) return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}><LoadingSpinner size={40} /></div>;
@@ -720,7 +748,121 @@ const AddCustomerWizardPage = () => {
             </div>
           </form> 
         )}
-        {currentStep === 3 && ( <form onSubmit={handleStep3Submit}><div className="card" style={{ padding: '20px 24px' }}><h3 style={{ fontSize: 16, fontWeight: 700 }}>Product Selection</h3><select className="form-control" style={{ marginTop: 20 }} value={formData.product_type} onChange={e => setFormData({...formData, product_type: e.target.value})} required><option value="" disabled>Select Tier</option><option value="LAP">Loan Against Property (LAP)</option><option value="BL">Business Loan</option></select></div><div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 24 }}><button className="btn btn-ghost" type="button" onClick={() => setCurrentStep(2)}>← Back</button><button className="btn btn-primary btn-lg" type="submit" disabled={saving}>Complete Onboarding</button></div></form> )}
+        {currentStep === 3 && (
+          <form onSubmit={handleStep3Submit} style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+
+            {/* Top row: Product + Data Pull Status */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+
+              {/* Loan Product Card */}
+              <div className="card">
+                <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', background: 'linear-gradient(135deg,#FFF5EB,transparent)' }}>
+                  <h3 style={{ fontSize: 16, fontWeight: 700, color: 'var(--warning)' }}>🏦 Loan Product <span style={{ color: 'var(--error)', fontSize: 12 }}>*</span></h3>
+                </div>
+                <div style={{ padding: 24 }}>
+                  <FormField label="SELECT PRODUCT" name="product_type" required>
+                    <select
+                      className="form-control"
+                      value={formData.product_type}
+                      onChange={e => setFormData({ ...formData, product_type: e.target.value })}
+                      required
+                      style={{ border: formData.product_type ? '2px solid var(--warning)' : undefined, background: formData.product_type ? '#FFF5EB' : undefined, color: formData.product_type ? 'var(--warning)' : undefined, fontWeight: 600 }}
+                    >
+                      <option value="">— Select a loan product —</option>
+                      <option value="LAP">LAP — Loan Against Property</option>
+                      <option value="HL">HL — Home Loan</option>
+                      <option value="WC">Working Capital (CC / OD)</option>
+                      <option value="TL">Term Loan (MSME / BL)</option>
+                      <option value="ML">Machinery / Equipment Finance</option>
+                      <option value="BL">Business Loan (Unsecured)</option>
+                      <option value="Other">Other — Specify</option>
+                    </select>
+                  </FormField>
+                  <div style={{ marginTop: 12, padding: '12px 14px', background: 'var(--primary-subtle)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--primary-dark)' }}>
+                    💡 Loan amount &amp; tenure will be captured after the lender is identified via ESR.
+                  </div>
+                </div>
+              </div>
+
+              {/* Data Pull Status */}
+              <div className="card">
+                <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
+                  <h3 style={{ fontSize: 16, fontWeight: 700 }}>📡 Data Pull Status</h3>
+                </div>
+                <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {[
+                    { label: 'Bureau Pull',     done: formData.applicants.every(a => a.bureau_fetched), sub: `${formData.applicants.filter(a => a.bureau_fetched).length} of ${formData.applicants.length} fetched` },
+                    { label: 'GST Report',      done: formData.gst_completed,  sub: formData.gst_completed ? 'Generated' : 'Not yet generated' },
+                    { label: 'ITR Report',      done: formData.itr_completed,  sub: formData.itr_completed ? 'Generated' : 'Not yet generated' },
+                    { label: 'Bank Statement',  done: !!formData.customer_bank_profile, sub: formData.customer_bank_profile ? 'Uploaded' : 'Not yet uploaded' }
+                  ].map(({ label, done, sub }) => (
+                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: done ? '#F0FFF4' : '#FFFBF0', borderRadius: 8, border: `1px solid ${done ? '#9AE6B4' : '#F6E05E'}` }}>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{label}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>{sub}</div>
+                      </div>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: done ? 'var(--success)' : 'var(--warning)' }}>{done ? '✅ Done' : '⏳ Pending'}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Property Details — only for LAP / HL */}
+            {PROPERTY_REQUIRED.includes(formData.product_type) && (
+              <div className="card">
+                <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h3 style={{ fontSize: 16, fontWeight: 700 }}>🏢 Property &amp; Collateral Details</h3>
+                  <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Required for {formData.product_type}</span>
+                </div>
+                <div style={{ padding: 24 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20, marginBottom: 20 }}>
+                    <FormField label="PROPERTY TYPE" name="property_type" required>
+                      <select className="form-control" value={formData.property_type} onChange={e => setFormData({ ...formData, property_type: e.target.value })} required>
+                        <option value="">— Select —</option>
+                        <option value="Commercial — Office / Shop">Commercial — Office / Shop</option>
+                        <option value="Residential — House / Flat">Residential — House / Flat</option>
+                        <option value="Industrial — Factory / Warehouse">Industrial — Factory / Warehouse</option>
+                        <option value="Plot / Land">Plot / Land</option>
+                      </select>
+                    </FormField>
+                    <FormField label="OCCUPANCY STATUS" name="occupancy_status">
+                      <select className="form-control" value={formData.occupancy_status} onChange={e => setFormData({ ...formData, occupancy_status: e.target.value })}>
+                        <option value="Self Occupied">Self Occupied</option>
+                        <option value="Rented Out">Rented Out</option>
+                        <option value="Vacant">Vacant</option>
+                      </select>
+                    </FormField>
+                    <FormField label="OWNERSHIP" name="ownership_type">
+                      <select className="form-control" value={formData.ownership_type} onChange={e => setFormData({ ...formData, ownership_type: e.target.value })}>
+                        <option value="Sole Owner">Sole Owner</option>
+                        <option value="Joint Owner">Joint Owner</option>
+                        <option value="Company Owned">Company Owned</option>
+                      </select>
+                    </FormField>
+                  </div>
+                  <div style={{ maxWidth: 300 }}>
+                    <FormField label="MARKET VALUE (₹)" name="market_value" required>
+                      <input type="number" className="form-control" placeholder="e.g. 8500000" value={formData.market_value} onChange={e => setFormData({ ...formData, market_value: e.target.value })} required min="1" />
+                    </FormField>
+                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>DSA estimate — lender does independent valuation</div>
+                  </div>
+                  <div style={{ marginTop: 16, padding: '12px 14px', background: 'var(--primary-subtle)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--primary-dark)' }}>
+                    💡 Property location, title clearance, full address will be collected after the lender is identified.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
+              <button className="btn btn-ghost" type="button" onClick={() => setCurrentStep(2)}>← Back</button>
+              <button className="btn btn-primary btn-lg" type="submit" disabled={saving}>
+                {saving ? 'Saving...' : 'Next: Income Summary →'}
+              </button>
+            </div>
+          </form>
+        )}
+
       </div>
 
       {/* OTP Modal */}

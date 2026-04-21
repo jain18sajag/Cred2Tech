@@ -92,7 +92,7 @@ const UsersListPage = () => {
             <SlidersHorizontal size={15} color="var(--text-tertiary)" />
             <SelectFilter value={filterRole} onChange={setFilterRole} options={ROLE_OPTIONS} placeholder="All Roles" />
             <SelectFilter value={filterStatus} onChange={setFilterStatus} options={STATUS_OPTIONS} placeholder="All Status" />
-            <SelectFilter value={filterLevel} onChange={setFilterLevel} options={['L1','L2','L3','L4']} placeholder="All Levels" />
+            <SelectFilter value={filterLevel} onChange={setFilterLevel} options={['L1', 'L2', 'L3', 'L4']} placeholder="All Levels" />
             {(search || filterRole || filterStatus || filterLevel) && (
               <button className="btn btn-ghost btn-sm" onClick={() => { setSearch(''); setFilterRole(''); setFilterStatus(''); setFilterLevel(''); }}>
                 Clear
@@ -121,8 +121,8 @@ const UsersListPage = () => {
                 <th>User</th>
                 <th>Mobile</th>
                 <th>Role</th>
-                <th>Tenant ID</th>
-                <th>Tenant Type</th>
+                <th>DSA ID</th>
+                <th>DSA Type</th>
                 <th>Level</th>
                 <th>Manager</th>
                 <th>Status</th>

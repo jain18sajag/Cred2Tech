@@ -52,7 +52,7 @@ async function createGstRequest(req, res) {
                 let authLink = null;
                 let requestId = null;
                 let message = '';
-                
+
                 if (mode === 'AUTH_LINK') {
                     const authLinkPayload = {
                         gstin,
@@ -60,12 +60,13 @@ async function createGstRequest(req, res) {
                         toDate: to_date,
                         entityDetails: entity_details || false,
                         pdfUrl: pdf_url || false,
-                        callbackUrl: "https://client-specific.callback.url",
+                        // callbackUrl: "https://client-specific.callback.url",
+                        callbackUrl: callbackUrl,
                         emails: emails || [],
                         mobileNumbers: mobile_numbers || []
                     };
                     if (username) authLinkPayload.username = username;
-                    
+
                     providerRes = await gstService.createAuthLink(authLinkPayload);
                     requestId = providerRes.requestId;
                     authLink = providerRes.authLink;
@@ -81,8 +82,8 @@ async function createGstRequest(req, res) {
                         toDate: to_date,
                         entityDetails: entity_details || false,
                         pdfUrl: pdf_url || false,
-                        callbackUrl: "https://client-specific.callback.url",
-                        // callbackUrl: callbackUrl,
+                        // callbackUrl: "https://client-specific.callback.url",
+                        callbackUrl: callbackUrl,
                         authType: auth_type
                     };
                     if (auth_type === 'PASSWORD') {
@@ -208,17 +209,17 @@ async function syncGstData(req, res) {
             }
         }
 
-        // Fetch Report JSON links safely
-        if (['PROCESSING', 'DATA_READY'].includes(currentStatus)) {
+        // Fetch Report JSON links safely (triggered if status is terminal but documents are missing)
+        if (['PROCESSING', 'DATA_READY', 'REPORT_READY'].includes(currentStatus)) {
             try {
                 const reportRes = await gstService.fetchReport(dbReq.provider_request_id);
                 if (reportRes.pdfUrl || reportRes.jsonDataUrl || reportRes.excelUrl) {
                     currentStatus = 'REPORT_READY';
 
                     // Ingest vendor report URLs into our storage (non-fatal if fails)
-                    let pdfDocId   = dbReq.gst_pdf_document_id;
+                    let pdfDocId = dbReq.gst_pdf_document_id;
                     let excelDocId = dbReq.gst_excel_document_id;
-                    let jsonDocId  = dbReq.gst_json_document_id;
+                    let jsonDocId = dbReq.gst_json_document_id;
 
                     const ingestionBase = {
                         tenantId: dbReq.tenant_id,
@@ -259,9 +260,9 @@ async function syncGstData(req, res) {
                             report_excel_url: reportRes.excelUrl || dbReq.report_excel_url,   // Audit only
                             report_pdf_url: reportRes.pdfUrl || dbReq.report_pdf_url,         // Audit only
                             status: 'REPORT_READY',
-                            gst_pdf_document_id:   pdfDocId   || undefined,
+                            gst_pdf_document_id: pdfDocId || undefined,
                             gst_excel_document_id: excelDocId || undefined,
-                            gst_json_document_id:  jsonDocId  || undefined,
+                            gst_json_document_id: jsonDocId || undefined,
                         }
                     });
                     dataSynced = true;
@@ -273,6 +274,10 @@ async function syncGstData(req, res) {
                             create: { case_id: dbReq.case_id, gst_status: 'COMPLETE' },
                             update: { gst_status: 'COMPLETE' }
                         });
+
+                        // Extract ESR financials asynchronously
+                        const { extractEsrFinancials } = require('../services/esrFinancials.service');
+                        extractEsrFinancials(dbReq.case_id).catch(err => console.error(err));
                     }
                 }
             } catch (err) {

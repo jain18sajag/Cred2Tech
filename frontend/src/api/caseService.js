@@ -39,5 +39,57 @@ export const caseService = {
   getActivityLog: async (caseId) => {
     const response = await axiosInstance.get(`/cases/${caseId}/activity-log`);
     return response.data;
+  },
+
+  // Phase 1 —— Product & Property
+  updateProductProperty: async (caseId, payload) => {
+    const response = await axiosInstance.put(`/cases/${caseId}/product-property`, payload);
+    return response.data;
+  },
+
+  // Phase 1 —— Income Summary
+  getIncomeSummary: async (caseId) => {
+    const response = await axiosInstance.get(`/cases/${caseId}/income-summary`);
+    return response.data;
+  },
+  addIncomeEntry: async (caseId, entry) => {
+    const response = await axiosInstance.post(`/cases/${caseId}/income-entries`, entry);
+    return response.data;
+  },
+  deleteIncomeEntry: async (caseId, entryId) => {
+    const response = await axiosInstance.delete(`/cases/${caseId}/income-entries/${entryId}`);
+    return response.data;
+  },
+  confirmIncomeSummary: async (caseId) => {
+    const response = await axiosInstance.put(`/cases/${caseId}/income-summary/confirm`);
+    return response.data;
+  },
+
+  // Phase 1 —— Bureau Obligations
+  syncObligations: async (caseId) => {
+    const response = await axiosInstance.post(`/cases/${caseId}/bureau-obligations/sync`);
+    return response.data;
+  },
+  getObligations: async (caseId) => {
+    const response = await axiosInstance.get(`/cases/${caseId}/bureau-obligations`);
+    return response.data;
+  },
+  addObligation: async (caseId, obligation) => {
+    const response = await axiosInstance.post(`/cases/${caseId}/bureau-obligations`, obligation);
+    return response.data;
+  },
+  updateObligation: async (caseId, oblId, data) => {
+    const response = await axiosInstance.put(`/cases/${caseId}/bureau-obligations/${oblId}`, data);
+    return response.data;
+  },
+
+  // Phase 1 —— ESR
+  generateESR: async (caseId) => {
+    const response = await axiosInstance.post(`/cases/${caseId}/esr/generate`);
+    return response.data;
+  },
+  getESR: async (caseId) => {
+    const response = await axiosInstance.get(`/cases/${caseId}/esr`);
+    return response.data;
   }
 };

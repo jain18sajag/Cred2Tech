@@ -26,6 +26,9 @@ const SuperadminPricingPage = lazy(() => import('../pages/SuperadminPricingPage'
 const SuperadminWalletManager = lazy(() => import('../pages/SuperadminWalletManager'));
 const SuperadminApiLogsPage = lazy(() => import('../pages/SuperadminApiLogsPage'));
 const LenderConfigPage = lazy(() => import('../pages/LenderConfigPage'));
+const IncomeSummaryPage = lazy(() => import('../pages/IncomeSummaryPage'));
+const BureauObligationsPage = lazy(() => import('../pages/BureauObligationsPage'));
+const EsrPage = lazy(() => import('../pages/EsrPage'));
 
 const PageLoader = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -112,6 +115,32 @@ const AppRouter = () => (
               element={
                 <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN']}>
                   <CustomerProfilePage />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Phase 1 — Onboarding continuation pages */}
+            <Route
+              path="/cases/:id/income-summary"
+              element={
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN']}>
+                  <IncomeSummaryPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/cases/:id/bureau-obligations"
+              element={
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN']}>
+                  <BureauObligationsPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/cases/:id/esr"
+              element={
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN']}>
+                  <EsrPage />
                 </ProtectedRoute>
               }
             />

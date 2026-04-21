@@ -18,7 +18,7 @@ const TenantsListPage = () => {
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
-  
+
   const [selectedTenantId, setSelectedTenantId] = useState(null);
   const [summaryData, setSummaryData] = useState(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
@@ -40,17 +40,17 @@ const TenantsListPage = () => {
   useEffect(() => { fetchTenants(); }, []);
 
   const openSummary = async (id) => {
-     setSelectedTenantId(id);
-     setSummaryData(null);
-     setLoadingSummary(true);
-     try {
-         const data = await getTenantSummary(id);
-         setSummaryData(data);
-     } catch(err) {
-         console.error('Failed to load summary', err);
-     } finally {
-         setLoadingSummary(false);
-     }
+    setSelectedTenantId(id);
+    setSummaryData(null);
+    setLoadingSummary(true);
+    try {
+      const data = await getTenantSummary(id);
+      setSummaryData(data);
+    } catch (err) {
+      console.error('Failed to load summary', err);
+    } finally {
+      setLoadingSummary(false);
+    }
   };
 
   const filtered = useMemo(() => {
@@ -78,7 +78,7 @@ const TenantsListPage = () => {
         breadcrumbs={[{ label: 'Dashboard', path: '/' }, { label: 'Tenants' }]}
         actions={
           <button className="btn btn-primary btn-sm" onClick={() => navigate('/tenants/create')}>
-            <Building size={15} /> Create Tenant
+            <Building size={15} /> Create DSA
           </button>
         }
       />
@@ -178,65 +178,65 @@ const TenantsListPage = () => {
       {/* Slide-out Drawer for Tenant Summary */}
       {selectedTenantId && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', justifyContent: 'flex-end', overflow: 'hidden' }} onClick={() => setSelectedTenantId(null)}>
-            <div style={{ background: '#fff', width: '500px', height: '100%', padding: '24px', boxShadow: '-4px 0 15px rgba(0,0,0,0.1)', overflowY: 'auto', position: 'relative' }} onClick={(e) => e.stopPropagation()}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                   <h3 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>DSA Summary</h3>
-                   <button className="btn btn-ghost btn-icon" onClick={() => setSelectedTenantId(null)}>
-                      <X size={20} />
-                   </button>
-                </div>
-                
-                {loadingSummary ? (
-                   <div style={{ padding: 40, textAlign: 'center' }}><LoadingSpinner /></div>
-                ) : summaryData ? (
-                   <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                      <div className="card" style={{ padding: 16 }}>
-                         <h4 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 10px 0' }}>{summaryData.tenant_name}</h4>
-                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                            <div>
-                               <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0 }}>Wallet Balance</p>
-                               <p style={{ fontSize: 18, fontWeight: 600, color: 'var(--success)', margin: 0 }}>{summaryData.wallet_balance} credits</p>
-                            </div>
-                            <div>
-                               <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0 }}>Team Size</p>
-                               <p style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>{summaryData.team_size}</p>
-                            </div>
-                         </div>
-                      </div>
-
-                      <div className="card" style={{ padding: 16 }}>
-                         <h4 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 15px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: 8 }}>Portfolio Volume</h4>
-                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-                            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Total Customers</span>
-                            <span style={{ fontSize: 13, fontWeight: 600 }}>{summaryData.total_customers}</span>
-                         </div>
-                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Total Cases</span>
-                            <span style={{ fontSize: 13, fontWeight: 600 }}>{summaryData.total_cases}</span>
-                         </div>
-                      </div>
-
-                      <div className="card" style={{ padding: 16 }}>
-                         <h4 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 15px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: 8 }}>Data Pull Statistics</h4>
-                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-                            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Bureau Pulls</span>
-                            <span style={{ fontSize: 13, fontWeight: 600 }}>{summaryData.bureau_pulls}</span>
-                         </div>
-                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-                            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>GST Fetches</span>
-                            <span style={{ fontSize: 13, fontWeight: 600 }}>{summaryData.gst_pulls}</span>
-                         </div>
-                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>ITR Fetches</span>
-                            <span style={{ fontSize: 13, fontWeight: 600 }}>{summaryData.itr_pulls}</span>
-                         </div>
-                      </div>
-
-                   </div>
-                ) : (
-                   <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>Failed to map summary metrics.</p>
-                )}
+          <div style={{ background: '#fff', width: '500px', height: '100%', padding: '24px', boxShadow: '-4px 0 15px rgba(0,0,0,0.1)', overflowY: 'auto', position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <h3 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>DSA Summary</h3>
+              <button className="btn btn-ghost btn-icon" onClick={() => setSelectedTenantId(null)}>
+                <X size={20} />
+              </button>
             </div>
+
+            {loadingSummary ? (
+              <div style={{ padding: 40, textAlign: 'center' }}><LoadingSpinner /></div>
+            ) : summaryData ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <div className="card" style={{ padding: 16 }}>
+                  <h4 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 10px 0' }}>{summaryData.tenant_name}</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div>
+                      <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0 }}>Wallet Balance</p>
+                      <p style={{ fontSize: 18, fontWeight: 600, color: 'var(--success)', margin: 0 }}>{summaryData.wallet_balance} credits</p>
+                    </div>
+                    <div>
+                      <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0 }}>Team Size</p>
+                      <p style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>{summaryData.team_size}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="card" style={{ padding: 16 }}>
+                  <h4 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 15px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: 8 }}>Portfolio Volume</h4>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Total Customers</span>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{summaryData.total_customers}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Total Cases</span>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{summaryData.total_cases}</span>
+                  </div>
+                </div>
+
+                <div className="card" style={{ padding: 16 }}>
+                  <h4 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 15px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: 8 }}>Data Pull Statistics</h4>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Bureau Pulls</span>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{summaryData.bureau_pulls}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>GST Fetches</span>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{summaryData.gst_pulls}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>ITR Fetches</span>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{summaryData.itr_pulls}</span>
+                  </div>
+                </div>
+
+              </div>
+            ) : (
+              <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>Failed to map summary metrics.</p>
+            )}
+          </div>
         </div>
       )}
 

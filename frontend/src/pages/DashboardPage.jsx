@@ -56,7 +56,7 @@ const DashboardPage = () => {
           setUsers(Array.isArray(data) ? data : data.users || []);
         }
       } catch {
-        setUsers([]); 
+        setUsers([]);
       } finally {
         setLoading(false);
       }
@@ -77,9 +77,9 @@ const DashboardPage = () => {
 
       {/* Stat cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginBottom: 28 }}>
-        <StatCard title={user?.role === 'SUPER_ADMIN' ? "Total Tenants" : "Total Visible Users"} value={loading ? '…' : users.length} icon={user?.role === 'SUPER_ADMIN' ? Building2 : Users} color="var(--primary)" subtitle={loading ? '' : 'In your access scope'} loading={loading} />
+        <StatCard title={user?.role === 'SUPER_ADMIN' ? "Total DSA" : "Total Visible Users"} value={loading ? '…' : users.length} icon={user?.role === 'SUPER_ADMIN' ? Building2 : Users} color="var(--primary)" subtitle={loading ? '' : 'In your access scope'} loading={loading} />
         <StatCard title="Your Role" value={user?.role || '—'} icon={Shield} color="var(--role-admin)" subtitle="Platform access level" />
-        <StatCard title="Organization Scope" value={user?.tenant_type || 'Tenant'} icon={Building2} color="var(--role-dsa)" subtitle={`Tenant ID: ${user?.tenant_id || 'Global'}`} />
+        <StatCard title="Organization Scope" value={user?.tenant_type || 'Tenant'} icon={Building2} color="var(--role-dsa)" subtitle={`DSA ID: ${user?.tenant_id || 'Global'}`} />
         {user?.role !== 'SUPER_ADMIN' && <StatCard title="Hierarchy Level" value={user?.hierarchy_level || 'Root'} icon={Layers} color="var(--role-employee)" subtitle={user?.hierarchy_path || '/'} />}
       </div>
 
@@ -90,22 +90,22 @@ const DashboardPage = () => {
             <div>
               <h3 style={{ fontSize: 15, fontWeight: 600 }}>{user?.role === 'SUPER_ADMIN' ? 'Platform Analytics Overview' : 'Recent Users'}</h3>
               <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
-                {user?.role === 'SUPER_ADMIN' ? "User counts aggregated by Tenant ID" : "Users visible in your scope"}
+                {user?.role === 'SUPER_ADMIN' ? "User counts aggregated by DSA ID" : "Users visible in your scope"}
               </p>
             </div>
             {user?.role !== 'SUPER_ADMIN' && <button className="btn btn-secondary btn-sm" onClick={() => navigate('/users')}>View All</button>}
           </div>
           {loading ? (
-             <div style={{ padding: 24 }}>Loading data...</div>
+            <div style={{ padding: 24 }}>Loading data...</div>
           ) : user?.role === 'SUPER_ADMIN' ? (
-             <div style={{ padding: 24 }}>
-               {users.map((tenantGroup, idx) => (
-                 <div key={idx} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
-                   <strong>Tenant ID: {tenantGroup.tenant_id}</strong> - Total Users: {tenantGroup._count?.id || 0}
-                 </div>
-               ))}
-               {users.length === 0 && <p>No aggregated data found.</p>}
-             </div>
+            <div style={{ padding: 24 }}>
+              {users.map((tenantGroup, idx) => (
+                <div key={idx} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                  <strong>DSA ID: {tenantGroup.tenant_id}</strong> - Total Users: {tenantGroup._count?.id || 0}
+                </div>
+              ))}
+              {users.length === 0 && <p>No aggregated data found.</p>}
+            </div>
           ) : (
             <div>
               {recentUsers.map((u) => (
@@ -124,7 +124,7 @@ const DashboardPage = () => {
                   <Badge type="role" value={u.role?.name || u.role} />
                 </div>
               ))}
-              {recentUsers.length === 0 && <div style={{ padding: 24 }}>No users found in your tenant.</div>}
+              {recentUsers.length === 0 && <div style={{ padding: 24 }}>No users found in your DSA.</div>}
             </div>
           )}
         </div>
@@ -132,8 +132,8 @@ const DashboardPage = () => {
         {/* Quick actions */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Quick Actions</h3>
-          {user?.role === 'SUPER_ADMIN' && <QuickAction icon={Building2} label="Manage Tenants" desc="Create and edit tenants" color="var(--primary)" onClick={() => navigate('/tenants')} />}
-          {user?.role === 'SUPER_ADMIN' && <QuickAction icon={Building2} label="Create Tenant" desc="Onboard a new DSA/Cred2Tech" color="var(--success)" onClick={() => navigate('/tenants/create')} />}
+          {user?.role === 'SUPER_ADMIN' && <QuickAction icon={Building2} label="Manage DSA" desc="Create and edit DSA" color="var(--primary)" onClick={() => navigate('/tenants')} />}
+          {user?.role === 'SUPER_ADMIN' && <QuickAction icon={Building2} label="Create DSA" desc="Onboard a new DSA/Cred2Tech" color="var(--success)" onClick={() => navigate('/tenants/create')} />}
           {user?.role !== 'SUPER_ADMIN' && <QuickAction icon={UserPlus} label="Create User" desc="Add a new user to the system" color="var(--success)" onClick={() => navigate('/users/create')} />}
           <QuickAction icon={User} label="My Profile" desc="View your profile & session" color="var(--role-dsa)" onClick={() => navigate('/profile')} />
           {user?.role !== 'SUPER_ADMIN' && <QuickAction icon={GitBranch} label="View Hierarchy" desc="Explore the org chart" color="var(--role-partner)" onClick={() => navigate('/hierarchy')} />}

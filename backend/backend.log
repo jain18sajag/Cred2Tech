@@ -1,0 +1,11 @@
+
+> backend@1.0.0 start
+> node server.js
+
+[dotenv@17.3.1] injecting env (13) from .env -- tip: ⚙️  load multiple .env files with { path: ['.env.local', '.env'] }
+Swagger UI mounted cleanly at /api-docs
+Database connected successfully.
+Server is running on port 5000
+[startup] Roles verified: SUPER_ADMIN, CRED2TECH_MEMBER, DSA_ADMIN, DSA_MEMBER
+
+D:\credtech\Cred2Tech\backend>

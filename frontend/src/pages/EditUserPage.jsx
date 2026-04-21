@@ -23,7 +23,7 @@ const EditUserPage = () => {
   useEffect(() => {
     getUsers()
       .then(data => setTenantUsers(Array.isArray(data) ? data : data.users || []))
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   useEffect(() => {
@@ -116,7 +116,7 @@ const EditUserPage = () => {
                 {ROLE_OPTIONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
               </select>
             </FormField>
-            <FormField label="Tenant ID" name="tenant_id" value={form.tenant_id} onChange={handleChange} disabled />
+            <FormField label="DSA ID" name="tenant_id" value={form.tenant_id} onChange={handleChange} disabled />
             <FormField label="Hierarchy Level" name="hierarchy_level">
               <select name="hierarchy_level" value={form.hierarchy_level} onChange={handleChange} className="form-control">
                 <option value="">None</option>

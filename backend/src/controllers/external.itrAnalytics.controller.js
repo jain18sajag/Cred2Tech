@@ -104,10 +104,12 @@ async function sync(req, res) {
             return res.status(404).json({ error: 'ITR analytics request not found' });
         }
 
-        if (existing.status === 'COMPLETED') {
+        // Return early only if completed AND document ID is stored
+        if (existing.status === 'COMPLETED' && existing.itr_document_id) {
             return res.status(200).json({
                 success: true,
                 status: 'COMPLETED',
+                documentId: existing.itr_document_id,
                 excel_url: existing.excel_url,
                 analytics_payload: existing.analytics_payload
             });
@@ -157,6 +159,10 @@ async function sync(req, res) {
                 where: { case_id: existing.case_id },
                 data: { itr_status: 'COMPLETE' }
             });
+            
+            // Extract ESR financials asynchronously
+            const { extractEsrFinancials } = require('../services/esrFinancials.service');
+            extractEsrFinancials(existing.case_id).catch(err => console.error(err));
         }
 
         res.status(200).json({

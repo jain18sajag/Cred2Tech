@@ -116,6 +116,12 @@ async function syncStatus(req, res) {
                      where: { case_id: existingRequest.case_id },
                      data: { bank_status: mappedStatus === 'COMPLETED' ? 'COMPLETE' : 'FAILED' }
                  });
+
+                 if (mappedStatus === 'COMPLETED') {
+                     // Extract ESR financials asynchronously
+                     const { extractEsrFinancials } = require('../services/esrFinancials.service');
+                     extractEsrFinancials(existingRequest.case_id).catch(err => console.error(err));
+                 }
              }
         }
 

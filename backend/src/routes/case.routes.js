@@ -25,7 +25,10 @@ router.post('/create', caseController.createCase);
 // POST /cases/:id/add-applicant
 router.post('/:id/add-applicant', caseController.addApplicant);
 
-// PATCH /cases/:id/product
+// PATCH /cases/:id/product  (legacy — kept for backward compat)
 router.patch('/:id/product', caseController.updateProduct);
+
+// PUT /cases/:id/product-property  (Phase 1 — saves product + property in one call)
+router.put('/:id/product-property', caseController.updateProductProperty);
 
 module.exports = router;

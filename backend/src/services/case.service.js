@@ -74,29 +74,53 @@ async function addApplicant(case_id, applicantData, tenant_id) {
 }
 
 async function updateProduct(case_id, product_type, tenant_id) {
-  // 1. Verify case exists and belongs to tenant
-  const existingCase = await prisma.case.findFirst({
-    where: {
-      id: case_id,
-      tenant_id: tenant_id
-    }
-  });
+  const existingCase = await prisma.case.findFirst({ where: { id: case_id, tenant_id } });
+  if (!existingCase) throw new Error('Case not found or unauthorized.');
 
-  if (!existingCase) {
-    throw new Error('Case not found or unauthorized.');
+  return await prisma.case.update({
+    where: { id: existingCase.id },
+    data: { product_type, stage: 'LEAD_CREATED' }
+  });
+}
+
+async function updateProductProperty(case_id, payload, tenant_id) {
+  const { product_type, property } = payload;
+  const existingCase = await prisma.case.findFirst({ where: { id: case_id, tenant_id } });
+  if (!existingCase) throw new Error('Case not found or unauthorized.');
+
+  // Property required for LAP / HL
+  const propertyRequired = ['LAP', 'HL'].includes(product_type);
+  if (propertyRequired && property && !property.market_value) {
+    throw new Error('Market value is required for LAP/HL products.');
   }
 
-  // 2. Update product and stage
-  const updatedCase = await prisma.case.update({
-    where: { id: existingCase.id }, // We verified tenant_id above
-    data: {
-      product_type: product_type,
-      stage: 'LEAD_CREATED' // Stage advances after product selection (Step 3)
-    }
+  const [updatedCase] = await prisma.$transaction([
+    prisma.case.update({
+      where: { id: case_id },
+      data: { product_type, stage: 'LEAD_CREATED' }
+    }),
+    ...(property ? [
+      prisma.casePropertyDetails.upsert({
+        where: { case_id },
+        create: { case_id, ...property },
+        update: { ...property, updated_at: new Date() }
+      })
+    ] : [])
+  ]);
+
+  // Return the full updated case with property
+  const finalCase = await prisma.case.findUnique({
+    where: { id: case_id },
+    include: { property: true, applicants: true, data_pull_status: true }
   });
 
-  return updatedCase;
+  // Extract ESR financials asynchronously
+  const { extractEsrFinancials } = require('./esrFinancials.service');
+  extractEsrFinancials(case_id).catch(err => console.error(err));
+
+  return finalCase;
 }
+
 
 async function getAllCases(tenant_id) {
   return await prisma.case.findMany({
@@ -129,6 +153,7 @@ async function getCaseById(case_id, tenant_id) {
             bank_statements: { take: 1, orderBy: { created_at: 'desc' } }
          }
       },
+      property: true,
       data_pull_status: true
     }
   });
@@ -159,6 +184,7 @@ module.exports = {
   createCase,
   addApplicant,
   updateProduct,
+  updateProductProperty,
   getAllCases,
   getCaseById
 };

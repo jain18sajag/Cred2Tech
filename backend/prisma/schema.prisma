@@ -185,6 +185,8 @@ enum CaseStage {
   DRAFT
   LEAD_CREATED
   DATA_COLLECTION
+  INCOME_REVIEWED
+  ESR_GENERATED
   IN_REVIEW
   APPROVED
   REJECTED
@@ -194,24 +196,25 @@ model Case {
   id                 Int       @id @default(autoincrement())
   tenant_id          Int
   customer_id        Int
-  product_type       String?   // LAP, HL, WC, TL, Machinery, BL, Other
+  product_type       String?   // LAP, HL, WC, TL, ML, BL, Other
   loan_amount        Float?
-  lender_name        String?
-  property_type      String?
-  occupancy          String?
-  property_value     Float?
-  location           String?
-  ltv_ratio          Float?
+  lender_name        String?   // DEPRECATED: use case_lender_selections (Phase 2)
+  property_type      String?   // DEPRECATED: use case_property_details
+  occupancy          String?   // DEPRECATED: use case_property_details
+  property_value     Float?    // DEPRECATED: use case_property_details
+  location           String?   // DEPRECATED: use case_property_details
+  ltv_ratio          Float?    // DEPRECATED: computed during ESR
   dsa_notes          String?
+  esr_generated      Boolean   @default(false)  // NEW Phase 1
   stage              CaseStage @default(DRAFT)
   created_at         DateTime  @default(now())
   updated_at         DateTime  @updatedAt
 
   created_by_user_id Int
 
-  tenant         Tenant        @relation(fields: [tenant_id], references: [id])
-  customer       Customer      @relation(fields: [customer_id], references: [id])
-  created_by       User          @relation("CaseCreator", fields: [created_by_user_id], references: [id])
+  tenant           Tenant                        @relation(fields: [tenant_id], references: [id])
+  customer         Customer                      @relation(fields: [customer_id], references: [id])
+  created_by       User                          @relation("CaseCreator", fields: [created_by_user_id], references: [id])
   applicants       Applicant[]
   api_logs         ApiUsageLog[]
   activity_logs    ActivityLog[]
@@ -222,6 +225,12 @@ model Case {
   itr_analytics    ItrAnalyticsRequest[]
   bureau_checks    BureauVerification[]
   documents        Document[]
+  // Phase 1 relations
+  property         CasePropertyDetails?
+  income_entries   CaseIncomeEntry[]
+  obligations      CaseCreditObligation[]
+  esr              EligibilityReport?
+  esr_financials   CaseEsrFinancials?
 
   @@map("cases")
 }
@@ -235,21 +244,25 @@ model Applicant {
   id             Int           @id @default(autoincrement())
   case_id        Int
   type           ApplicantType
+  name           String?       // Phase 1: display name for bureau/income pages
   pan_number     String?
   mobile         String?
   email          String?
   cibil_score    Int?
-  emi            Float?
+  emi            Float?        // DEPRECATED: use sum of CaseCreditObligation.emi_per_month
   otp_verified   Boolean       @default(false)
   bureau_fetched Boolean       @default(false)
   created_at     DateTime      @default(now())
   updated_at     DateTime      @updatedAt
 
-  case            Case          @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  case            Case                         @relation(fields: [case_id], references: [id], onDelete: Cascade)
   bank_statements BankStatementAnalysisRequest[]
   itr_analytics   ItrAnalyticsRequest[]
   bureau_checks   BureauVerification[]
   documents       Document[]
+  // Phase 1 relations
+  income_entries  CaseIncomeEntry[]
+  obligations     CaseCreditObligation[]
 
   @@map("applicants")
 }
@@ -699,6 +712,10 @@ model Lender {
 enum LenderProductType {
   HL
   LAP
+  WC   // Working Capital / CC / OD
+  TL   // Term Loan
+  ML   // Machinery / Equipment Finance
+  BL   // Business Loan (Unsecured)
 }
 
 model LenderProduct {
@@ -834,4 +851,138 @@ model Document {
   @@index([case_id])
   @@index([tenant_id, document_type])
   @@map("documents")
+}
+
+// ─── Phase 1: Onboarding Extension Models ────────────────────────────────────
+
+model CasePropertyDetails {
+  id               Int      @id @default(autoincrement())
+  case_id          Int      @unique
+  property_type    String?  // Commercial / Residential / Industrial / Plot
+  occupancy_status String?  // Self Occupied / Rented Out / Vacant
+  ownership_type   String?  // Sole Owner / Joint Owner / Company Owned
+  market_value     Float?   // DSA estimate in INR
+  remarks          String?
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  case_entity      Case     @relation(fields: [case_id], references: [id], onDelete: Cascade)
+
+  @@index([case_id])
+  @@map("case_property_details")
+}
+
+model CaseIncomeEntry {
+  id                  Int       @id @default(autoincrement())
+  case_id             Int
+  applicant_id        Int?
+  income_type         String    // Director Salary / Rental Income / Agriculture Income / Other...
+  applicant_label     String?   // Human-readable label (e.g. "Rajesh Kumar")
+  annual_amount       Float
+  supporting_doc_type String?   // CA Certificate / Salary Slip / Form 16 / Bank Credit / None
+  remarks             String?
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+
+  case_entity         Case       @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  applicant           Applicant? @relation(fields: [applicant_id], references: [id], onDelete: SetNull)
+
+  @@index([case_id])
+  @@index([applicant_id])
+  @@map("case_income_entries")
+}
+
+model CaseCreditObligation {
+  id                  Int       @id @default(autoincrement())
+  case_id             Int
+  applicant_id        Int
+  lender_name         String?
+  loan_type           String?   // Home Loan / Car Loan / Business Loan / Personal Loan / etc.
+  loan_amount         Float?
+  outstanding_amount  Float?
+  loan_start_date     DateTime?
+  emi_per_month       Float     @default(0)
+  status              String    @default("ACTIVE")  // ACTIVE | CLOSED | NPA | VERIFY
+  source              String    @default("BUREAU")  // BUREAU | MANUAL
+  needs_verification  Boolean   @default(false)     // true when bureau EMI = 0
+  include_in_foir     Boolean   @default(true)      // NEW: For ESR FOIR calculation
+  remarks             String?
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+
+  case_entity         Case      @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  applicant           Applicant @relation(fields: [applicant_id], references: [id], onDelete: Cascade)
+
+  @@index([case_id])
+  @@index([applicant_id])
+  @@index([case_id, applicant_id])
+  @@map("case_credit_obligations")
+}
+
+model CaseEsrFinancials {
+  id                    Int      @id @default(autoincrement())
+  case_id               Int      @unique
+  requested_loan_amount Float?
+  requested_tenure_months Int?
+  product_type          String?
+
+  property_value        Float?
+  property_type         String?
+  occupancy_type        String?
+
+  bureau_score          Int?
+  applicant_age         Int?
+  existing_obligations  Float?
+  icici_exposure        Float?
+  
+  itr_pat               Float?
+  itr_depreciation      Float?
+  itr_finance_cost      Float?
+  itr_gross_receipts    Float?
+  
+  gst_avg_monthly_sales Float?
+  gst_industry_type     String?
+  gst_industry_margin   Float?
+  
+  bank_avg_balance      Float?
+  bank_monthly_income   Float?
+  
+  net_profit_income     Float?
+  gst_income            Float?
+  banking_income        Float?
+
+  selected_income_method String?
+  selected_monthly_income Float?
+
+  constitution_type     String?
+  employment_type       String?
+  business_vintage_months Int?
+  
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+
+  case_entity           Case     @relation(fields: [case_id], references: [id], onDelete: Cascade)
+
+  @@map("case_esr_financials")
+}
+
+model EligibilityReport {
+  id                    Int      @id @default(autoincrement())
+  case_id               Int      @unique
+  generated_at          DateTime @default(now())
+  generated_by_user_id  Int?
+  combined_income       Float?
+  property_value        Float?
+  primary_cibil_score   Int?
+  lowest_cibil_score    Int?
+  total_emi_per_month   Float?
+  raw_payload           Json?    // Per-lender eligibility breakdown
+  status                String   @default("GENERATED")
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+
+  case_entity           Case     @relation(fields: [case_id], references: [id], onDelete: Cascade)
+
+  @@index([case_id])
+  @@map("eligibility_reports")
 }
