@@ -112,6 +112,9 @@ async function fetchReport(requestId) {
 async function createAuthLink(payload) {
     const { baseUrl, authToken } = await getProviderConfig();
 
+    console.log("payload for authlink api", payload);
+    console.log("authToken and baseurl for authlink api", authToken, baseUrl);
+
     try {
         const response = await axios.post(
             `${baseUrl}/underwriting/create-gstr-authlink`,
@@ -121,11 +124,13 @@ async function createAuthLink(payload) {
                     'Authorization': authToken,
                     'Content-Type': 'application/json'
                 },
-                timeout: 20000
+                timeout: 30000
             }
         );
+        console.log("response for authlink api", response);
         return handleResponse(response);
     } catch (error) {
+        console.log("error for authlink api", error);
         throw parseError(error);
     }
 }

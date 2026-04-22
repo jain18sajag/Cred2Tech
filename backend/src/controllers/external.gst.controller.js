@@ -54,14 +54,19 @@ async function createGstRequest(req, res) {
                 let message = '';
 
                 if (mode === 'AUTH_LINK') {
-                    const callbackUrl = process.env.APP_BASE_URL + "/api/external/webhooks/signzy/gst";
+                    // Signzy will ping the callback URL synchronously to verify reachability.
+                    // If we pass http://localhost:5000, Signzy will hang trying to hit its own internal server loopback.
+                    const isLocal = process.env.APP_BASE_URL && process.env.APP_BASE_URL.includes('localhost');
+                    const callbackUrl = isLocal 
+                         ? "https://webhook.site/dummy-callback-for-localhost" 
+                         : process.env.APP_BASE_URL + "/api/v1/external/webhooks/signzy/gst";
+
                     const authLinkPayload = {
                         gstin,
                         fromDate: from_date,
                         toDate: to_date,
                         entityDetails: entity_details || false,
                         pdfUrl: pdf_url || false,
-                        // callbackUrl: "https://client-specific.callback.url",
                         callbackUrl: callbackUrl,
                         emails: emails || [],
                         mobileNumbers: mobile_numbers || []
