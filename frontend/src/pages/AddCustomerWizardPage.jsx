@@ -167,14 +167,21 @@ const AddCustomerWizardPage = () => {
   };
 
   const handleVerifyPan = async (isCoapplicant = false, idx = null) => {
+    // Prevent React onClick passing the synthetic event object as the first parameter
+    if (typeof isCoapplicant === 'object') {
+        isCoapplicant = false;
+        idx = null;
+    }
+
     if (!formData.business_pan || formData.business_pan.length < 10) return toast.error('Valid PAN required');
     if (!formData.customer_id || !caseId) return toast.error('Please verify mobile first to generate a case');
     setPanVerifying(true);
     
     try {
       const res = await api.post(`/external/pan/fetch`, { 
-        pan_number: isCoapplicant ? formData.applicants[idx].pan_number : formData.business_pan, 
-        customer_id: formData.customer_id 
+        pan: isCoapplicant ? formData.applicants[idx].pan_number : formData.business_pan, 
+        customer_id: formData.customer_id,
+        case_id: caseId
       });
       const data = res.data;
 

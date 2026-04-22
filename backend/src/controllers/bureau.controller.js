@@ -40,11 +40,13 @@ async function runBureauVerification(req, res) {
          let firstName = applicant.type === 'PRIMARY' ? caseRecord.customer.business_name?.split(' ')[0] || 'Unknown' : 'CoApplicant';
          let lastName = applicant.type === 'PRIMARY' ? caseRecord.customer.business_name?.split(' ').slice(1).join(' ') || 'User' : 'User';
          const mobile = applicant.mobile || caseRecord.customer.business_mobile || '9999999999';
+         const panNumber = applicant.pan_number || caseRecord.customer.business_pan || '';
 
          const payload = {
              caseId: caseId,
              applicantId: applicant.id,
              mobileNumber: mobile,
+             panNumber: panNumber,
              firstName,
              lastName,
              applicantType: applicant.type
