@@ -315,13 +315,25 @@ async function handleSignzyCallback(req, res) {
         const providerRequestId = resultObj.requestId;
         if (!providerRequestId) return res.status(400).json({ error: "Missing requestId in webhook payload" });
 
-        const dbReq = await prisma.gstrAnalyticsRequest.findUnique({
+        let dbReq = await prisma.gstrAnalyticsRequest.findUnique({
             where: { provider_request_id: providerRequestId }
         });
 
         if (!dbReq) {
-            console.warn(`[Webhook] Unmapped GST Request: ${providerRequestId}`);
-            return res.status(200).send("Unmapped but OK");
+            // Attempt fallback mapping: Find the latest request that was created for the AuthLink mode or IN_SYSTEM that is still waiting for a callback.
+            dbReq = await prisma.gstrAnalyticsRequest.findFirst({
+                where: { 
+                    status: { in: ['AUTH_LINK_CREATED', 'PROCESSING', 'OTP_VERIFIED'] }
+                },
+                orderBy: { id: 'desc' }
+            });
+
+            if (!dbReq) {
+                console.warn(`[Webhook] Unmapped GST Request: ${providerRequestId}`);
+                return res.status(200).send("Unmapped but OK");
+            } else {
+                console.log(`[Webhook] Fallback mapped disconnected requestId ${providerRequestId} to nearest pending GST Request ID: ${dbReq.id}`);
+            }
         }
 
         if (dbReq.status === 'COMPLETED' || dbReq.status === 'REPORT_READY') {
@@ -329,10 +341,23 @@ async function handleSignzyCallback(req, res) {
             return res.status(200).send("OK");
         }
 
+        let rawGstData = dbReq.raw_gst_data;
+        if (resultObj.jsonDataUrl) {
+            try {
+                const axios = require('axios');
+                const downloader = await axios.get(resultObj.jsonDataUrl);
+                rawGstData = downloader.data;
+                console.log(`[Webhook] Successfully downloaded JSON data. Size: ${JSON.stringify(rawGstData).length} chars`);
+            } catch (err) {
+                console.error("[Webhook] Failed to download JSON payload:", err.message);
+            }
+        }
+
         const updateData = {
             callback_payload: payload,
             status: 'CALLBACK_RECEIVED',
-            provider_message: resultObj.message || 'Callback Received'
+            provider_message: resultObj.message || 'Callback Received',
+            raw_gst_data: rawGstData
         };
 
         if (resultObj.jsonDataUrl || resultObj.pdfUrl || resultObj.excelUrl) {
@@ -358,7 +383,16 @@ async function handleSignzyCallback(req, res) {
             });
         }
 
-        // Technically we could instantly trigger a syncGstData fetch here locally as an async detached job, but we'll let polling solve it
+        // Auto-extract ESR when report is entirely ready natively via Webhook!
+        if (updateData.status === 'REPORT_READY' && dbReq.case_id) {
+            try {
+                const esrFinancialsService = require('../services/esrFinancials.service');
+                await esrFinancialsService.extractEsrFinancials(dbReq.case_id);
+                console.log(`[Webhook] Triggered automated ESR Extraction for Case ID: ${dbReq.case_id}`);
+            } catch (e) {
+                console.error(`[Webhook] ESR Extraction error post-webhook:`, e);
+            }
+        }
 
         return res.status(200).json({ received: true });
     } catch (error) {
