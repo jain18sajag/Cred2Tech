@@ -54,6 +54,7 @@ async function createGstRequest(req, res) {
                 let message = '';
 
                 if (mode === 'AUTH_LINK') {
+                    const callbackUrl = process.env.APP_BASE_URL + "/api/external/webhooks/signzy/gst";
                     const authLinkPayload = {
                         gstin,
                         fromDate: from_date,
