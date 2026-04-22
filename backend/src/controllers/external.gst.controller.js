@@ -302,6 +302,7 @@ async function syncGstData(req, res) {
 async function handleSignzyCallback(req, res) {
     try {
         const payload = req.body;
+        console.log("GST Webhook Payload: ", payload);
         // e.g., payload = { result: { requestId, status, ... } }
         const resultObj = payload.result || payload;
 
