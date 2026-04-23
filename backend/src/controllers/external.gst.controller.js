@@ -341,11 +341,15 @@ async function handleSignzyCallback(req, res) {
             return res.status(200).send("OK");
         }
 
+        const jUrl = resultObj.data?.jsonDataUrl || resultObj.jsonDataUrl;
+        const pUrl = resultObj.data?.pdfUrl || resultObj.pdfUrl;
+        const eUrl = resultObj.data?.excelUrl || resultObj.excelUrl;
+
         let rawGstData = dbReq.raw_gst_data;
-        if (resultObj.jsonDataUrl) {
+        if (jUrl) {
             try {
                 const axios = require('axios');
-                const downloader = await axios.get(resultObj.jsonDataUrl);
+                const downloader = await axios.get(jUrl);
                 rawGstData = downloader.data;
                 console.log(`[Webhook] Successfully downloaded JSON data. Size: ${JSON.stringify(rawGstData).length} chars`);
             } catch (err) {
@@ -360,10 +364,10 @@ async function handleSignzyCallback(req, res) {
             raw_gst_data: rawGstData
         };
 
-        if (resultObj.jsonDataUrl || resultObj.pdfUrl || resultObj.excelUrl) {
-            updateData.report_json_url = resultObj.jsonDataUrl || dbReq.report_json_url;
-            updateData.report_pdf_url = resultObj.pdfUrl || dbReq.report_pdf_url;
-            updateData.report_excel_url = resultObj.excelUrl || dbReq.report_excel_url;
+        if (jUrl || pUrl || eUrl) {
+            updateData.report_json_url = jUrl || dbReq.report_json_url;
+            updateData.report_pdf_url = pUrl || dbReq.report_pdf_url;
+            updateData.report_excel_url = eUrl || dbReq.report_excel_url;
             updateData.status = 'REPORT_READY';
         } else if (resultObj.status === 'FAILED' || resultObj.message?.toLowerCase().includes('failed')) {
             updateData.status = 'FAILED';

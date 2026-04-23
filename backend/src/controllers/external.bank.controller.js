@@ -93,7 +93,8 @@ async function syncStatus(req, res) {
         }
 
         const providerRes = await bankService.retrieveWorkOrder(report_id);
-        const statusStr = providerRes.report?.reportStatus || providerRes.status || providerRes.result?.status;
+        const resultPayload = providerRes.result || providerRes;
+        const statusStr = providerRes.report?.reportStatus || providerRes.status || resultPayload.status;
 
         // Map provider status
         let mappedStatus = existingRequest.status;
@@ -101,12 +102,80 @@ async function syncStatus(req, res) {
         else if (statusStr === 'IN PROGRESS') mappedStatus = 'ANALYZING';
         else if (statusStr === 'FAILED' || statusStr === 'REJECTED') mappedStatus = 'FAILED';
 
+        let excelDocId = existingRequest.bank_excel_document_id;
+        let jsonDocId = existingRequest.bank_json_document_id;
+        const excelUrl = resultPayload.excelUrl || resultPayload.excel;
+        const jsonUrl = resultPayload.jsonUrl || resultPayload.json;
+
+        let rawRetrieveData = providerRes;
+
+        // Automatically download URLs just like the Webhooks do!
+        if (mappedStatus === 'COMPLETED') {
+            const ingestionJobs = [];
+            
+            // Note: Since syncStatus is authenticated in our route, req.user is guaranteed.
+            // When building true webhooks, you pull tenant_id from the existingRequest instead.
+            const tenantId = req.user ? req.user.tenant_id : existingRequest.tenant_id;
+            const userId = req.user ? req.user.id : existingRequest.created_by_user_id;
+
+            if (excelUrl && !excelDocId) {
+                ingestionJobs.push(documentService.ingestFromUrl({
+                    vendorUrl: excelUrl,
+                    documentType: 'BANK_EXCEL',
+                    tenantId,
+                    customerId: existingRequest.customer_id,
+                    caseId: existingRequest.case_id,
+                    applicantId: existingRequest.applicant_id,
+                    uploadedByUserId: userId,
+                    originalFileName: `bank_statement_${report_id}.xlsx`,
+                    metadata: { report_id, source: 'bank_sync_auto_download' }
+                }).then(doc => { excelDocId = doc.id; }).catch(err => {
+                    console.error('[bank.controller] Auto-Excel ingestion failed:', err.message);
+                }));
+            }
+
+            if (jsonUrl && !jsonDocId) {
+                ingestionJobs.push(documentService.ingestFromUrl({
+                    vendorUrl: jsonUrl,
+                    documentType: 'BANK_JSON',
+                    tenantId,
+                    customerId: existingRequest.customer_id,
+                    caseId: existingRequest.case_id,
+                    applicantId: existingRequest.applicant_id,
+                    uploadedByUserId: userId,
+                    originalFileName: `bank_statement_${report_id}.json`,
+                    metadata: { report_id, source: 'bank_sync_auto_download' }
+                }).then(doc => { jsonDocId = doc.id; }).catch(err => {
+                    console.error('[bank.controller] Auto-JSON ingestion failed:', err.message);
+                }));
+            }
+
+            // Await parallel system injections
+            await Promise.allSettled(ingestionJobs);
+
+            // User dynamically requested raw JSON bytes natively loaded into raw_retrieve_response field
+            if (jsonUrl) {
+                try {
+                    const axios = require('axios');
+                    const downRes = await axios.get(jsonUrl);
+                    rawRetrieveData = downRes.data;
+                } catch(e) {
+                    console.error("[Bank Sync] Failed to buffer json payload into string:", e.message);
+                }
+            }
+        }
+
         const updated = await prisma.bankStatementAnalysisRequest.update({
             where: { report_id },
             data: { 
                 status: mappedStatus,
                 provider_message: statusStr,
-                raw_retrieve_response: providerRes
+                raw_retrieve_response: rawRetrieveData, // Extracted full JSON payload via User Request
+                raw_download_response: rawRetrieveData,
+                bank_excel_document_id: excelDocId || undefined,
+                bank_json_document_id: jsonDocId || undefined,
+                report_excel_url: excelUrl,
+                report_json_url: jsonUrl
             }
         });
 
