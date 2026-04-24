@@ -1,3 +1,5 @@
+
+require('dotenv').config();
 const { extractEsrFinancials } = require('./src/services/esrFinancials.service');
 const { PrismaClient } = require('@prisma/client');
 const p = new PrismaClient();
