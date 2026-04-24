@@ -8,8 +8,9 @@ const gstController = require('../controllers/external.gst.controller');
 const itrAnalyticsController = require('../controllers/external.itrAnalytics.controller');
 const bankController = require('../controllers/external.bank.controller');
 
-// Unauthenticated webhook
+// Unauthenticated webhooks
 router.post('/webhooks/signzy/gst', express.json(), gstController.handleSignzyCallback);
+router.post('/webhooks/signzy/bank', express.json(), bankController.handleSignzyCallback);
 
 router.use(authenticate);
 

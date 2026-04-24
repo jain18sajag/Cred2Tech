@@ -18,15 +18,15 @@ export default function IncomeSummaryPage() {
   const { id: caseId } = useParams();
   const navigate = useNavigate();
 
-  const [loading, setLoading]   = useState(true);
-  const [saving, setSaving]     = useState(false);
-  const [data, setData]         = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [data, setData] = useState(null);
   const [applicants, setApplicants] = useState([]);
   const [newEntry, setNewEntry] = useState({
     income_type: '', applicant_id: '', applicant_label: '',
     annual_amount: '', supporting_doc_type: 'CA Certificate', remarks: ''
   });
-  const [adding, setAdding]     = useState(false);
+  const [adding, setAdding] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -47,8 +47,8 @@ export default function IncomeSummaryPage() {
   useEffect(() => { load(); }, [load]);
 
   const handleAddEntry = async () => {
-    if (!newEntry.income_type)    return toast.error('Select income type');
-    if (!newEntry.annual_amount)  return toast.error('Enter annual amount');
+    if (!newEntry.income_type) return toast.error('Select income type');
+    if (!newEntry.annual_amount) return toast.error('Enter annual amount');
     try {
       setSaving(true);
       const entry = {
@@ -92,10 +92,10 @@ export default function IncomeSummaryPage() {
 
   if (loading) return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}><LoadingSpinner size={40} /></div>;
 
-  const api  = data?.api_data || {};
+  const api = data?.api_data || {};
   const manualTotal = data?.manual_total || 0;
-  const combined    = data?.combined_annual_income || 0;
-  const totalEmi    = data?.total_emi_per_month || 0;
+  const combined = data?.combined_annual_income || 0;
+  const totalEmi = data?.total_emi_per_month || 0;
 
   return (
     <div style={{ maxWidth: 960, margin: '0 auto', paddingBottom: 60 }}>
@@ -131,7 +131,7 @@ export default function IncomeSummaryPage() {
             <tbody>
               {[
                 { label: 'Gross Turnover / Receipts', latest: api.gst_turnover?.latest, prev: api.gst_turnover?.prev, source: 'GST', color: '#2B6CB0', bg: '#EBF8FF' },
-                { label: 'Net Profit',                latest: api.net_profit?.latest,    prev: api.net_profit?.prev,    source: 'ITR', color: '#276749', bg: '#F0FFF4' },
+                { label: 'Net Profit', latest: api.net_profit?.latest, prev: api.net_profit?.prev, source: 'ITR', color: '#276749', bg: '#F0FFF4' },
                 { label: 'Average Monthly Bank Balance', latest: api.avg_bank_balance?.latest, prev: api.avg_bank_balance?.prev, source: 'Bank Stmt', color: '#744210', bg: '#FFFBF0' }
               ].map((row, i) => (
                 <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
@@ -148,8 +148,8 @@ export default function IncomeSummaryPage() {
         <div style={{ padding: '14px 24px', background: 'var(--bg-elevated)', borderTop: '1px solid var(--border)', display: 'flex', gap: 40 }}>
           {[
             { label: 'Net Profit (Latest Year)', value: fmt(api.net_profit?.latest), color: 'var(--success)' },
-            { label: 'Avg Monthly Bank Balance',  value: fmt(api.avg_bank_balance?.latest), color: 'var(--text-primary)' },
-            { label: 'Combined EMI Obligations',  value: fmt(totalEmi), color: 'var(--error)' }
+            { label: 'Avg Monthly Bank Balance', value: fmt(api.avg_bank_balance?.latest), color: 'var(--text-primary)' },
+            { label: 'Combined EMI Obligations', value: fmt(totalEmi), color: 'var(--error)' }
           ].map(({ label, value, color }) => (
             <div key={label}>
               <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{label}</div>

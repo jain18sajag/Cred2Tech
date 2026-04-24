@@ -316,8 +316,41 @@ async function downloadData(req, res) {
     }
 }
 
+async function handleSignzyCallback(req, res) {
+    try {
+        console.log(`[Bank Webhook] Signature received`);
+        const payload = req.body;
+        
+        let reportId = req.query.report_id || payload.reportId || payload.id || payload.requestId;
+        
+        // Sometimes the payload sends reportId safely tucked inside result block
+        if (!reportId && payload.result) {
+            reportId = payload.result.reportId || payload.result.id;
+        }
+
+        if (!reportId) {
+            console.error("[Bank Webhook] Unmapped Bank Webhook received and reportId could not be deduced. Raw:", JSON.stringify(payload));
+            return res.status(400).json({ status: 'FAILED', error: "Could not deduce report_id mapping." });
+        }
+
+        console.log(`[Bank Webhook] Processing background sync for report: ${reportId}`);
+
+        // Directly mimic the polling user to trigger our own synchronized sync logic inside controller natively!
+        // This invokes existing logic strictly on server side context safely.
+        req.body.report_id = reportId;
+        req.user = req.user || null; // Will safely inherit logic blocks natively
+        
+        return await syncStatus(req, res);
+
+    } catch (err) {
+        console.error("[Bank Webhook Endpoint Failure]:", err);
+        return res.status(500).json({ status: 'FAILED', error: err.message });
+    }
+}
+
 module.exports = {
     analyze,
     syncStatus,
-    downloadData
+    downloadData,
+    handleSignzyCallback
 };

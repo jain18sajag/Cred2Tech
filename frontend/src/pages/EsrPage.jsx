@@ -7,6 +7,67 @@ import { CheckCircle, XCircle, RefreshCw, ChevronLeft } from 'lucide-react';
 
 const fmt = (n) => n != null ? `₹${Number(n).toLocaleString('en-IN')}` : null;
 
+const formatDynamicCurrency = (n) => {
+  if (n === null || n === undefined) return '—';
+  const num = Number(n);
+  if (num >= 10000000) return `₹${(num / 10000000).toLocaleString('en-IN', { maximumFractionDigits: 2 })}Cr`;
+  if (num >= 100000) return `₹${(num / 100000).toLocaleString('en-IN', { maximumFractionDigits: 2 })}L`;
+  return `₹${num.toLocaleString('en-IN')}`;
+};
+
+const formatDynamicTenure = (months) => {
+  if (months === null || months === undefined) return '—';
+  const m = Number(months);
+  if (m % 12 === 0) return `${m / 12} Years`;
+  return `${(m / 12).toFixed(1)} Years`;
+};
+
+// Extracted Schemes Panel Component
+const SchemeDiagnosticsPanel = ({ evaluations }) => {
+  const [open, setOpen] = useState(false);
+  if (!evaluations || evaluations.length === 0) return null;
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <button 
+        className="btn btn-ghost" 
+        onClick={() => setOpen(!open)}
+        style={{ fontSize: 11, padding: '4px 8px', color: 'var(--text-tertiary)', border: '1px solid var(--border)' }}
+      >
+        {open ? 'Hide Diagnostics ↑' : 'View Scheme Diagnostics ↓'}
+      </button>
+      {open && (
+        <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-elevated)', borderRadius: 8, fontSize: 12 }}>
+          {evaluations.map((ev, i) => (
+            <div key={i} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: i === evaluations.length - 1 ? 'none' : '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <strong>{ev.scheme_name}</strong>
+                <span style={{ color: ev.is_eligible ? 'var(--success)' : 'var(--error)' }}>
+                  {ev.is_eligible ? 'Eligible' : 'Ineligible'}
+                </span>
+              </div>
+              <div style={{ color: 'var(--text-tertiary)', fontSize: 11, marginBottom: 6 }}>
+                LTV: {ev.applicable_ltv_percent ? `${(ev.applicable_ltv_percent * 100).toFixed(0)}%` : '—'} ({ev.applicable_ltv_key})
+                <br/>Method Matched: {ev.income_method_matched ? 'Yes' : 'No'}
+              </div>
+              {ev.failure_reasons && ev.failure_reasons.length > 0 && (
+                <ul style={{ color: 'var(--error)', paddingLeft: 16, margin: '4px 0' }}>
+                  {ev.failure_reasons.map((r, ri) => <li key={ri}>{r}</li>)}
+                </ul>
+              )}
+              {ev.warnings && ev.warnings.length > 0 && (
+                <ul style={{ color: '#D97706', paddingLeft: 16, margin: '4px 0' }}>
+                  {ev.warnings.map((w, wi) => <li key={wi}>{w}</li>)}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export default function EsrPage() {
   const { id: caseId } = useParams();
   const navigate = useNavigate();
@@ -132,18 +193,22 @@ export default function EsrPage() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
                       <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>{lender.lender_name}</h3>
-                      <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>{lender.product_name} · {lender.scheme_name}</p>
+                      <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>{lender.product_display_name || lender.product_type} · {lender.best_scheme_name}</p>
                     </div>
-                    <span style={{ background: '#F0FFF4', color: 'var(--success)', padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, border: '1px solid #9AE6B4' }}>✓ Eligible</span>
+                    <span style={{ background: '#F0FFF4', color: 'var(--success)', padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, border: '1px solid #9AE6B4' }}>✓ ELIGIBLE</span>
                   </div>
                 </div>
                 <div style={{ padding: '16px 20px' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 16 }}>
                     {[
-                      { label: 'Max Loan Amount',   value: fmt(lender.max_loan_amount),         color: 'var(--success)' },
-                      { label: 'Rate of Interest',  value: lender.roi_min ? `${lender.roi_min}% p.a.` : '—', color: 'var(--text-primary)' },
-                      { label: 'Max LTV',           value: lender.max_ltv_percent ? `${lender.max_ltv_percent}%` : '—', color: 'var(--text-primary)' },
-                      { label: 'Max Tenure',        value: lender.max_tenure_months ? `${lender.max_tenure_months} months` : '—', color: 'var(--text-primary)' }
+                      { label: 'Loan Amount',   value: formatDynamicCurrency(lender.final_eligible_loan_amount), color: 'var(--success)' },
+                      { 
+                        label: 'ROI',  
+                        value: lender.roi_min ? `${lender.roi_min}% p.a.` + (lender.roi_max ? ` - ${lender.roi_max}% p.a.` : '') : '—', 
+                        color: 'var(--text-primary)' 
+                      },
+                      { label: 'LTV', value: lender.applicable_ltv_percent ? `${(lender.applicable_ltv_percent * 100).toFixed(0)}%` : '—', color: 'var(--text-primary)' },
+                      { label: 'Max Tenure', value: formatDynamicTenure(lender.max_tenure_months), color: 'var(--text-primary)' }
                     ].map(({ label, value, color }) => value && (
                       <div key={label} style={{ background: 'var(--bg-elevated)', borderRadius: 8, padding: '10px 12px' }}>
                         <div style={{ fontSize: 10, color: 'var(--text-tertiary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</div>
@@ -151,9 +216,12 @@ export default function EsrPage() {
                       </div>
                     ))}
                   </div>
+
+                  <SchemeDiagnosticsPanel evaluations={lender.scheme_evaluations} />
+
                   <button
                     className="btn btn-primary"
-                    style={{ width: '100%', padding: '10px', fontWeight: 700 }}
+                    style={{ width: '100%', padding: '10px', fontWeight: 700, marginTop: 12 }}
                     onClick={() => {
                       toast.success(`Lender selected: ${lender.lender_name}`);
                       navigate('/customers');
@@ -181,14 +249,17 @@ export default function EsrPage() {
                 <div style={{ padding: '16px 20px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0, color: 'var(--text-secondary)' }}>{lender.lender_name}</h3>
-                    <span style={{ background: 'var(--bg-elevated)', color: 'var(--text-tertiary)', padding: '3px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600, border: '1px solid var(--border)' }}>✕ Ineligible</span>
+                    <span style={{ background: 'var(--bg-elevated)', color: 'var(--text-tertiary)', padding: '3px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600, border: '1px solid var(--border)' }}>✕ INELIGIBLE</span>
                   </div>
-                  <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8, lineHeight: 1.5 }}>{lender.product_name}</p>
+                  <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8, lineHeight: 1.5 }}>{lender.product_display_name || lender.product_type}</p>
+                  
                   {lender.ineligibility_reason && (
                     <div style={{ marginTop: 10, padding: '8px 10px', background: '#FFF5F5', borderRadius: 6, fontSize: 11, color: 'var(--error)', border: '1px solid #FED7D7' }}>
                       ❌ {lender.ineligibility_reason}
                     </div>
                   )}
+
+                  <SchemeDiagnosticsPanel evaluations={lender.scheme_evaluations} />
                 </div>
               </div>
             ))}
