@@ -14,25 +14,27 @@ const fmtINR = (n, fallback = '—') => {
   const num = Number(n);
   if (isNaN(num)) return fallback;
   if (num >= 10000000) return `₹${(num / 10000000).toFixed(2)}Cr`;
-  if (num >= 100000)   return `₹${(num / 100000).toFixed(1)}L`;
+  if (num >= 100000) return `₹${(num / 100000).toFixed(1)}L`;
   return `₹${num.toLocaleString('en-IN')}`;
 };
 const fmtNum = (n, fallback = '—') => (n == null ? fallback : Number(n).toLocaleString('en-IN'));
 
 const STATUS_CFG = {
-  draft:        { label: 'Draft',     color: '#718096', bg: '#EDF2F7', Icon: Clock },
-  submitted:    { label: 'Submitted', color: '#2B6CB0', bg: '#EBF8FF', Icon: Send },
-  accepted:     { label: 'Accepted',  color: '#276749', bg: '#F0FFF4', Icon: CheckCircle2 },
-  rejected:     { label: 'Rejected',  color: '#C53030', bg: '#FFF5F5', Icon: XCircle },
-  query_raised: { label: 'Query',     color: '#C05621', bg: '#FFFBEB', Icon: AlertCircle },
+  draft: { label: 'Draft', color: '#718096', bg: '#EDF2F7', Icon: Clock },
+  submitted: { label: 'Submitted', color: '#2B6CB0', bg: '#EBF8FF', Icon: Send },
+  accepted: { label: 'Accepted', color: '#276749', bg: '#F0FFF4', Icon: CheckCircle2 },
+  rejected: { label: 'Rejected', color: '#C53030', bg: '#FFF5F5', Icon: XCircle },
+  query_raised: { label: 'Query', color: '#C05621', bg: '#FFFBEB', Icon: AlertCircle },
 };
 
 function Badge({ status, size = 12 }) {
   const c = STATUS_CFG[status] || STATUS_CFG.draft;
   return (
-    <span style={{ display:'inline-flex', alignItems:'center', gap:4,
-      background: c.bg, color: c.color, padding:'4px 12px', borderRadius:20,
-      fontSize: size, fontWeight:700, border:`1px solid ${c.color}30` }}>
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+      background: c.bg, color: c.color, padding: '4px 12px', borderRadius: 20,
+      fontSize: size, fontWeight: 700, border: `1px solid ${c.color}30`
+    }}>
       <c.Icon size={size} /> {c.label}
     </span>
   );
@@ -41,20 +43,24 @@ function Badge({ status, size = 12 }) {
 // ─── Section wrapper ──────────────────────────────────────────────────────────
 function Section({ emoji, title, subtitle, children, rightSlot }) {
   return (
-    <div style={{ background:'var(--bg-primary)', border:'1px solid var(--border)',
-      borderRadius:12, marginBottom:20, overflow:'hidden' }}>
-      <div style={{ padding:'16px 22px', borderBottom:'1px solid var(--border)',
-        display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+    <div style={{
+      background: 'var(--bg-primary)', border: '1px solid var(--border)',
+      borderRadius: 12, marginBottom: 20, overflow: 'hidden'
+    }}>
+      <div style={{
+        padding: '16px 22px', borderBottom: '1px solid var(--border)',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+      }}>
         <div>
-          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-            <span style={{ fontSize:18 }}>{emoji}</span>
-            <span style={{ fontSize:14, fontWeight:700, color:'var(--primary)' }}>{title}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 18 }}>{emoji}</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--primary)' }}>{title}</span>
           </div>
-          {subtitle && <div style={{ fontSize:11, color:'var(--text-tertiary)', marginTop:2, marginLeft:26 }}>{subtitle}</div>}
+          {subtitle && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2, marginLeft: 26 }}>{subtitle}</div>}
         </div>
         {rightSlot}
       </div>
-      <div style={{ padding:'18px 22px' }}>{children}</div>
+      <div style={{ padding: '18px 22px' }}>{children}</div>
     </div>
   );
 }
@@ -62,8 +68,8 @@ function Section({ emoji, title, subtitle, children, rightSlot }) {
 // ─── EMI Calculator ───────────────────────────────────────────────────────────
 function EMICalculator({ loanAmount, roi, monthlyIncome, onChange }) {
   const [amount, setAmount] = useState(loanAmount ? (loanAmount / 100000).toFixed(2) : '');
-  const [tenor, setTenor]   = useState('12');
-  const [rate, setRate]     = useState(roi || '');
+  const [tenor, setTenor] = useState('12');
+  const [rate, setRate] = useState(roi || '');
   const [showAmort, setShowAmort] = useState(false);
 
   useEffect(() => {
@@ -90,12 +96,12 @@ function EMICalculator({ loanAmount, roi, monthlyIncome, onChange }) {
     return { emi, totalInterest, totalRepayment, emiFoirPct, schedule };
   }, [amount, tenor, rate, monthlyIncome]);
 
-  const TENOR_OPTIONS = [1,2,3,5,7,10,12,15,20,25,30];
+  const TENOR_OPTIONS = [1, 2, 3, 5, 7, 10, 12, 15, 20, 25, 30];
 
   return (
     <div>
       {/* Inputs */}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:16, marginBottom:20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 20 }}>
         <div>
           <label style={labelStyle}>LOAN AMOUNT (₹ LAKHS) *</label>
           <input value={amount} onChange={e => { setAmount(e.target.value); onChange?.({ amount_lakhs: e.target.value, tenor_years: tenor }); }}
@@ -104,7 +110,7 @@ function EMICalculator({ loanAmount, roi, monthlyIncome, onChange }) {
         </div>
         <div>
           <label style={labelStyle}>TENOR (YEARS) *</label>
-          <select value={tenor} onChange={e => setTenor(e.target.value)} style={{ ...inputStyle, cursor:'pointer' }}>
+          <select value={tenor} onChange={e => setTenor(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
             {TENOR_OPTIONS.map(t => <option key={t} value={t}>{t} Years</option>)}
           </select>
         </div>
@@ -116,27 +122,33 @@ function EMICalculator({ loanAmount, roi, monthlyIncome, onChange }) {
       </div>
 
       {/* EMI Result Cards */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:12 }}>
-        <div style={{ gridColumn:'span 1', background:'linear-gradient(135deg,#FAF0FF,#EBF4FF)',
-          border:'2px solid #C6A7F7', borderRadius:10, padding:'14px 18px', textAlign:'center' }}>
-          <div style={{ fontSize:11, color:'#6B46C1', fontWeight:700, marginBottom:4 }}>Monthly EMI</div>
-          <div style={{ fontSize:22, fontWeight:900, color:'#553C9A' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+        <div style={{
+          gridColumn: 'span 1', background: 'linear-gradient(135deg,#FAF0FF,#EBF4FF)',
+          border: '2px solid #C6A7F7', borderRadius: 10, padding: '14px 18px', textAlign: 'center'
+        }}>
+          <div style={{ fontSize: 11, color: '#6B46C1', fontWeight: 700, marginBottom: 4 }}>Monthly EMI</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: '#553C9A' }}>
             {emi > 0 ? `₹${Math.round(emi).toLocaleString('en-IN')}` : '—'}
           </div>
         </div>
-        <div style={{ background:'var(--bg-elevated)', borderRadius:10, padding:'14px 18px', textAlign:'center' }}>
-          <div style={{ fontSize:11, color:'var(--text-tertiary)', fontWeight:600, marginBottom:4 }}>Total Interest</div>
-          <div style={{ fontSize:16, fontWeight:800, color:'var(--text-primary)' }}>{fmtINR(totalInterest)}</div>
+        <div style={{ background: 'var(--bg-elevated)', borderRadius: 10, padding: '14px 18px', textAlign: 'center' }}>
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', fontWeight: 600, marginBottom: 4 }}>Total Interest</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' }}>{fmtINR(totalInterest)}</div>
         </div>
-        <div style={{ background:'var(--bg-elevated)', borderRadius:10, padding:'14px 18px', textAlign:'center' }}>
-          <div style={{ fontSize:11, color:'var(--text-tertiary)', fontWeight:600, marginBottom:4 }}>Total Repayment</div>
-          <div style={{ fontSize:16, fontWeight:800, color:'var(--text-primary)' }}>{fmtINR(totalRepayment)}</div>
+        <div style={{ background: 'var(--bg-elevated)', borderRadius: 10, padding: '14px 18px', textAlign: 'center' }}>
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', fontWeight: 600, marginBottom: 4 }}>Total Repayment</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' }}>{fmtINR(totalRepayment)}</div>
         </div>
-        <div style={{ background: emiFoirPct > 50 ? '#FFF5F5' : '#F0FFF4', borderRadius:10,
-          padding:'14px 18px', textAlign:'center', border:`1px solid ${emiFoirPct > 50 ? '#FEB2B2' : '#9AE6B4'}` }}>
-          <div style={{ fontSize:11, fontWeight:700, marginBottom:4,
-            color: emiFoirPct > 50 ? '#C53030' : '#276749' }}>EMI to Income Ratio</div>
-          <div style={{ fontSize:18, fontWeight:900, color: emiFoirPct > 50 ? '#C53030' : '#276749' }}>
+        <div style={{
+          background: emiFoirPct > 50 ? '#FFF5F5' : '#F0FFF4', borderRadius: 10,
+          padding: '14px 18px', textAlign: 'center', border: `1px solid ${emiFoirPct > 50 ? '#FEB2B2' : '#9AE6B4'}`
+        }}>
+          <div style={{
+            fontSize: 11, fontWeight: 700, marginBottom: 4,
+            color: emiFoirPct > 50 ? '#C53030' : '#276749'
+          }}>EMI to Income Ratio</div>
+          <div style={{ fontSize: 18, fontWeight: 900, color: emiFoirPct > 50 ? '#C53030' : '#276749' }}>
             {emiFoirPct ? `~${emiFoirPct}%` : '—'}
           </div>
         </div>
@@ -144,38 +156,42 @@ function EMICalculator({ loanAmount, roi, monthlyIncome, onChange }) {
 
       {/* Amortization toggle */}
       {schedule.length > 0 && (
-        <div style={{ marginTop:14 }}>
+        <div style={{ marginTop: 14 }}>
           <button onClick={() => setShowAmort(!showAmort)}
-            style={{ display:'flex', alignItems:'center', gap:6, fontSize:12, fontWeight:600,
-              color:'var(--primary)', background:'none', border:'none', cursor:'pointer', padding:0 }}>
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600,
+              color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0
+            }}>
             {showAmort ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             {showAmort ? 'Hide' : 'Show'} Amortization Schedule
           </button>
           {showAmort && (
-            <div style={{ marginTop:10, overflowX:'auto' }}>
-              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+            <div style={{ marginTop: 10, overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
                 <thead>
-                  <tr style={{ background:'var(--bg-elevated)' }}>
-                    {['Month','EMI','Principal','Interest','Balance'].map(h => (
-                      <th key={h} style={{ padding:'6px 10px', textAlign:'right', fontWeight:700,
-                        color:'var(--text-tertiary)', borderBottom:'1px solid var(--border)' }}>{h}</th>
+                  <tr style={{ background: 'var(--bg-elevated)' }}>
+                    {['Month', 'EMI', 'Principal', 'Interest', 'Balance'].map(h => (
+                      <th key={h} style={{
+                        padding: '6px 10px', textAlign: 'right', fontWeight: 700,
+                        color: 'var(--text-tertiary)', borderBottom: '1px solid var(--border)'
+                      }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {schedule.map(row => (
-                    <tr key={row.month} style={{ borderBottom:'1px solid var(--border)' }}>
+                    <tr key={row.month} style={{ borderBottom: '1px solid var(--border)' }}>
                       <td style={tdStyle}>{row.month}</td>
                       <td style={tdStyle}>{fmtINR(row.emi)}</td>
                       <td style={tdStyle}>{fmtINR(row.principal)}</td>
-                      <td style={{ ...tdStyle, color:'#C05621' }}>{fmtINR(row.interest)}</td>
+                      <td style={{ ...tdStyle, color: '#C05621' }}>{fmtINR(row.interest)}</td>
                       <td style={tdStyle}>{fmtINR(row.balance)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {parseInt(tenor,10)*12 > 24 && (
-                <div style={{ fontSize:10, color:'var(--text-tertiary)', marginTop:6, textAlign:'center' }}>
+              {parseInt(tenor, 10) * 12 > 24 && (
+                <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 6, textAlign: 'center' }}>
                   Showing first 24 months. Full schedule available after submission.
                 </div>
               )}
@@ -191,30 +207,36 @@ function EMICalculator({ loanAmount, roi, monthlyIncome, onChange }) {
 function ApplicantCard({ applicant, isPrimary, index }) {
   const bureauStatus = applicant.cibil_score ? 'KYC ✓' : null;
   return (
-    <div style={{ border:'1px solid var(--border)', borderRadius:8, padding:'14px 18px',
-      marginBottom:14, background: isPrimary ? 'var(--bg-elevated)' : 'var(--bg-primary)' }}>
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:10 }}>
+    <div style={{
+      border: '1px solid var(--border)', borderRadius: 8, padding: '14px 18px',
+      marginBottom: 14, background: isPrimary ? 'var(--bg-elevated)' : 'var(--bg-primary)'
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
         <div>
-          <div style={{ fontSize:14, fontWeight:700 }}>{applicant.name || `Applicant ${index + 1}`}</div>
-          <div style={{ fontSize:11, color:'var(--text-tertiary)', marginTop:2 }}>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>{applicant.name || `Applicant ${index + 1}`}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>
             {isPrimary ? 'Primary Borrower / Promoter' : `Co-Applicant ${index}`}
           </div>
         </div>
-        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           {isPrimary && (
-            <span style={{ fontSize:11, padding:'3px 10px', borderRadius:12, background:'none',
-              border:'1px solid var(--primary)', color:'var(--primary)', fontWeight:600 }}>Primary</span>
+            <span style={{
+              fontSize: 11, padding: '3px 10px', borderRadius: 12, background: 'none',
+              border: '1px solid var(--primary)', color: 'var(--primary)', fontWeight: 600
+            }}>Primary</span>
           )}
           {bureauStatus && (
-            <span style={{ fontSize:11, padding:'3px 10px', borderRadius:12,
-              background:'#F0FFF4', color:'#276749', fontWeight:600, border:'1px solid #9AE6B4' }}>
+            <span style={{
+              fontSize: 11, padding: '3px 10px', borderRadius: 12,
+              background: '#F0FFF4', color: '#276749', fontWeight: 600, border: '1px solid #9AE6B4'
+            }}>
               {bureauStatus}
             </span>
           )}
         </div>
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14 }}>
         <InfoCell label="PAN" value={applicant.pan_number || '—'} />
         <InfoCell label="Mobile" value={applicant.mobile || '—'} />
         <InfoCell label="CIBIL Score" value={applicant.cibil_score || '—'} />
@@ -227,9 +249,11 @@ function ApplicantCard({ applicant, isPrimary, index }) {
 function InfoCell({ label, value, valueColor }) {
   return (
     <div>
-      <div style={{ fontSize:10, color:'var(--text-tertiary)', fontWeight:600, textTransform:'uppercase',
-        letterSpacing:'0.5px', marginBottom:3 }}>{label}</div>
-      <div style={{ fontSize:13, fontWeight:600, color: valueColor || 'var(--text-primary)' }}>{value || '—'}</div>
+      <div style={{
+        fontSize: 10, color: 'var(--text-tertiary)', fontWeight: 600, textTransform: 'uppercase',
+        letterSpacing: '0.5px', marginBottom: 3
+      }}>{label}</div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: valueColor || 'var(--text-primary)' }}>{value || '—'}</div>
     </div>
   );
 }
@@ -241,24 +265,28 @@ function FinancialSummary({ summary, prefill }) {
   return (
     <div>
       {/* GST */}
-      <div style={{ marginBottom:24 }}>
-        <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12 }}>
-          <span style={{ fontSize:10, fontWeight:800, color:'#276749', background:'#F0FFF4',
-            padding:'3px 10px', borderRadius:4, letterSpacing:'1px' }}>GST</span>
-          <span style={{ fontSize:12, fontWeight:700, color:'var(--text-secondary)' }}>GST TURNOVER SUMMARY</span>
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <span style={{
+            fontSize: 10, fontWeight: 800, color: '#276749', background: '#F0FFF4',
+            padding: '3px 10px', borderRadius: 4, letterSpacing: '1px'
+          }}>GST</span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>GST TURNOVER SUMMARY</span>
         </div>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 10 }}>
           {[
-            { label:'Avg Monthly Turnover', value: fmtINR(gst?.avg_monthly_turnover) },
-            { label:`Annual Turnover (${gst?.fy_latest || 'FY Latest'})`, value: fmtINR(gst?.turnover_latest) },
-            { label:`Annual Turnover (${gst?.fy_previous || 'FY Previous'})`, value: fmtINR(gst?.turnover_previous) },
-            { label:'Months Filed (12M)', value: gst?.months_filed != null ? `${gst.months_filed} / 12` : '—' },
-            { label:'Nil Return Months', value: gst?.nil_months != null ? String(gst.nil_months) : '—',
-              red: gst?.nil_months > 0 },
+            { label: 'Avg Monthly Turnover', value: fmtINR(gst?.avg_monthly_turnover) },
+            { label: `Annual Turnover (${gst?.fy_latest || 'FY Latest'})`, value: fmtINR(gst?.turnover_latest) },
+            { label: `Annual Turnover (${gst?.fy_previous || 'FY Previous'})`, value: fmtINR(gst?.turnover_previous) },
+            { label: 'Months Filed (12M)', value: gst?.months_filed != null ? `${gst.months_filed} / 12` : '—' },
+            {
+              label: 'Nil Return Months', value: gst?.nil_months != null ? String(gst.nil_months) : '—',
+              red: gst?.nil_months > 0
+            },
           ].map(({ label, value, red }) => (
-            <div key={label} style={{ border:'1px solid var(--border)', borderRadius:8, padding:'12px 14px' }}>
-              <div style={{ fontSize:10, color:'var(--text-tertiary)', marginBottom:6, lineHeight:1.3 }}>{label}</div>
-              <div style={{ fontSize:15, fontWeight:800, color: red ? '#C53030' : '#276749' }}>{value}</div>
+            <div key={label} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px' }}>
+              <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 6, lineHeight: 1.3 }}>{label}</div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: red ? '#C53030' : '#276749' }}>{value}</div>
             </div>
           ))}
         </div>
@@ -266,29 +294,33 @@ function FinancialSummary({ summary, prefill }) {
 
       {/* ITR */}
       {itr_years?.length > 0 && (
-        <div style={{ marginBottom:24 }}>
-          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12 }}>
-            <span style={{ fontSize:10, fontWeight:800, color:'#2B6CB0', background:'#EBF8FF',
-              padding:'3px 10px', borderRadius:4, letterSpacing:'1px' }}>ITR</span>
-            <span style={{ fontSize:12, fontWeight:700, color:'var(--text-secondary)' }}>INCOME TAX RETURN SUMMARY</span>
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <span style={{
+              fontSize: 10, fontWeight: 800, color: '#2B6CB0', background: '#EBF8FF',
+              padding: '3px 10px', borderRadius: 4, letterSpacing: '1px'
+            }}>ITR</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>INCOME TAX RETURN SUMMARY</span>
           </div>
-          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
-              <tr style={{ background:'var(--bg-elevated)', borderBottom:'2px solid var(--border)' }}>
-                {['Assessment Year','Gross Turnover / Receipts','Net Profit (After Tax)','Filing Status'].map(h => (
-                  <th key={h} style={{ padding:'8px 14px', textAlign:'left', fontWeight:700,
-                    color:'var(--text-tertiary)', fontSize:11, textTransform:'uppercase', letterSpacing:'0.3px' }}>{h}</th>
+              <tr style={{ background: 'var(--bg-elevated)', borderBottom: '2px solid var(--border)' }}>
+                {['Assessment Year', 'Gross Turnover / Receipts', 'Net Profit (After Tax)', 'Filing Status'].map(h => (
+                  <th key={h} style={{
+                    padding: '8px 14px', textAlign: 'left', fontWeight: 700,
+                    color: 'var(--text-tertiary)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.3px'
+                  }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {itr_years.map((row, i) => (
-                <tr key={i} style={{ borderBottom:'1px solid var(--border)' }}>
-                  <td style={{ padding:'10px 14px', fontWeight:600 }}>{row.ay}</td>
-                  <td style={{ padding:'10px 14px' }}>{fmtINR(row.gross_receipts)}</td>
-                  <td style={{ padding:'10px 14px', fontWeight:700, color:'#276749' }}>{fmtINR(row.net_profit)}</td>
-                  <td style={{ padding:'10px 14px' }}>
-                    <span style={{ color:'#276749', fontWeight:700, fontSize:11 }}>✓ {row.filing_status}</span>
+                <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                  <td style={{ padding: '10px 14px', fontWeight: 600 }}>{row.ay}</td>
+                  <td style={{ padding: '10px 14px' }}>{fmtINR(row.gross_receipts)}</td>
+                  <td style={{ padding: '10px 14px', fontWeight: 700, color: '#276749' }}>{fmtINR(row.net_profit)}</td>
+                  <td style={{ padding: '10px 14px' }}>
+                    <span style={{ color: '#276749', fontWeight: 700, fontSize: 11 }}>✓ {row.filing_status}</span>
                   </td>
                 </tr>
               ))}
@@ -300,18 +332,24 @@ function FinancialSummary({ summary, prefill }) {
       {/* Bank */}
       {bank_accounts?.length > 0 && (
         <div>
-          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12 }}>
-            <span style={{ fontSize:10, fontWeight:800, color:'#553C9A', background:'#FAF5FF',
-              padding:'3px 10px', borderRadius:4, letterSpacing:'1px' }}>BANK</span>
-            <span style={{ fontSize:12, fontWeight:700, color:'var(--text-secondary)' }}>BANKING SUMMARY</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <span style={{
+              fontSize: 10, fontWeight: 800, color: '#553C9A', background: '#FAF5FF',
+              padding: '3px 10px', borderRadius: 4, letterSpacing: '1px'
+            }}>BANK</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>BANKING SUMMARY</span>
           </div>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(280px,1fr))', gap:14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px,1fr))', gap: 14 }}>
             {bank_accounts.map((acc, i) => (
-              <div key={i} style={{ border:`1px solid ${i === 0 ? '#BEE3F8' : 'var(--border)'}`,
-                borderRadius:8, padding:'14px 16px',
-                background: i === 0 ? '#F0F8FF' : 'var(--bg-elevated)' }}>
-                <div style={{ fontSize:12, fontWeight:700, color: i === 0 ? '#2B6CB0' : 'var(--text-secondary)',
-                  marginBottom:10 }}>{i === 0 ? '🏦 Primary Current Account' : `🏦 ${acc.label}`}</div>
+              <div key={i} style={{
+                border: `1px solid ${i === 0 ? '#BEE3F8' : 'var(--border)'}`,
+                borderRadius: 8, padding: '14px 16px',
+                background: i === 0 ? '#F0F8FF' : 'var(--bg-elevated)'
+              }}>
+                <div style={{
+                  fontSize: 12, fontWeight: 700, color: i === 0 ? '#2B6CB0' : 'var(--text-secondary)',
+                  marginBottom: 10
+                }}>{i === 0 ? '🏦 Primary Current Account' : `🏦 ${acc.label}`}</div>
                 {[
                   ['Bank & Branch', acc.bank_name],
                   ['Account Number', acc.account_number],
@@ -321,10 +359,12 @@ function FinancialSummary({ summary, prefill }) {
                   ['Cheque Bounces (12M)', acc.cheque_bounces != null ? (acc.cheque_bounces === 0 ? 'Nil' : acc.cheque_bounces) : '—'],
                   ['Statement Period', acc.statement_period],
                 ].map(([label, val]) => val != null && val !== '—' ? (
-                  <div key={label} style={{ display:'flex', justifyContent:'space-between',
-                    padding:'5px 0', borderBottom:'1px solid var(--border)', fontSize:12 }}>
-                    <span style={{ color:'var(--text-tertiary)' }}>{label}</span>
-                    <span style={{ fontWeight:600, color: label.includes('Bounce') && val !== 'Nil' ? '#C53030' : 'var(--text-primary)' }}>
+                  <div key={label} style={{
+                    display: 'flex', justifyContent: 'space-between',
+                    padding: '5px 0', borderBottom: '1px solid var(--border)', fontSize: 12
+                  }}>
+                    <span style={{ color: 'var(--text-tertiary)' }}>{label}</span>
+                    <span style={{ fontWeight: 600, color: label.includes('Bounce') && val !== 'Nil' ? '#C53030' : 'var(--text-primary)' }}>
                       {val === 0 ? 'Nil' : val}
                     </span>
                   </div>
@@ -336,7 +376,7 @@ function FinancialSummary({ summary, prefill }) {
       )}
 
       {!gst?.turnover_latest && !itr_years?.length && !bank_accounts?.length && (
-        <div style={{ textAlign:'center', padding:'20px', color:'var(--text-tertiary)', fontSize:13 }}>
+        <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-tertiary)', fontSize: 13 }}>
           ℹ️ Financial data will appear here once GST/ITR/Bank analytics are completed for this case.
         </div>
       )}
@@ -348,37 +388,41 @@ function FinancialSummary({ summary, prefill }) {
 function AddressSection({ addresses, onChange, readOnly }) {
   return (
     <div>
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
         <div>
-          <label style={{ ...labelStyle, display:'flex', alignItems:'center', gap:6 }}>
+          <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
             CURRENT RESIDENTIAL ADDRESS
-            <span style={{ fontSize:9, color:'#276749', fontWeight:600,
-              background:'#F0FFF4', padding:'1px 6px', borderRadius:4 }}>AUTO-FETCHED · EDITABLE</span>
+            <span style={{
+              fontSize: 9, color: '#276749', fontWeight: 600,
+              background: '#F0FFF4', padding: '1px 6px', borderRadius: 4
+            }}>AUTO-FETCHED · EDITABLE</span>
           </label>
           <textarea rows={3} value={addresses.residential || ''} readOnly={readOnly}
             onChange={e => onChange({ ...addresses, residential: e.target.value })}
-            style={{ ...inputStyle, resize:'vertical', lineHeight:1.5 }}
+            style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }}
             placeholder="Current residential address" />
-          <div style={{ fontSize:10, color:'#276749', marginTop:3 }}>✓ Auto-fetched from Aadhaar OTP</div>
+          <div style={{ fontSize: 10, color: '#276749', marginTop: 3 }}>✓ Auto-fetched from Aadhaar OTP</div>
         </div>
         <div>
-          <label style={{ ...labelStyle, display:'flex', alignItems:'center', gap:6 }}>
+          <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
             OFFICE / BUSINESS ADDRESS
-            <span style={{ fontSize:9, color:'#276749', fontWeight:600,
-              background:'#F0FFF4', padding:'1px 6px', borderRadius:4 }}>AUTO-FETCHED · EDITABLE</span>
+            <span style={{
+              fontSize: 9, color: '#276749', fontWeight: 600,
+              background: '#F0FFF4', padding: '1px 6px', borderRadius: 4
+            }}>AUTO-FETCHED · EDITABLE</span>
           </label>
           <textarea rows={3} value={addresses.office || ''} readOnly={readOnly}
             onChange={e => onChange({ ...addresses, office: e.target.value })}
-            style={{ ...inputStyle, resize:'vertical', lineHeight:1.5 }}
+            style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }}
             placeholder="Office / business address" />
-          <div style={{ fontSize:10, color:'#276749', marginTop:3 }}>✓ Auto-fetched from bureau / GST registration</div>
+          <div style={{ fontSize: 10, color: '#276749', marginTop: 3 }}>✓ Auto-fetched from bureau / GST registration</div>
         </div>
       </div>
       <div>
         <label style={labelStyle}>PROPERTY ADDRESS (COLLATERAL) *</label>
         <textarea rows={3} value={addresses.property || ''} readOnly={readOnly}
           onChange={e => onChange({ ...addresses, property: e.target.value })}
-          style={{ ...inputStyle, resize:'vertical', lineHeight:1.5 }}
+          style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }}
           placeholder="Survey no., plot no., full address of the collateral property" />
       </div>
     </div>
@@ -388,12 +432,12 @@ function AddressSection({ addresses, onChange, readOnly }) {
 // ─── KYC Documents Grid ───────────────────────────────────────────────────────
 const KYC_REQUIREMENTS = [
   { type: 'PAN_CARD', label: 'PAN Card', required: true },
-  { type: 'AADHAAR',  label: 'Aadhaar',  required: true },
+  { type: 'AADHAAR', label: 'Aadhaar', required: true },
 ];
 const OTHER_REQUIRED_DOCS = [
   { type: 'GST_PDF', label: 'GST Registration Certificate', required: true },
-  { type: 'ITR',     label: 'ITR / Income Documents',       required: true },
-  { type: 'BANK_STATEMENT', label: 'Bank Statements',       required: true },
+  { type: 'ITR', label: 'ITR / Income Documents', required: true },
+  { type: 'BANK_STATEMENT', label: 'Bank Statements', required: true },
   { type: 'PROPERTY_DOCUMENT', label: 'Property / Title Documents', required: false },
   { type: 'SALE_DEED', label: 'Partnership Deed / MOA', required: false },
 ];
@@ -413,7 +457,7 @@ function KYCDocumentsSection({ applicationApplicants, docs, onToggle, isSubmitte
   return (
     <div>
       {/* KYC per applicant */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(200px,1fr))', gap:12, marginBottom:20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px,1fr))', gap: 12, marginBottom: 20 }}>
         {/* Primary */}
         {primary && KYC_REQUIREMENTS.map(req => {
           const docList = findDoc(req.type);
@@ -447,7 +491,7 @@ function KYCDocumentsSection({ applicationApplicants, docs, onToggle, isSubmitte
       </div>
 
       {/* Other required docs */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))', gap:12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: 12 }}>
         {OTHER_REQUIRED_DOCS.map(req => {
           const docList = findDoc(req.type);
           const uploaded = docList.length > 0;
@@ -465,8 +509,10 @@ function KYCDocumentsSection({ applicationApplicants, docs, onToggle, isSubmitte
       </div>
 
       {pendingCount > 0 && (
-        <div style={{ marginTop:12, padding:'8px 14px', background:'#FFFBEB',
-          borderRadius:6, fontSize:12, color:'#92400E', border:'1px solid #FDE68A' }}>
+        <div style={{
+          marginTop: 12, padding: '8px 14px', background: '#FFFBEB',
+          borderRadius: 6, fontSize: 12, color: '#92400E', border: '1px solid #FDE68A'
+        }}>
           ⚠️ {pendingCount} required document(s) not yet uploaded. Please upload before submitting.
         </div>
       )}
@@ -477,35 +523,43 @@ function KYCDocumentsSection({ applicationApplicants, docs, onToggle, isSubmitte
 function DocCard({ label, uploaded, doc, onToggle, required = true, isSubmitted }) {
   const isAttached = doc?.is_attached;
   return (
-    <div style={{ border:`1px solid ${!uploaded && required ? '#FEB2B2' : uploaded ? '#9AE6B4' : 'var(--border)'}`,
-      borderRadius:8, overflow:'hidden' }}>
-      <div style={{ padding:'10px 12px', background: uploaded ? '#FAFFFD' : !required ? 'var(--bg-elevated)' : '#FFF5F5' }}>
-        <div style={{ fontSize:12, fontWeight:600, color:'var(--text-primary)', marginBottom:4, lineHeight:1.3 }}>
+    <div style={{
+      border: `1px solid ${!uploaded && required ? '#FEB2B2' : uploaded ? '#9AE6B4' : 'var(--border)'}`,
+      borderRadius: 8, overflow: 'hidden'
+    }}>
+      <div style={{ padding: '10px 12px', background: uploaded ? '#FAFFFD' : !required ? 'var(--bg-elevated)' : '#FFF5F5' }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4, lineHeight: 1.3 }}>
           {label}
         </div>
-        <div style={{ fontSize:11, fontWeight:700,
-          color: uploaded ? '#276749' : required ? '#C53030' : '#718096' }}>
+        <div style={{
+          fontSize: 11, fontWeight: 700,
+          color: uploaded ? '#276749' : required ? '#C53030' : '#718096'
+        }}>
           {uploaded ? '✓ Uploaded' : required ? '△ Pending' : '— Optional'}
         </div>
       </div>
-      <div style={{ padding:'6px 8px', borderTop:`1px solid var(--border)`, background:'var(--bg-elevated)' }}>
+      <div style={{ padding: '6px 8px', borderTop: `1px solid var(--border)`, background: 'var(--bg-elevated)' }}>
         {uploaded && doc ? (
           <button
             onClick={() => onToggle?.()}
             disabled={isSubmitted}
-            style={{ width:'100%', padding:'5px 8px', fontSize:11, fontWeight:600, cursor:'pointer',
+            style={{
+              width: '100%', padding: '5px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
               border: isAttached ? '1px solid #9AE6B4' : '1px solid var(--border)',
-              borderRadius:5, background: isAttached ? '#F0FFF4' : 'var(--bg-primary)',
-              color: isAttached ? '#276749' : 'var(--text-secondary)' }}>
+              borderRadius: 5, background: isAttached ? '#F0FFF4' : 'var(--bg-primary)',
+              color: isAttached ? '#276749' : 'var(--text-secondary)'
+            }}>
             {isAttached ? '✓ Included' : 'Re-upload / Include'}
           </button>
         ) : (
           <button
             onClick={() => toast('Upload this document via the case Documents section, then return here.')}
-            style={{ width:'100%', padding:'5px 8px', fontSize:11, fontWeight:700,
-              cursor:'pointer', border:'none', borderRadius:5,
-              background: required ? 'var(--primary)' : '#718096', color:'#fff',
-              display:'flex', alignItems:'center', justifyContent:'center', gap:4 }}>
+            style={{
+              width: '100%', padding: '5px 8px', fontSize: 11, fontWeight: 700,
+              cursor: 'pointer', border: 'none', borderRadius: 5,
+              background: required ? 'var(--primary)' : '#718096', color: '#fff',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4
+            }}>
             <UploadCloud size={12} /> + Upload
           </button>
         )}
@@ -516,16 +570,16 @@ function DocCard({ label, uploaded, doc, onToggle, required = true, isSubmitted 
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const labelStyle = {
-  display:'block', fontSize:10, fontWeight:700, color:'var(--text-secondary)',
-  textTransform:'uppercase', letterSpacing:'0.5px', marginBottom:5
+  display: 'block', fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)',
+  textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 5
 };
 const inputStyle = {
-  width:'100%', padding:'9px 12px', borderRadius:6,
-  border:'1px solid var(--border)', fontSize:14,
-  background:'var(--bg-primary)', color:'var(--text-primary)',
-  fontFamily:'inherit', boxSizing:'border-box'
+  width: '100%', padding: '9px 12px', borderRadius: 6,
+  border: '1px solid var(--border)', fontSize: 14,
+  background: 'var(--bg-primary)', color: 'var(--text-primary)',
+  fontFamily: 'inherit', boxSizing: 'border-box'
 };
-const tdStyle = { padding:'6px 10px', textAlign:'right', fontSize:11 };
+const tdStyle = { padding: '6px 10px', textAlign: 'right', fontSize: 11 };
 
 // ─── Main ProposalPage ─────────────────────────────────────────────────────────
 export default function ProposalPage() {
@@ -533,7 +587,7 @@ export default function ProposalPage() {
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving]   = useState(false);
+  const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [data, setData] = useState(null);
   const [form, setForm] = useState({
@@ -561,7 +615,7 @@ export default function ProposalPage() {
         if (stored?.__addresses) setAddresses(stored.__addresses);
         if (stored?.__references) setReferences(stored.__references);
         setForm(f => ({ ...f }));
-      } catch {}
+      } catch { }
     } catch (e) {
       toast.error('Failed to load proposal');
     } finally {
@@ -620,62 +674,66 @@ export default function ProposalPage() {
   };
 
   if (loading) return (
-    <div style={{ display:'flex', justifyContent:'center', alignItems:'center', minHeight:'60vh' }}>
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
       <LoadingSpinner size={40} />
     </div>
   );
   if (!data) return (
-    <div className="card" style={{ padding:40, textAlign:'center' }}>
+    <div className="card" style={{ padding: 40, textAlign: 'center' }}>
       <h3>Proposal not found</h3>
       <button className="btn btn-ghost" onClick={() => navigate(`/cases/${caseId}/esr`)}>← Back</button>
     </div>
   );
 
   const { proposal, lender, scheme_name, prefill, applicants = [], co_applicants = [],
-          financial_summary, documents_by_category, lender_eligibility } = data;
+    financial_summary, documents_by_category, lender_eligibility } = data;
   const isSubmitted = proposal.proposal_status === 'submitted';
   const allDocs = Object.values(documents_by_category || {}).flat();
-  const pendingKyc = allDocs.filter(d => !d.is_attached && ['PAN_CARD','AADHAAR'].includes(d.document_type)).length;
+  const pendingKyc = allDocs.filter(d => !d.is_attached && ['PAN_CARD', 'AADHAAR'].includes(d.document_type)).length;
 
   return (
-    <div style={{ maxWidth:940, margin:'0 auto', paddingBottom:100 }}>
+    <div style={{ maxWidth: 940, margin: '0 auto', paddingBottom: 100 }}>
       {/* ── Page Header ────────────────────────────────────────────────── */}
-      <div style={{ marginBottom:6 }}>
-        <div style={{ fontSize:11, color:'var(--text-tertiary)', marginBottom:2 }}>
+      <div style={{ marginBottom: 6 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 2 }}>
           Prepare Proposal · Loan details, documents, addresses &amp; references
         </div>
       </div>
-      <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between',
-        marginBottom:22, flexWrap:'wrap', gap:12 }}>
+      <div style={{
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+        marginBottom: 22, flexWrap: 'wrap', gap: 12
+      }}>
         <div>
-          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
             <button className="btn btn-ghost" onClick={() => navigate(`/cases/${caseId}/esr`)}
-              style={{ padding:'6px 10px', display:'flex', alignItems:'center', gap:4, fontSize:13 }}>
+              style={{ padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 4, fontSize: 13 }}>
               <ChevronLeft size={14} /> Back
             </button>
           </div>
-          <h1 style={{ fontSize:22, fontWeight:800, margin:'0 0 4px' }}>Prepare Proposal</h1>
-          <div style={{ fontSize:13, color:'var(--text-tertiary)' }}>
-            <strong style={{ color:'var(--text-primary)' }}>{prefill?.entity_name || 'Entity'}</strong>
+          <h1 style={{ fontSize: 22, fontWeight: 800, margin: '0 0 4px' }}>Prepare Proposal</h1>
+          <div style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>
+            <strong style={{ color: 'var(--text-primary)' }}>{prefill?.entity_name || 'Entity'}</strong>
             {' '}—{' '}
-            <span style={{ color:'var(--text-tertiary)' }}>CASE-{caseId}</span>
+            <span style={{ color: 'var(--text-tertiary)' }}>CASE-{caseId}</span>
             {' · '}
             Sending to:{' '}
-            <strong style={{ color:'var(--primary)' }}>{lender?.name || proposal.lender_id}</strong>
-            {scheme_name && <span style={{ color:'var(--text-tertiary)' }}> · {scheme_name}</span>}
+            <strong style={{ color: 'var(--primary)' }}>{lender?.name || proposal.lender_id}</strong>
+            {scheme_name && <span style={{ color: 'var(--text-tertiary)' }}> · {scheme_name}</span>}
           </div>
         </div>
-        <div style={{ display:'flex', gap:10, alignItems:'center' }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <Badge status={proposal.lender_submission_status || proposal.proposal_status} />
           {!isSubmitted && (
             <>
               <button className="btn btn-secondary" onClick={() => handleSave()} disabled={saving}
-                style={{ display:'flex', alignItems:'center', gap:6 }}>
+                style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Save size={14} /> {saving ? 'Saving…' : 'Save Draft'}
               </button>
               <button className="btn btn-primary" onClick={handleSubmit} disabled={submitting}
-                style={{ display:'flex', alignItems:'center', gap:6,
-                  background:'linear-gradient(135deg,#2B6CB0,#553C9A)', padding:'9px 20px' }}>
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  background: 'linear-gradient(135deg,#2B6CB0,#553C9A)', padding: '9px 20px'
+                }}>
                 <Send size={14} /> {submitting ? 'Submitting…' : 'Submit to Lender'}
               </button>
             </>
@@ -690,7 +748,7 @@ export default function ProposalPage() {
           loanAmount={proposal.eligible_amount || proposal.requested_amount}
           roi={proposal.roi_min}
           monthlyIncome={prefill?.monthly_income}
-          onChange={() => {}}
+          onChange={() => { }}
         />
       </Section>
 
@@ -698,13 +756,15 @@ export default function ProposalPage() {
       <Section emoji="👤" title="Co-Applicant Profiles"
         subtitle="Relationship with the company / promoter — included in proposal"
         rightSlot={co_applicants.length > 0 ? (
-          <span style={{ fontSize:12, color:'var(--primary)', fontWeight:700, background:'#EBF8FF',
-            padding:'3px 10px', borderRadius:12, border:'1px solid #BEE3F8' }}>
+          <span style={{
+            fontSize: 12, color: 'var(--primary)', fontWeight: 700, background: '#EBF8FF',
+            padding: '3px 10px', borderRadius: 12, border: '1px solid #BEE3F8'
+          }}>
             {co_applicants.length} Co-Applicant{co_applicants.length > 1 ? 's' : ''}
           </span>
         ) : null}>
         {applicants.length === 0 ? (
-          <div style={{ color:'var(--text-tertiary)', fontSize:13, textAlign:'center', padding:'12px 0' }}>
+          <div style={{ color: 'var(--text-tertiary)', fontSize: 13, textAlign: 'center', padding: '12px 0' }}>
             No applicant profiles found for this case.
           </div>
         ) : (
@@ -738,13 +798,17 @@ export default function ProposalPage() {
       {/* ── 5. KYC Documents ─────────────────────────────────────────── */}
       <Section emoji="🗂️" title="KYC Documents"
         rightSlot={pendingKyc > 0 ? (
-          <span style={{ fontSize:11, color:'#C53030', fontWeight:700,
-            background:'#FFF5F5', padding:'3px 10px', borderRadius:12, border:'1px solid #FEB2B2' }}>
+          <span style={{
+            fontSize: 11, color: '#C53030', fontWeight: 700,
+            background: '#FFF5F5', padding: '3px 10px', borderRadius: 12, border: '1px solid #FEB2B2'
+          }}>
             {pendingKyc} Pending
           </span>
         ) : (
-          <span style={{ fontSize:11, color:'#276749', fontWeight:700,
-            background:'#F0FFF4', padding:'3px 10px', borderRadius:12, border:'1px solid #9AE6B4' }}>
+          <span style={{
+            fontSize: 11, color: '#276749', fontWeight: 700,
+            background: '#F0FFF4', padding: '3px 10px', borderRadius: 12, border: '1px solid #9AE6B4'
+          }}>
             All uploaded
           </span>
         )}>
@@ -758,12 +822,12 @@ export default function ProposalPage() {
 
       {/* ── 6. Remarks ───────────────────────────────────────────────── */}
       <Section emoji="📝" title="Remarks &amp; Loan Purpose">
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           <div>
             <label style={labelStyle}>LOAN PURPOSE</label>
             <textarea rows={3} value={form.loan_purpose}
               onChange={e => setForm(f => ({ ...f, loan_purpose: e.target.value }))}
-              disabled={isSubmitted} style={{ ...inputStyle, resize:'vertical' }}
+              disabled={isSubmitted} style={{ ...inputStyle, resize: 'vertical' }}
               placeholder="e.g. Purchase of residential property at Survey No..." />
           </div>
           <div>
@@ -773,11 +837,11 @@ export default function ProposalPage() {
               disabled={isSubmitted} style={inputStyle}
               placeholder="e.g. Salaried, SENP, SEP, NRI..." />
           </div>
-          <div style={{ gridColumn:'span 2' }}>
+          <div style={{ gridColumn: 'span 2' }}>
             <label style={labelStyle}>ADDITIONAL REMARKS / NOTES FOR LENDER</label>
             <textarea rows={4} value={form.remarks}
               onChange={e => setForm(f => ({ ...f, remarks: e.target.value }))}
-              disabled={isSubmitted} style={{ ...inputStyle, resize:'vertical' }}
+              disabled={isSubmitted} style={{ ...inputStyle, resize: 'vertical' }}
               placeholder="Any special instructions, references, case-specific context..." />
           </div>
         </div>
@@ -787,17 +851,21 @@ export default function ProposalPage() {
       <Section emoji="👥" title="References"
         subtitle="Personal or professional references for the applicant"
         rightSlot={
-          <span style={{ fontSize:11, color:'#C05621', fontWeight:700,
-            background:'#FFFBEB', padding:'3px 10px', borderRadius:12,
-            border:'1px solid #FDE68A' }}>2 required</span>
+          <span style={{
+            fontSize: 11, color: '#C05621', fontWeight: 700,
+            background: '#FFFBEB', padding: '3px 10px', borderRadius: 12,
+            border: '1px solid #FDE68A'
+          }}>2 required</span>
         }>
         {references.map((ref, idx) => (
           <div key={idx} style={{ marginBottom: idx === 0 ? 24 : 0 }}>
-            <div style={{ fontSize:11, fontWeight:800, color:'var(--text-secondary)',
-              textTransform:'uppercase', letterSpacing:'1px', marginBottom:10 }}>
+            <div style={{
+              fontSize: 11, fontWeight: 800, color: 'var(--text-secondary)',
+              textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 10
+            }}>
               Reference {idx + 1}
             </div>
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 180px 220px', gap:12, marginBottom:10 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 220px', gap: 12, marginBottom: 10 }}>
               <div>
                 <label style={labelStyle}>FULL NAME</label>
                 <input
@@ -857,30 +925,38 @@ export default function ProposalPage() {
 
       {/* ── Sticky Footer ─────────────────────────────────────────────── */}
       {!isSubmitted ? (
-        <div style={{ position:'fixed', bottom:0, left:0, right:0, zIndex:100,
-          boxShadow:'0 -4px 24px rgba(0,0,0,0.12)' }}>
+        <div style={{
+          position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 100,
+          boxShadow: '0 -4px 24px rgba(0,0,0,0.12)'
+        }}>
           {/* Lender branding bar */}
-          <div style={{ background:'#1A202C', padding:'10px 32px',
-            display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+          <div style={{
+            background: '#1A202C', padding: '10px 32px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+          }}>
             <div>
-              <div style={{ fontSize:11, color:'#A0AEC0', marginBottom:2 }}>Ready to send to</div>
-              <div style={{ fontSize:15, fontWeight:800, color:'#fff' }}>
+              <div style={{ fontSize: 11, color: '#A0AEC0', marginBottom: 2 }}>Ready to send to</div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: '#fff' }}>
                 {lender?.name || 'Lender'}
               </div>
             </div>
-            <div style={{ display:'flex', gap:24, alignItems:'center' }}>
+            <div style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
               <button className="btn btn-ghost" onClick={() => navigate(`/cases/${caseId}/esr`)}
-                style={{ color:'#A0AEC0', fontSize:12 }}>Cancel</button>
+                style={{ color: '#A0AEC0', fontSize: 12 }}>Cancel</button>
               <button className="btn btn-secondary" onClick={() => handleSave()} disabled={saving}
-                style={{ display:'flex', alignItems:'center', gap:6, fontSize:12, color:'#fff',
-                  background:'rgba(255,255,255,0.1)', border:'1px solid rgba(255,255,255,0.2)' }}>
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#fff',
+                  background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)'
+                }}>
                 <Save size={13} /> {saving ? 'Saving…' : 'Save Draft'}
               </button>
               <button onClick={handleSubmit} disabled={submitting}
-                style={{ display:'flex', alignItems:'center', gap:8, padding:'11px 28px',
-                  background:'linear-gradient(135deg,#D69E2E,#B7791F)',
-                  color:'#fff', border:'none', borderRadius:8, fontWeight:800,
-                  fontSize:14, cursor:'pointer', boxShadow:'0 2px 12px rgba(214,158,46,0.4)' }}>
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '11px 28px',
+                  background: 'linear-gradient(135deg,#D69E2E,#B7791F)',
+                  color: '#fff', border: 'none', borderRadius: 8, fontWeight: 800,
+                  fontSize: 14, cursor: 'pointer', boxShadow: '0 2px 12px rgba(214,158,46,0.4)'
+                }}>
                 <Send size={15} />
                 {submitting ? 'Submitting…' : `Send Lead to ${lender?.name || 'Lender'} →`}
               </button>
@@ -888,8 +964,10 @@ export default function ProposalPage() {
           </div>
         </div>
       ) : (
-        <div style={{ padding:'14px 22px', background:'#F0FFF4', borderRadius:10,
-          border:'1px solid #9AE6B4', textAlign:'center', fontSize:13 }}>
+        <div style={{
+          padding: '14px 22px', background: '#F0FFF4', borderRadius: 10,
+          border: '1px solid #9AE6B4', textAlign: 'center', fontSize: 13
+        }}>
           ✅ Proposal submitted on {proposal.submitted_at
             ? new Date(proposal.submitted_at).toLocaleString('en-IN') : '—'}
         </div>

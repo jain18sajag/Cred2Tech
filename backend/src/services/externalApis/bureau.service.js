@@ -59,7 +59,7 @@ async function runBureauCheck({ caseId, applicantId, mobileNumber, firstName, la
   // Only inject panNumber for Production Live endpoints, because the Veri5 Sandbox 
   // rigidly crashes with HTTP 500 when un-mocked PANs are probed.
   if (panNumber && !baseUrl.includes('sandbox')) {
-      payload.toBeVerifiedData.panNumber = panNumber;
+    payload.toBeVerifiedData.panNumber = panNumber;
   }
 
   let responsePayload = null;
@@ -81,16 +81,16 @@ async function runBureauCheck({ caseId, applicantId, mobileNumber, firstName, la
       // Map to structured format extracting score
       // Note from Live payload: verifiedData is inside data.result
       const vData = data?.result?.verifiedData;
-      
+
       if (vData && vData.ResponseData && vData.ResponseData.data) {
         score = vData.ResponseData.data.score?.toString() || null;
       }
-      
+
       // MOCK FALLBACK for sandbox testing so frontend gets a score instead of null
       if (!score && baseUrl.includes('sandbox')) {
-          console.warn('Sandbox returned null score, Mocking 785 for frontend flow.');
-          score = "785";
-          responsePayload.mocked = true;
+        console.warn('Sandbox returned null score, Mocking 785 for frontend flow.');
+        score = "785";
+        responsePayload.mocked = true;
       }
 
     } else if (baseUrl.includes('sandbox') && data?.status?.code === 500) {
@@ -99,13 +99,13 @@ async function runBureauCheck({ caseId, applicantId, mobileNumber, firstName, la
       apiStatus = 'SUCCESS';
       score = "785"; // Mock Score
       responsePayload = {
-         ...responsePayload,
-         mocked: true,
-         verifiedData: {
-             ResponseData: {
-                 data: { score: score, age: "32" }
-             }
-         }
+        ...responsePayload,
+        mocked: true,
+        verifiedData: {
+          ResponseData: {
+            data: { score: score, age: "32" }
+          }
+        }
       };
     } else {
       apiStatus = 'FAILED';

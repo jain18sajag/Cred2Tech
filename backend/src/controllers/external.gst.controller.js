@@ -2,6 +2,8 @@ const prisma = require('../../config/db');
 const { executePaidApi } = require('../services/wallet.service');
 const gstService = require('../services/externalApis/gst.service');
 const documentService = require('../services/document.service');
+const { extractGstDetails } = require('../services/financial.extractor');
+
 
 // Helper: extract latest + previous financial year turnover from raw GST JSON
 function extractGstFySnapshot(rawGstData) {
@@ -27,7 +29,7 @@ function extractGstFySnapshot(rawGstData) {
             if (!Number.isFinite(year)) continue;
 
             // Financial year: Apr-Mar. Apr-2023 belongs to FY 2023-24
-            const fyStart = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].includes(month) ? year : year - 1;
+            const fyStart = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].includes(month) ? year : year - 1;
             const fyKey = `FY ${fyStart}-${String(fyStart + 1).slice(2)}`;
 
             const sales = Number(row['Total Value of Sales (A)']) || 0;
@@ -36,12 +38,12 @@ function extractGstFySnapshot(rawGstData) {
 
         const sortedFYs = Object.keys(fyTotals).sort().reverse(); // Latest first
         if (sortedFYs.length > 0) {
-            result.fy_latest  = sortedFYs[0];
-            result.latest     = fyTotals[sortedFYs[0]];
+            result.fy_latest = sortedFYs[0];
+            result.latest = fyTotals[sortedFYs[0]];
         }
         if (sortedFYs.length > 1) {
             result.fy_previous = sortedFYs[1];
-            result.previous    = fyTotals[sortedFYs[1]];
+            result.previous = fyTotals[sortedFYs[1]];
         }
     }
 
@@ -118,9 +120,9 @@ async function createGstRequest(req, res) {
                     // Signzy will ping the callback URL synchronously to verify reachability.
                     // If we pass http://localhost:5000, Signzy will hang trying to hit its own internal server loopback.
                     const isLocal = process.env.APP_BASE_URL && process.env.APP_BASE_URL.includes('localhost');
-                    const callbackUrl = isLocal 
-                         ? "https://webhook.site/dummy-callback-for-localhost" 
-                         : process.env.APP_BASE_URL + "/api/v1/external/webhooks/signzy/gst";
+                    const callbackUrl = isLocal
+                        ? "https://webhook.site/dummy-callback-for-localhost"
+                        : process.env.APP_BASE_URL + "/api/v1/external/webhooks/signzy/gst";
 
                     const authLinkPayload = {
                         gstin,
@@ -383,7 +385,7 @@ async function handleSignzyCallback(req, res) {
         if (!dbReq) {
             // Attempt fallback mapping: Find the latest request that was created for the AuthLink mode or IN_SYSTEM that is still waiting for a callback.
             dbReq = await prisma.gstrAnalyticsRequest.findFirst({
-                where: { 
+                where: {
                     status: { in: ['AUTH_LINK_CREATED', 'PROCESSING', 'OTP_VERIFIED'] }
                 },
                 orderBy: { id: 'desc' }
@@ -434,19 +436,24 @@ async function handleSignzyCallback(req, res) {
             updateData.status = 'FAILED';
         }
 
-        // Extract FY turnover snapshot from the downloaded raw data
+        // Extract ALL structured columns from raw GST data (delegated to financial.extractor)
         if (rawGstData) {
             try {
-                const fySnapshot = extractGstFySnapshot(rawGstData);
-                if (fySnapshot.latest !== null) {
-                    updateData.turnover_latest_year   = fySnapshot.latest;
-                    updateData.turnover_previous_year = fySnapshot.previous;
-                    updateData.financial_year_latest   = fySnapshot.fy_latest;
-                    updateData.financial_year_previous = fySnapshot.fy_previous;
-                    console.log(`[Webhook][GST FY] Latest: ${fySnapshot.fy_latest} = ${fySnapshot.latest}, Previous: ${fySnapshot.fy_previous} = ${fySnapshot.previous}`);
+                const gstExtracted = extractGstDetails(
+                    typeof rawGstData === 'string' ? JSON.parse(rawGstData) : rawGstData
+                );
+                if (gstExtracted.turnover_latest_year !== null) {
+                    updateData.turnover_latest_year = gstExtracted.turnover_latest_year;
+                    updateData.turnover_previous_year = gstExtracted.turnover_previous_year;
+                    updateData.financial_year_latest = gstExtracted.financial_year_latest;
+                    updateData.financial_year_previous = gstExtracted.financial_year_previous;
+                    updateData.avg_monthly_turnover = gstExtracted.avg_monthly_turnover;
+                    updateData.months_filed_12m = gstExtracted.months_filed_12m;
+                    updateData.nil_return_months = gstExtracted.nil_return_months;
+                    console.log(`[Webhook][GST] Latest: ${gstExtracted.financial_year_latest} = ${gstExtracted.turnover_latest_year}, AvgMonthly: ${gstExtracted.avg_monthly_turnover}, Filed: ${gstExtracted.months_filed_12m}/12, Nil: ${gstExtracted.nil_return_months}`);
                 }
             } catch (fyErr) {
-                console.error('[Webhook][GST FY] Extraction error:', fyErr.message);
+                console.error('[Webhook][GST Extract] Error:', fyErr.message);
             }
         }
 

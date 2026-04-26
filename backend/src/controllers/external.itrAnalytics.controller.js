@@ -45,15 +45,15 @@ function extractItrFySnapshot(analyticsData) {
 
     if (sorted.length > 0) {
         const { pat, receipts } = extractRow(sorted[0]);
-        result.net_profit_latest_year    = pat;
+        result.net_profit_latest_year = pat;
         result.gross_receipts_latest_year = receipts;
-        result.financial_year_latest     = fyLabel(sorted[0].year);
+        result.financial_year_latest = fyLabel(sorted[0].year);
     }
     if (sorted.length > 1) {
         const { pat, receipts } = extractRow(sorted[1]);
-        result.net_profit_previous_year    = pat;
+        result.net_profit_previous_year = pat;
         result.gross_receipts_previous_year = receipts;
-        result.financial_year_previous     = fyLabel(sorted[1].year);
+        result.financial_year_previous = fyLabel(sorted[1].year);
     }
 
     return result;
@@ -211,12 +211,12 @@ async function sync(req, res) {
                 analytics_payload: analyticsData,
                 provider_message: statusMessage,
                 itr_document_id: itrDocumentId || undefined,
-                net_profit_latest_year:       itrSnapshot.net_profit_latest_year,
-                net_profit_previous_year:     itrSnapshot.net_profit_previous_year,
-                gross_receipts_latest_year:   itrSnapshot.gross_receipts_latest_year,
+                net_profit_latest_year: itrSnapshot.net_profit_latest_year,
+                net_profit_previous_year: itrSnapshot.net_profit_previous_year,
+                gross_receipts_latest_year: itrSnapshot.gross_receipts_latest_year,
                 gross_receipts_previous_year: itrSnapshot.gross_receipts_previous_year,
-                financial_year_latest:        itrSnapshot.financial_year_latest,
-                financial_year_previous:      itrSnapshot.financial_year_previous,
+                financial_year_latest: itrSnapshot.financial_year_latest,
+                financial_year_previous: itrSnapshot.financial_year_previous,
             }
         });
 
@@ -225,7 +225,7 @@ async function sync(req, res) {
                 where: { case_id: existing.case_id },
                 data: { itr_status: 'COMPLETE' }
             });
-            
+
             // Extract ESR financials asynchronously
             const { extractEsrFinancials } = require('../services/esrFinancials.service');
             extractEsrFinancials(existing.case_id).catch(err => console.error(err));
@@ -246,7 +246,7 @@ async function sync(req, res) {
             await prisma.itrAnalyticsRequest.update({
                 where: { reference_id: req.body.reference_id },
                 data: { status: 'FAILED', provider_message: error.message }
-            }).catch(() => {});
+            }).catch(() => { });
         }
 
         const statusCode = error.status === 401 ? 502 : (error.status || 500);

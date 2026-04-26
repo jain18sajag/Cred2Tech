@@ -315,22 +315,22 @@ async function getProposalForPrep({ proposal_id, case_id, tenant_id }) {
         scheme_name: schemeName,
         lender_eligibility: lenderEligibility,
         prefill: {
-            applicant_name:    applicant.name,
-            pan:               applicant.pan_number || caseData.business_pan,
-            mobile:            applicant.mobile || caseData.business_mobile,
-            cibil_score:       applicant.cibil_score || esr.bureau_score,
-            entity_name:       caseData.business_name,
-            entity_type:       caseData.entity_type,
-            business_vintage:  caseData.business_vintage,
-            industry:          caseData.industry,
-            product_type:      esr.product_type || caseData.product_type,
-            income_method:     esr.selected_income_method,
-            monthly_income:    esr.selected_monthly_income,
-            existing_emi:      esr.existing_obligations,
-            property_value:    esr.property_value || property.market_value,
-            property_type:     esr.property_type || property.property_type,
-            occupancy_type:    esr.occupancy_type || property.occupancy_status,
-            property_address:  property.remarks || null,
+            applicant_name: applicant.name,
+            pan: applicant.pan_number || caseData.business_pan,
+            mobile: applicant.mobile || caseData.business_mobile,
+            cibil_score: applicant.cibil_score || esr.bureau_score,
+            entity_name: caseData.business_name,
+            entity_type: caseData.entity_type,
+            business_vintage: caseData.business_vintage,
+            industry: caseData.industry,
+            product_type: esr.product_type || caseData.product_type,
+            income_method: esr.selected_income_method,
+            monthly_income: esr.selected_monthly_income,
+            existing_emi: esr.existing_obligations,
+            property_value: esr.property_value || property.market_value,
+            property_type: esr.property_type || property.property_type,
+            occupancy_type: esr.occupancy_type || property.occupancy_status,
+            property_address: property.remarks || null,
         },
         applicants: allApplicants,
         co_applicants: coApplicants,
@@ -355,7 +355,7 @@ async function getProposalForPrep({ proposal_id, case_id, tenant_id }) {
 // updateProposalDraft
 // ──────────────────────────────────────────────────────────────────────────────
 async function updateProposalDraft({ proposal_id, case_id, tenant_id, user_id, fields }) {
-    const allowed = ['requested_amount','tenure_months','loan_purpose','remarks','additional_notes','preferred_banking_program'];
+    const allowed = ['requested_amount', 'tenure_months', 'loan_purpose', 'remarks', 'additional_notes', 'preferred_banking_program'];
     const sets = [];
     const vals = [];
     let idx = 1;
@@ -373,7 +373,7 @@ async function updateProposalDraft({ proposal_id, case_id, tenant_id, user_id, f
     vals.push(proposal_id, case_id, tenant_id);
 
     const rows = await prisma.$queryRawUnsafe(
-        `UPDATE proposals SET ${sets.join(', ')} WHERE id = $${idx} AND case_id = $${idx+1} AND tenant_id = $${idx+2} RETURNING *`,
+        `UPDATE proposals SET ${sets.join(', ')} WHERE id = $${idx} AND case_id = $${idx + 1} AND tenant_id = $${idx + 2} RETURNING *`,
         ...vals
     );
     if (!rows[0]) throw new Error('Proposal not found or unauthorized');
