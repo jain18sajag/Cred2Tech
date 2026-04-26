@@ -437,7 +437,7 @@ icici_exposure += (obl.outstanding_amount || 0);
 });
 
 ////////////////////////////////////////////////////////////
-// 2️⃣ GST EXTRACTION (UPDATED FOR Overview_Monthly FORMAT)
+// 2⃣ GST EXTRACTION — uses snapshot columns first
 ////////////////////////////////////////////////////////////
 
 let gst_avg_monthly_sales = null;
@@ -446,7 +446,13 @@ let gst_industry_margin = 0.10;
 
 const gstReq = pickLatestPreferredRecord(caseRecord.gst_requests);
 
-if (gstReq?.raw_gst_data) {
+// PRIMARY: use persisted turnover_latest_year column (set at ingestion time)
+if (gstReq?.turnover_latest_year != null) {
+    const annualTurnover = Number(gstReq.turnover_latest_year);
+    gst_avg_monthly_sales = annualTurnover / 12;
+    console.log(`[ESR Extraction] GST from snapshot column: annual=${annualTurnover}, monthly=${gst_avg_monthly_sales}`);
+} else if (gstReq?.raw_gst_data) {
+// FALLBACK: parse from raw JSON for legacy records
 
 let rawGst =
 typeof gstReq.raw_gst_data === 'string'
@@ -527,7 +533,7 @@ Array.isArray(nature)
 }
 
 ////////////////////////////////////////////////////////////
-// 3️⃣ ITR EXTRACTION
+// 3⃣ ITR EXTRACTION — uses snapshot columns first
 ////////////////////////////////////////////////////////////
 
 let itr_pat = null;
@@ -537,7 +543,13 @@ let itr_gross_receipts = null;
 
 const itrReq = pickLatestPreferredRecord(caseRecord.itr_analytics);
 
-if (itrReq?.analytics_payload) {
+// PRIMARY: use persisted net_profit_latest_year (set at sync completion)
+if (itrReq?.net_profit_latest_year != null) {
+    itr_pat = Number(itrReq.net_profit_latest_year);
+    itr_gross_receipts = itrReq.gross_receipts_latest_year != null ? Number(itrReq.gross_receipts_latest_year) : null;
+    console.log(`[ESR Extraction] ITR from snapshot column: pat=${itr_pat}, receipts=${itr_gross_receipts}`);
+} else if (itrReq?.analytics_payload) {
+// FALLBACK: parse raw analytics payload for legacy records
 
 const rawItr =
 typeof itrReq.analytics_payload === 'string'
@@ -571,7 +583,7 @@ toNum(latestPL.receiptsFromProfession)
 
 }
 
-}
+} // end of ITR raw fallback block
 
 ////////////////////////////////////////////////////////////
 // 4️⃣ BANK EXTRACTION (UPDATED FOR monthlyAverageDailyBalance)
@@ -581,18 +593,17 @@ let bank_avg_balance = null;
 
 const bankReq = pickLatestPreferredRecord(caseRecord.bank_statements);
 
-if (bankReq?.raw_retrieve_response) {
+// PRIMARY: use persisted avg_bank_balance_latest_year column (set at analysis completion)
+if (bankReq?.avg_bank_balance_latest_year != null) {
+    bank_avg_balance = Number(bankReq.avg_bank_balance_latest_year);
+    console.log(`[ESR Extraction] Bank from snapshot column: avg_balance=${bank_avg_balance}`);
+} else if (bankReq?.raw_retrieve_response) {
+// FALLBACK: parse from raw JSON for legacy records
 
 let rawBank =
 typeof bankReq.raw_retrieve_response === 'string'
 ? JSON.parse(bankReq.raw_retrieve_response)
 : bankReq.raw_retrieve_response;
-
-/**
- * Support both formats:
- * rawBank.overview
- * rawBank.result[0].overview
- */
 
 const overview =
 rawBank?.overview
@@ -609,10 +620,6 @@ avg(balances.map(x => x.averageDailyBalance));
 
 }
 
-/**
- * fallback single-value formats
- */
-
 if (!bank_avg_balance) {
 
 bank_avg_balance =
@@ -621,7 +628,8 @@ toNum(overview?.averageDailyBalance)
 
 }
 
-}
+} // end bank raw fallback
+
 
 ////////////////////////////////////////////////////////////
 // 5️⃣ BUREAU

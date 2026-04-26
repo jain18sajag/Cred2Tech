@@ -10,7 +10,7 @@ const parameterMasterConfig = [
   { key: 'hl_pf_max', label: 'PF Range Max - HL', category: 'Loan Parameters' },
   { key: 'hl_max_tenure', label: 'Max Tenure (Months) - HL', category: 'Loan Parameters' },
   { key: 'hl_dbr_foir', label: 'DBR/FOIR %', category: 'Loan Parameters' },
-  
+
   // HL LTV
   { key: 'hl_ltv_residential', label: 'Residential Purchase', category: 'HL LTV' },
   { key: 'hl_ltv_upto_30', label: 'Loan upto 30 lacs', category: 'HL LTV' },
@@ -94,7 +94,7 @@ const valueData = {
     hl_pf_max: { default: '1%' },
     hl_max_tenure: { SAL: '300 Months', default: '240 Months' },
     hl_dbr_foir: { SAL: '<75k -60%, >75k - 70%', default: 'Max 100% ( Double wammy - 140%)' },
-    
+
     hl_ltv_residential: { default: '0' },
     hl_ltv_upto_30: { default: '90%' },
     hl_ltv_30_75: { default: '80%' },
@@ -115,7 +115,7 @@ const valueData = {
 
     dbr_rental_bank: { SAL: '70%', NPM: '70%', BANK: 'No', GST: 'No', GRP: 'No', NWM: '70%' },
     dbr_rental_cash: { default: 'No' },
-    dbr_agri_itr: { 
+    dbr_agri_itr: {
       SAL: '50%, can be considered 100% if onweship proof provided.',
       NPM: '50%, can be considered 100% if onweship proof provided.',
       BANK: 'No', GST: 'No', GRP: 'No',
@@ -191,7 +191,7 @@ async function seedDataMatrix() {
     const allParameters = await prisma.parameterMaster.findMany();
     const paramKeyMap = {};
     for (let p of allParameters) {
-        paramKeyMap[p.parameter_key] = p.id;
+      paramKeyMap[p.parameter_key] = p.id;
     }
 
     // 2. Insert Values
@@ -208,46 +208,46 @@ async function seedDataMatrix() {
           where: { lender_id_product_type: { lender_id: lender.id, product_type: prodType } }
         });
         if (!prod) continue;
-        
+
         const dataSet = valueData[prodType];
 
         for (const schemeName of Object.keys(schemeMapping)) {
-           const schemeObj = await prisma.scheme.findFirst({
-              where: { product_id: prod.id, scheme_name: schemeName }
-           });
-           
-           if (!schemeObj) continue;
+          const schemeObj = await prisma.scheme.findFirst({
+            where: { product_id: prod.id, scheme_name: schemeName }
+          });
 
-           const mappedPrefix = schemeMapping[schemeName];
+          if (!schemeObj) continue;
 
-           for (const [paramKey, rule] of Object.entries(dataSet)) {
-               const val = rule[mappedPrefix] !== undefined ? rule[mappedPrefix] : rule.default;
-               if (!val || val === '') continue;
-               
-               const pId = paramKeyMap[paramKey];
-               if (!pId) continue;
+          const mappedPrefix = schemeMapping[schemeName];
 
-               await prisma.schemeParameterValue.upsert({
-                   where: {
-                       scheme_id_parameter_id: {
-                           scheme_id: schemeObj.id,
-                           parameter_id: pId
-                       }
-                   },
-                   update: {
-                       value: val
-                   },
-                   create: {
-                       scheme_id: schemeObj.id,
-                       parameter_id: pId,
-                       value: val
-                   }
-               });
-           }
+          for (const [paramKey, rule] of Object.entries(dataSet)) {
+            const val = rule[mappedPrefix] !== undefined ? rule[mappedPrefix] : rule.default;
+            if (!val || val === '') continue;
+
+            const pId = paramKeyMap[paramKey];
+            if (!pId) continue;
+
+            await prisma.schemeParameterValue.upsert({
+              where: {
+                scheme_id_parameter_id: {
+                  scheme_id: schemeObj.id,
+                  parameter_id: pId
+                }
+              },
+              update: {
+                value: val
+              },
+              create: {
+                scheme_id: schemeObj.id,
+                parameter_id: pId,
+                value: val
+              }
+            });
+          }
         }
       }
     }
-    
+
     console.log('[seed] Matrix Data values updated successfully.');
   } catch (e) {
     console.error('Migration Matrix error:', e);

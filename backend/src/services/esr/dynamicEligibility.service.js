@@ -65,7 +65,7 @@ function normalizeIncomeMethod(method) {
 // ------ LTV RESOLVER ------
 function resolveApplicableLtvKey(esr) {
     const pType = (esr.product_type || '').toLowerCase();
-    
+
     if (pType === 'hl') {
         // HL Logic
         const loanAmt = Number(esr.requested_loan_amount) || 0;
@@ -86,7 +86,7 @@ function resolveApplicableLtvKey(esr) {
         // LAP Logic
         const propLower = (esr.property_type || '').toLowerCase();
         const occLower = (esr.occupancy_type || '').toLowerCase();
-        
+
         let prop = 'special';
         if (propLower.includes('commercial')) prop = 'com';
         else if (propLower.includes('residential')) prop = 'res';
@@ -125,9 +125,12 @@ function parseDynamicFoir(valString, monthlyIncome) {
 
 // ------ EVALUATE SCHEME ------
 function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender }) {
+    console.log(`\n[ESR ENGINE] Evaluating Scheme: ${scheme.scheme_name} | Lender: ${lender.name} | Product: ${product.product_type}`);
     const paramMap = getParamMap(scheme.parameter_values);
+    console.log(`[ESR ENGINE] Parsed Parameter Map:`, JSON.stringify(paramMap, null, 2));
+
     const pType = (esr.product_type || '').toLowerCase();
-    
+
     let isEligible = true;
     const failure_reasons = [];
     const warnings = [];
@@ -160,7 +163,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender }) {
     const maxLoan = toNumber(maxLoanRaw);
 
     if (maxLoanRaw !== undefined && maxLoanRaw !== null && maxLoan === null) {
-         warnings.push(`Max loan parameter is not numeric: ${typeof maxLoanRaw === 'object' ? JSON.stringify(maxLoanRaw) : maxLoanRaw}`);
+        warnings.push(`Max loan parameter is not numeric: ${typeof maxLoanRaw === 'object' ? JSON.stringify(maxLoanRaw) : maxLoanRaw}`);
     }
 
     const reqAmt = esr.requested_loan_amount ? Number(esr.requested_loan_amount) : null;
@@ -180,7 +183,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender }) {
     // D. FOIR
     const rawFoir = paramMap[`${pref}_dbr_foir`];
     let foir_allowed_percent = parseDynamicFoir(rawFoir, esr.selected_monthly_income);
-    
+
     const monthlyIncome = esr.selected_monthly_income || 0;
     const existingObligations = esr.existing_obligations || 0;
     let foir_actual_percent = monthlyIncome > 0 ? (existingObligations / monthlyIncome) : 0;
@@ -193,7 +196,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender }) {
         }
         max_eligible_emi = monthlyIncome * foir_allowed_percent - existingObligations;
     } else if (rawFoir && rawFoir !== '---') {
-         warnings.push(`FOIR parameter could not be parsed numerically: ${typeof rawFoir === 'object' ? JSON.stringify(rawFoir) : rawFoir}`);
+        warnings.push(`FOIR parameter could not be parsed numerically: ${typeof rawFoir === 'object' ? JSON.stringify(rawFoir) : rawFoir}`);
     }
 
     // E. Max Age At Maturity
@@ -216,16 +219,16 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender }) {
     if (applicable_ltv_percent !== null && esr.property_value) {
         max_loan_by_ltv = Math.round(esr.property_value * applicable_ltv_percent);
         if (reqAmt !== null) {
-             if (reqAmt > max_loan_by_ltv) {
-                 isEligible = false;
-                 failure_reasons.push(`Requested loan ₹${reqAmt.toLocaleString()} exceeds allowed LTV calculation ₹${max_loan_by_ltv.toLocaleString()}.`);
-             }
-             final_eligible_loan_amount = Math.min(reqAmt, max_loan_by_ltv);
+            if (reqAmt > max_loan_by_ltv) {
+                isEligible = false;
+                failure_reasons.push(`Requested loan ₹${reqAmt.toLocaleString()} exceeds allowed LTV calculation ₹${max_loan_by_ltv.toLocaleString()}.`);
+            }
+            final_eligible_loan_amount = Math.min(reqAmt, max_loan_by_ltv);
         } else {
-             final_eligible_loan_amount = max_loan_by_ltv;
-             if (maxLoan !== null && final_eligible_loan_amount > maxLoan) {
-                 final_eligible_loan_amount = maxLoan;
-             }
+            final_eligible_loan_amount = max_loan_by_ltv;
+            if (maxLoan !== null && final_eligible_loan_amount > maxLoan) {
+                final_eligible_loan_amount = maxLoan;
+            }
         }
     }
 
@@ -243,7 +246,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender }) {
         }
     });
 
-    return {
+    const finalEvaluation = {
         scheme_id: scheme.id,
         scheme_name: scheme.scheme_name,
         income_method_matched,
@@ -263,6 +266,9 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender }) {
         foir_actual_percent,
         max_eligible_emi
     };
+
+    console.log(`[ESR ENGINE] Final Evaluation for ${scheme.scheme_name}:`, JSON.stringify(finalEvaluation, null, 2));
+    return finalEvaluation;
 }
 
 
@@ -285,6 +291,12 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
     }
 
     const pType = esr.product_type.toUpperCase();
+
+    console.log(`\n======================================================`);
+    console.log(`[ESR ENGINE] Starting Dynamic ESR Calculation`);
+    console.log(`[ESR ENGINE] Case ID: ${case_id} | Product Type: ${pType}`);
+    console.log(`[ESR ENGINE] Input Payload:`, JSON.stringify(esr, null, 2));
+    console.log(`======================================================\n`);
 
     // 2. Fetch Active Lenders
     const lenders = await prisma.lender.findMany({
@@ -334,7 +346,7 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
 
             for (const scheme of schemes) {
                 const evalOutput = evaluateDynamicSchemeEligibility({ esr, scheme, product, lender });
-                
+
                 if (evalOutput.is_eligible && lenderIneligibilityReason === "Property value missing for secured loan eligibility.") {
                     evalOutput.is_eligible = false;
                     evalOutput.failure_reasons.push(lenderIneligibilityReason);
@@ -360,13 +372,13 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
 
         if (isLenderEligible) {
             const eligibleSchemes = scheme_evaluations.filter(s => s.is_eligible);
-            
+
             // Sort to find the best scheme
             eligibleSchemes.sort((a, b) => {
                 const loanA = a.final_eligible_loan_amount || 0;
                 const loanB = b.final_eligible_loan_amount || 0;
                 if (loanB !== loanA) return loanB - loanA;
-                
+
                 const roiA = a.roi_min || Infinity;
                 const roiB = b.roi_min || Infinity;
                 if (roiB !== roiA) return roiA - roiB;
@@ -423,17 +435,17 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
     // 5. Transaction Persistence
     await prisma.$transaction(async (tx) => {
         await tx.eligibilityReport.upsert({
-            where:  { case_id },
+            where: { case_id },
             create: {
                 case_id,
                 generated_by_user_id: user_id,
-                combined_income:      combinedAnnualIncome,
-                property_value:       esr.property_value,
-                primary_cibil_score:  esr.bureau_score,
-                lowest_cibil_score:   esr.bureau_score,
-                total_emi_per_month:  esr.existing_obligations,
-                status:               'GENERATED',
-                raw_payload:          {
+                combined_income: combinedAnnualIncome,
+                property_value: esr.property_value,
+                primary_cibil_score: esr.bureau_score,
+                lowest_cibil_score: esr.bureau_score,
+                total_emi_per_month: esr.existing_obligations,
+                status: 'GENERATED',
+                raw_payload: {
                     source: "CASE_ESR_FINANCIALS",
                     case_esr_financial_id: esr.id,
                     product_type: esr.product_type,
@@ -443,16 +455,16 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
                 }
             },
             update: {
-                generated_at:         new Date(),
+                generated_at: new Date(),
                 generated_by_user_id: user_id,
-                combined_income:      combinedAnnualIncome,
-                property_value:       esr.property_value,
-                primary_cibil_score:  esr.bureau_score,
-                lowest_cibil_score:   esr.bureau_score,
-                total_emi_per_month:  esr.existing_obligations,
-                status:               'GENERATED',
-                updated_at:           new Date(),
-                raw_payload:          {
+                combined_income: combinedAnnualIncome,
+                property_value: esr.property_value,
+                primary_cibil_score: esr.bureau_score,
+                lowest_cibil_score: esr.bureau_score,
+                total_emi_per_month: esr.existing_obligations,
+                status: 'GENERATED',
+                updated_at: new Date(),
+                raw_payload: {
                     source: "CASE_ESR_FINANCIALS",
                     case_esr_financial_id: esr.id,
                     product_type: esr.product_type,
@@ -465,24 +477,24 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
 
         await tx.case.update({
             where: { id: case_id },
-            data:  { stage: 'ESR_GENERATED', esr_generated: true }
+            data: { stage: 'ESR_GENERATED', esr_generated: true }
         });
     });
 
     // Provide generic response back mirroring legacy system response wrapper
     return {
-        lenders:              lenderResults,
-        eligible_count:       lenderResults.filter(l => l.is_eligible).length,
-        total_count:          lenderResults.length,
-        combined_income:      combinedAnnualIncome,
-        property_value:       esr.property_value,
-        primary_cibil_score:  esr.bureau_score,
-        lowest_cibil_score:   esr.bureau_score,
-        total_emi_per_month:  esr.existing_obligations
+        lenders: lenderResults,
+        eligible_count: lenderResults.filter(l => l.is_eligible).length,
+        total_count: lenderResults.length,
+        combined_income: combinedAnnualIncome,
+        property_value: esr.property_value,
+        primary_cibil_score: esr.bureau_score,
+        lowest_cibil_score: esr.bureau_score,
+        total_emi_per_month: esr.existing_obligations
     };
 }
 
 module.exports = {
-   generateDynamicESR,
-   evaluateDynamicSchemeEligibility
+    generateDynamicESR,
+    evaluateDynamicSchemeEligibility
 };

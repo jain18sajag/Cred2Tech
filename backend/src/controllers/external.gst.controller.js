@@ -3,6 +3,67 @@ const { executePaidApi } = require('../services/wallet.service');
 const gstService = require('../services/externalApis/gst.service');
 const documentService = require('../services/document.service');
 
+// Helper: extract latest + previous financial year turnover from raw GST JSON
+function extractGstFySnapshot(rawGstData) {
+    const result = { latest: null, previous: null, fy_latest: null, fy_previous: null };
+    if (!rawGstData) return result;
+
+    // Format 1: Overview_Monthly -> "Overview of GST Returns"
+    const overviewRows = rawGstData?.Overview_Monthly?.['Overview of GST Returns'];
+
+    if (Array.isArray(overviewRows)) {
+        // Each row has "Month Year" like "Apr-2023", "May-2024" etc.
+        // Group by financial year: Apr YYYY -> FY YYYY to YYYY+1
+        const fyTotals = {};
+        for (const row of overviewRows) {
+            const monthYear = row['Month Year'];
+            if (!monthYear || monthYear === 'Total') continue;
+
+            // Parse month-year e.g. "Apr-2023"
+            const parts = monthYear.split('-');
+            if (parts.length !== 2) continue;
+            const month = parts[0];
+            const year = parseInt(parts[1], 10);
+            if (!Number.isFinite(year)) continue;
+
+            // Financial year: Apr-Mar. Apr-2023 belongs to FY 2023-24
+            const fyStart = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].includes(month) ? year : year - 1;
+            const fyKey = `FY ${fyStart}-${String(fyStart + 1).slice(2)}`;
+
+            const sales = Number(row['Total Value of Sales (A)']) || 0;
+            fyTotals[fyKey] = (fyTotals[fyKey] || 0) + sales;
+        }
+
+        const sortedFYs = Object.keys(fyTotals).sort().reverse(); // Latest first
+        if (sortedFYs.length > 0) {
+            result.fy_latest  = sortedFYs[0];
+            result.latest     = fyTotals[sortedFYs[0]];
+        }
+        if (sortedFYs.length > 1) {
+            result.fy_previous = sortedFYs[1];
+            result.previous    = fyTotals[sortedFYs[1]];
+        }
+    }
+
+    // Format 2: Fallback from old Monthly Sales&Purchase format
+    if (result.latest === null && Array.isArray(rawGstData?.data)) {
+        const monthlyBlock = rawGstData.data.find(x => x['Monthly Sales&Purchase']);
+        const rows = monthlyBlock?.['Monthly Sales&Purchase']
+            ?.find(x => x['Monthly Sale Summary'])
+            ?.['Monthly Sale Summary']
+            ?.find(x => Array.isArray(x.data))?.data || [];
+
+        const dataRows = rows.filter(x => !String(x.Month || '').toLowerCase().includes('total'));
+        if (dataRows.length > 0) {
+            const total = dataRows.reduce((s, r) => s + (Number(r['Taxable Value']) || 0), 0);
+            result.latest = total;
+            result.fy_latest = 'FY (aggregated)';
+        }
+    }
+
+    return result;
+}
+
 async function createGstRequest(req, res) {
     try {
         const {
@@ -371,6 +432,22 @@ async function handleSignzyCallback(req, res) {
             updateData.status = 'REPORT_READY';
         } else if (resultObj.status === 'FAILED' || resultObj.message?.toLowerCase().includes('failed')) {
             updateData.status = 'FAILED';
+        }
+
+        // Extract FY turnover snapshot from the downloaded raw data
+        if (rawGstData) {
+            try {
+                const fySnapshot = extractGstFySnapshot(rawGstData);
+                if (fySnapshot.latest !== null) {
+                    updateData.turnover_latest_year   = fySnapshot.latest;
+                    updateData.turnover_previous_year = fySnapshot.previous;
+                    updateData.financial_year_latest   = fySnapshot.fy_latest;
+                    updateData.financial_year_previous = fySnapshot.fy_previous;
+                    console.log(`[Webhook][GST FY] Latest: ${fySnapshot.fy_latest} = ${fySnapshot.latest}, Previous: ${fySnapshot.fy_previous} = ${fySnapshot.previous}`);
+                }
+            } catch (fyErr) {
+                console.error('[Webhook][GST FY] Extraction error:', fyErr.message);
+            }
         }
 
         await prisma.gstrAnalyticsRequest.update({

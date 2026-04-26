@@ -3,6 +3,62 @@ const itrAnalyticsService = require('../services/externalApis/itrAnalytics.servi
 const { executePaidApi } = require('../services/wallet.service');
 const documentService = require('../services/document.service');
 
+// Helper: extract latest & previous FY net profit / gross receipts from ITR analytics payload
+function extractItrFySnapshot(analyticsData) {
+    const result = {
+        net_profit_latest_year: null, net_profit_previous_year: null,
+        gross_receipts_latest_year: null, gross_receipts_previous_year: null,
+        financial_year_latest: null, financial_year_previous: null
+    };
+    if (!analyticsData) return result;
+
+    const toNum = v => {
+        if (v === undefined || v === null || v === '') return null;
+        const n = Number(String(v).replace(/,/g, ''));
+        return Number.isFinite(n) ? n : null;
+    };
+
+    const actual = analyticsData?.result || analyticsData;
+    const itrKey = actual?.iTR || actual?.ITR;
+    const plArray = itrKey?.profitAndLossStatement?.profitAndLossStatement || [];
+
+    // Sort by year descending
+    const sorted = [...plArray]
+        .filter(x => x && x.year !== undefined)
+        .sort((a, b) => Number(b.year) - Number(a.year));
+
+    const extractRow = (row) => {
+        if (!row) return { pat: null, receipts: null };
+        const pat = toNum(row.profitAfterTax);
+        const receipts = toNum(row.receiptsFromProfession)
+            ?? toNum(row.revenueFromOperations)
+            ?? toNum(row.saleOfServices)
+            ?? toNum(row.saleOfGoods)
+            ?? toNum(row.grossTotalIncome);
+        return { pat, receipts };
+    };
+
+    const fyLabel = (yearStr) => {
+        const y = parseInt(yearStr, 10);
+        return Number.isFinite(y) ? `FY ${y}-${String(y + 1).slice(2)}` : String(yearStr);
+    };
+
+    if (sorted.length > 0) {
+        const { pat, receipts } = extractRow(sorted[0]);
+        result.net_profit_latest_year    = pat;
+        result.gross_receipts_latest_year = receipts;
+        result.financial_year_latest     = fyLabel(sorted[0].year);
+    }
+    if (sorted.length > 1) {
+        const { pat, receipts } = extractRow(sorted[1]);
+        result.net_profit_previous_year    = pat;
+        result.gross_receipts_previous_year = receipts;
+        result.financial_year_previous     = fyLabel(sorted[1].year);
+    }
+
+    return result;
+}
+
 /**
  * POST /external/itr/analyze
  * Validates inputs, deducts wallet credits, calls get-reference-id, stores ItrAnalyticsRequest.
@@ -143,6 +199,10 @@ async function sync(req, res) {
             }
         }
 
+        // Extract FY snapshots and persist immediately
+        const itrSnapshot = extractItrFySnapshot(analyticsData);
+        console.log('[ITR FY Snapshot]', itrSnapshot);
+
         const updated = await prisma.itrAnalyticsRequest.update({
             where: { reference_id },
             data: {
@@ -151,6 +211,12 @@ async function sync(req, res) {
                 analytics_payload: analyticsData,
                 provider_message: statusMessage,
                 itr_document_id: itrDocumentId || undefined,
+                net_profit_latest_year:       itrSnapshot.net_profit_latest_year,
+                net_profit_previous_year:     itrSnapshot.net_profit_previous_year,
+                gross_receipts_latest_year:   itrSnapshot.gross_receipts_latest_year,
+                gross_receipts_previous_year: itrSnapshot.gross_receipts_previous_year,
+                financial_year_latest:        itrSnapshot.financial_year_latest,
+                financial_year_previous:      itrSnapshot.financial_year_previous,
             }
         });
 

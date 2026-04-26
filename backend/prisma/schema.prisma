@@ -535,6 +535,13 @@ model GstrAnalyticsRequest {
   gst_pdf_document_id   Int?
   gst_excel_document_id Int?
   gst_json_document_id  Int?
+
+  // Income snapshot — populated at callback ingestion time
+  turnover_latest_year    Decimal?  @db.Decimal(18, 2)
+  turnover_previous_year  Decimal?  @db.Decimal(18, 2)
+  financial_year_latest   String?   // e.g. "FY 2024-25"
+  financial_year_previous String?   // e.g. "FY 2023-24"
+
   created_at         DateTime @default(now())
   updated_at         DateTime @updatedAt
   created_by_user_id Int
@@ -571,6 +578,15 @@ model ItrAnalyticsRequest {
   provider_message   String?
   // Document storage reference (populated after vendor URL ingestion)
   itr_document_id    Int?
+
+  // Income snapshot — populated at sync completion time
+  net_profit_latest_year       Decimal?  @db.Decimal(18, 2)
+  net_profit_previous_year     Decimal?  @db.Decimal(18, 2)
+  gross_receipts_latest_year   Decimal?  @db.Decimal(18, 2)
+  gross_receipts_previous_year Decimal?  @db.Decimal(18, 2)
+  financial_year_latest        String?
+  financial_year_previous      String?
+
   created_at         DateTime           @default(now())
   updated_at         DateTime           @updatedAt
   created_by_user_id Int
@@ -616,7 +632,13 @@ model BankStatementAnalysisRequest {
   // Document storage references (populated after vendor URL ingestion)
   bank_excel_document_id Int?
   bank_json_document_id  Int?
-  
+
+  // Income snapshot — populated when bank analysis completes
+  avg_bank_balance_latest_year   Decimal?  @db.Decimal(18, 2)
+  avg_bank_balance_previous_year Decimal?  @db.Decimal(18, 2)
+  financial_year_latest          String?
+  financial_year_previous        String?
+
   created_at         DateTime @default(now())
   updated_at         DateTime @updatedAt
   created_by_user_id Int
@@ -665,6 +687,7 @@ model BureauVerification {
   score             String?
   raw_response      Json?
   status            String
+  emi_obligations_total Decimal? @db.Decimal(18, 2)  // Total EMI from bureau for ESR FOIR
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
 

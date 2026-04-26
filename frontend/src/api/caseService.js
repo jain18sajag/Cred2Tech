@@ -91,5 +91,39 @@ export const caseService = {
   getESR: async (caseId) => {
     const response = await axiosInstance.get(`/cases/${caseId}/esr`);
     return response.data;
-  }
+  },
+
+  // Phase 2 —— Proposals
+  createProposal: async (caseId, payload) => {
+    const response = await axiosInstance.post(`/cases/${caseId}/proposals/create`, payload);
+    return response.data;
+  },
+  listProposals: async (caseId) => {
+    const response = await axiosInstance.get(`/cases/${caseId}/proposals`);
+    return response.data;
+  },
+  getProposal: async (caseId, proposalId) => {
+    const response = await axiosInstance.get(`/cases/${caseId}/proposals/${proposalId}`);
+    return response.data;
+  },
+  updateProposal: async (caseId, proposalId, data) => {
+    const response = await axiosInstance.patch(`/cases/${caseId}/proposals/${proposalId}`, data);
+    return response.data;
+  },
+  attachProposalDocs: async (caseId, proposalId, document_ids) => {
+    const response = await axiosInstance.post(`/cases/${caseId}/proposals/${proposalId}/documents`, { document_ids });
+    return response.data;
+  },
+  detachProposalDoc: async (caseId, proposalId, docId) => {
+    const response = await axiosInstance.delete(`/cases/${caseId}/proposals/${proposalId}/documents/${docId}`);
+    return response.data;
+  },
+  submitProposal: async (caseId, proposalId) => {
+    const response = await axiosInstance.post(`/cases/${caseId}/proposals/${proposalId}/submit`);
+    return response.data;
+  },
+  cloneProposal: async (caseId, proposalId, payload) => {
+    const response = await axiosInstance.post(`/cases/${caseId}/proposals/${proposalId}/clone`, payload);
+    return response.data;
+  },
 };

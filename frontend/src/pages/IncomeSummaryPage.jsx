@@ -97,6 +97,10 @@ export default function IncomeSummaryPage() {
   const combined = data?.combined_annual_income || 0;
   const totalEmi = data?.total_emi_per_month || 0;
 
+  // Derive FY labels from whichever source has them, with fallback defaults
+  const fyLatestLabel = api.gst_turnover?.fy_latest || api.net_profit?.fy_latest || api.avg_bank_balance?.fy_latest || 'Latest Year';
+  const fyPrevLabel   = api.gst_turnover?.fy_prev   || api.net_profit?.fy_prev   || api.avg_bank_balance?.fy_prev   || 'Previous Year';
+
   return (
     <div style={{ maxWidth: 960, margin: '0 auto', paddingBottom: 60 }}>
       {/* Page Header */}
@@ -123,7 +127,7 @@ export default function IncomeSummaryPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ background: 'var(--bg-elevated)' }}>
-                {['Income Item', 'Latest Year', 'Previous Year', 'Source'].map(h => (
+                {['Item', `Latest Year (${fyLatestLabel})`, `Previous Year (${fyPrevLabel})`, 'Source'].map(h => (
                   <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)', borderBottom: '1px solid var(--border)', fontSize: 12 }}>{h}</th>
                 ))}
               </tr>
@@ -131,7 +135,7 @@ export default function IncomeSummaryPage() {
             <tbody>
               {[
                 { label: 'Gross Turnover / Receipts', latest: api.gst_turnover?.latest, prev: api.gst_turnover?.prev, source: 'GST', color: '#2B6CB0', bg: '#EBF8FF' },
-                { label: 'Net Profit', latest: api.net_profit?.latest, prev: api.net_profit?.prev, source: 'ITR', color: '#276749', bg: '#F0FFF4' },
+                { label: 'Net Profit (PAT)', latest: api.net_profit?.latest, prev: api.net_profit?.prev, source: 'ITR', color: '#276749', bg: '#F0FFF4' },
                 { label: 'Average Monthly Bank Balance', latest: api.avg_bank_balance?.latest, prev: api.avg_bank_balance?.prev, source: 'Bank Stmt', color: '#744210', bg: '#FFFBF0' }
               ].map((row, i) => (
                 <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
