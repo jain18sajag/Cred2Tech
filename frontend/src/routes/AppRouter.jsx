@@ -30,6 +30,7 @@ const IncomeSummaryPage = lazy(() => import('../pages/IncomeSummaryPage'));
 const BureauObligationsPage = lazy(() => import('../pages/BureauObligationsPage'));
 const EsrPage = lazy(() => import('../pages/EsrPage'));
 const ProposalPage = lazy(() => import('../pages/ProposalPage'));
+const DSALenderContactsPage = lazy(() => import('../pages/DSALenderContactsPage'));
 
 const PageLoader = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -150,6 +151,14 @@ const AppRouter = () => (
               element={
                 <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN']}>
                   <ProposalPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/settings/lender-contacts"
+              element={
+                <ProtectedRoute allowedRoles={['DSA_ADMIN']}>
+                  <DSALenderContactsPage />
                 </ProtectedRoute>
               }
             />

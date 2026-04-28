@@ -40,7 +40,9 @@ const adminLenderRoutes = require('./routes/admin.lender.routes');
 const externalApiRoutes = require('./routes/externalApi.routes');
 const bureauRoutes = require('./routes/bureau.routes');
 const documentRoutes = require('./routes/document.routes');
-const onboardingRoutes = require('./routes/onboarding.routes');
+const onboardingRoutes       = require('./routes/onboarding.routes');
+const tenantLenderRoutes     = require('./routes/tenantLender.routes');
+const tenantLenderContactRoutes = require('./routes/tenantLenderContacts.routes');
 
 const apiRouter = express.Router();
 
@@ -62,6 +64,10 @@ apiRouter.use('/verification', bureauRoutes);
 apiRouter.use('/documents', documentRoutes);
 // Phase 1 onboarding: income, obligations, ESR — mounted under /api/cases/:id/
 apiRouter.use('/cases/:id', onboardingRoutes);
+
+// Tenant-scoped lender contact configuration (DSA only)
+apiRouter.use('/tenant/lenders', tenantLenderRoutes);
+apiRouter.use('/tenant/lender-contacts', tenantLenderContactRoutes);
 
 app.use('/api', apiRouter);
 

@@ -4,6 +4,7 @@ const incomeCtrl = require('../controllers/income.controller');
 const obligationsCtrl = require('../controllers/obligations.controller');
 const esrCtrl = require('../controllers/esr.controller');
 const proposalCtrl = require('../controllers/proposal.controller');
+const sendToLenderCtrl = require('../controllers/case.sendToLender.controller');
 const { authenticate } = require('../middleware/auth.middleware');
 const { requireRole } = require('../middleware/role.middleware');
 
@@ -35,5 +36,9 @@ router.post('/proposals/:pid/documents',          proposalCtrl.attachDocs);
 router.delete('/proposals/:pid/documents/:docId', proposalCtrl.detachDoc);
 router.post('/proposals/:pid/submit',             proposalCtrl.submit);
 router.post('/proposals/:pid/clone',              proposalCtrl.clone);
+
+// ── Send to Lender  (/api/cases/:id/send-to-lender) ──────────────────────────
+router.post('/send-to-lender',       sendToLenderCtrl.sendToLender);
+router.post('/send-to-other-lender', sendToLenderCtrl.sendToOtherLender);
 
 module.exports = router;

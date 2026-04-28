@@ -4,7 +4,156 @@ import { caseService } from '../api/caseService';
 import { toast } from 'react-hot-toast';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { CheckCircle, XCircle, RefreshCw, ChevronLeft, Calculator,
-         Send, Clock, CheckCircle2, AlertCircle } from 'lucide-react';
+         Send, Clock, CheckCircle2, AlertCircle, X, Mail, Phone } from 'lucide-react';
+import { sendCaseToLender, sendCaseToOtherLender, getTenantLenders } from '../api/tenantLenderService';
+
+// ─── Send Confirmation Modal ───────────────────────────────────────────────────
+function SendConfirmationModal({ isOpen, onClose, result }) {
+  if (!isOpen || !result) return null;
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' }}>
+      <div style={{ background:'var(--bg-primary)', width:'94%', maxWidth:520, borderRadius:14, overflow:'hidden', boxShadow:'0 20px 60px rgba(0,0,0,0.2)' }}>
+        <div style={{ background:'linear-gradient(135deg,#F0FFF4,#EBF8FF)', padding:'24px', textAlign:'center', borderBottom:'1px solid var(--border)' }}>
+          <div style={{ fontSize:44, marginBottom:8 }}>✅</div>
+          <h3 style={{ fontSize:18, fontWeight:800, color:'#276749', margin:0 }}>Lead Successfully Sent!</h3>
+          <p style={{ color:'#4A5568', fontSize:13, marginTop:6 }}>The proposal has been dispatched to the lender contact.</p>
+        </div>
+        <div style={{ padding:'20px 24px', display:'flex', flexDirection:'column', gap:14 }}>
+          {/* Email preview */}
+          <div style={{ border:'1px solid #BEE3F8', borderRadius:10, overflow:'hidden' }}>
+            <div style={{ background:'#EBF8FF', padding:'10px 16px', display:'flex', alignItems:'center', gap:8 }}>
+              <Mail size={14} color='#2B6CB0' />
+              <span style={{ fontSize:12, fontWeight:700, color:'#2B6CB0' }}>EMAIL SENT</span>
+            </div>
+            <div style={{ padding:'12px 16px', fontSize:12 }}>
+              <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
+                <span style={{ color:'var(--text-tertiary)' }}>To:</span>
+                <span style={{ fontWeight:600 }}>{result.to}</span>
+              </div>
+              <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
+                <span style={{ color:'var(--text-tertiary)' }}>Contact:</span>
+                <span style={{ fontWeight:600 }}>{result.contact_name}</span>
+              </div>
+              <div style={{ marginTop:8, padding:'8px 10px', background:'var(--bg-elevated)', borderRadius:6, fontSize:11, color:'var(--text-secondary)', lineHeight:1.6 }}>
+                <strong style={{ display:'block', marginBottom:4 }}>Subject:</strong>
+                {result.subject}
+              </div>
+              <div style={{ marginTop:6, padding:'8px 10px', background:'var(--bg-elevated)', borderRadius:6, fontSize:11, color:'var(--text-secondary)', lineHeight:1.6, maxHeight:80, overflow:'hidden' }}>
+                {(result.body_preview || '').slice(0, 200)}…
+              </div>
+            </div>
+          </div>
+          {/* SMS preview */}
+          {result.sms?.smsSent && (
+            <div style={{ border:'1px solid #C6F6D5', borderRadius:10, overflow:'hidden' }}>
+              <div style={{ background:'#F0FFF4', padding:'10px 16px', display:'flex', alignItems:'center', gap:8 }}>
+                <Phone size={14} color='#276749' />
+                <span style={{ fontSize:12, fontWeight:700, color:'#276749' }}>SMS SENT</span>
+              </div>
+              <div style={{ padding:'12px 16px', fontSize:12 }}>
+                <div style={{ marginBottom:4 }}>Sent to: <strong>{result.sms.to}</strong></div>
+                <div style={{ padding:'8px 10px', background:'var(--bg-elevated)', borderRadius:6, fontSize:11, lineHeight:1.6 }}>{result.sms.message}</div>
+              </div>
+            </div>
+          )}
+        </div>
+        <div style={{ padding:'14px 24px', borderTop:'1px solid var(--border)', display:'flex', justifyContent:'flex-end' }}>
+          <button onClick={onClose} style={{ padding:'9px 22px', borderRadius:8, fontWeight:700, fontSize:14, background:'var(--primary)', color:'#fff', border:'none', cursor:'pointer' }}>Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Send to Other Lender Modal ───────────────────────────────────────────────
+function SendToOtherLenderModal({ isOpen, onClose, caseId, onSuccess }) {
+  const [lenders, setLenders] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [selectedLender, setSelectedLender] = useState(null);
+  const [selectedContact, setSelectedContact] = useState(null);
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setLoading(true);
+      setSelectedLender(null); setSelectedContact(null);
+      getTenantLenders().then(d => setLenders(d.filter(l => l.is_active && l.contacts?.length > 0))).catch(() => toast.error('Failed to load lenders')).finally(() => setLoading(false));
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const handleSend = async () => {
+    if (!selectedContact) { toast.error('Select a contact first'); return; }
+    setSending(true);
+    try {
+      const result = await sendCaseToOtherLender(caseId, { contact_id: selectedContact.id });
+      onSuccess(result);
+      onClose();
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Failed to send');
+    } finally { setSending(false); }
+  };
+
+  const contacts = selectedLender?.contacts || [];
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' }}>
+      <div style={{ background:'var(--bg-primary)', width:'94%', maxWidth:480, borderRadius:14, overflow:'hidden', boxShadow:'0 20px 60px rgba(0,0,0,0.2)' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'18px 24px', borderBottom:'1px solid var(--border)', background:'var(--bg-elevated)' }}>
+          <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>Send to Other Lender</h3>
+          <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:'var(--text-tertiary)' }}><X size={18} /></button>
+        </div>
+        <div style={{ padding:'20px 24px' }}>
+          {loading ? <div style={{ textAlign:'center', padding:30 }}><LoadingSpinner size={30} /></div> : lenders.length === 0 ? (
+            <div style={{ textAlign:'center', padding:20, color:'var(--text-tertiary)' }}>
+              No configured lenders found. <a href='/settings/lender-contacts' style={{ color:'var(--primary)' }}>Add contacts →</a>
+            </div>
+          ) : (
+            <>
+              <div style={{ marginBottom:16 }}>
+                <label style={{ fontSize:11, fontWeight:700, color:'var(--text-tertiary)', textTransform:'uppercase', letterSpacing:'0.5px', display:'block', marginBottom:8 }}>Select Lender</label>
+                <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                  {lenders.map(l => (
+                    <button key={l.id} onClick={() => { setSelectedLender(l); setSelectedContact(null); }}
+                      style={{ padding:'10px 14px', borderRadius:8, textAlign:'left', cursor:'pointer', fontSize:14, fontWeight:600,
+                        border:`2px solid ${selectedLender?.id === l.id ? 'var(--primary)' : 'var(--border)'}`,
+                        background: selectedLender?.id === l.id ? '#EEF2FF' : 'var(--bg-elevated)', color:'var(--text-primary)' }}>
+                      🏦 {l.lender_name} <span style={{ fontSize:11, fontWeight:400, color:'var(--text-tertiary)' }}>· {l.contacts.length} contact(s)</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {selectedLender && contacts.length > 0 && (
+                <div>
+                  <label style={{ fontSize:11, fontWeight:700, color:'var(--text-tertiary)', textTransform:'uppercase', letterSpacing:'0.5px', display:'block', marginBottom:8 }}>Select Contact</label>
+                  <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                    {contacts.map(c => (
+                      <button key={c.id} onClick={() => setSelectedContact(c)}
+                        style={{ padding:'10px 14px', borderRadius:8, textAlign:'left', cursor:'pointer', fontSize:13,
+                          border:`2px solid ${selectedContact?.id === c.id ? '#276749' : 'var(--border)'}`,
+                          background: selectedContact?.id === c.id ? '#F0FFF4' : 'var(--bg-elevated)', color:'var(--text-primary)' }}>
+                        <div style={{ fontWeight:600 }}>{c.contact_name} <span style={{ fontSize:11, color:'var(--text-tertiary)', fontWeight:400 }}>({c.product_type})</span></div>
+                        <div style={{ fontSize:11, color:'var(--text-tertiary)', marginTop:2 }}>{c.contact_email}{c.contact_mobile ? ` · ${c.contact_mobile}` : ''}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <div style={{ padding:'14px 24px', borderTop:'1px solid var(--border)', display:'flex', justifyContent:'flex-end', gap:10, background:'var(--bg-elevated)' }}>
+          <button onClick={onClose} style={{ padding:'8px 16px', borderRadius:8, border:'1px solid var(--border)', background:'transparent', cursor:'pointer', fontSize:13, fontWeight:600 }}>Cancel</button>
+          <button onClick={handleSend} disabled={!selectedContact || sending}
+            style={{ padding:'9px 20px', borderRadius:8, fontWeight:700, fontSize:14, background: selectedContact ? 'var(--primary)' : 'var(--border)', color:'#fff', border:'none', cursor: selectedContact ? 'pointer' : 'not-allowed', display:'flex', alignItems:'center', gap:6 }}>
+            <Send size={14} /> {sending ? 'Sending...' : 'Send Proposal'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const fmt = (n) => n != null ? `₹${Number(n).toLocaleString('en-IN')}` : null;
 
@@ -182,10 +331,11 @@ const SchemeDiagnosticsPanel = ({ evaluations }) => {
 };
 
 // ─── Lender Action Button (multi-proposal aware) ───────────────────────────────
-function LenderActions({ lender, caseId, proposals, onProposalCreated }) {
+function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToLender, onSendToOtherLender }) {
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const [showCloneDialog, setShowCloneDialog] = useState(false);
+  const [sending, setSending] = useState(false);
 
   // Find existing proposals for this lender
   const lenderProposals = proposals.filter(p => String(p.lender_id) === String(lender.lender_id));
@@ -195,6 +345,24 @@ function LenderActions({ lender, caseId, proposals, onProposalCreated }) {
   const otherSubmitted = proposals.find(p =>
     String(p.lender_id) !== String(lender.lender_id) && p.proposal_status === 'submitted'
   ) || proposals.find(p => String(p.lender_id) !== String(lender.lender_id));
+
+  const handleSendEmail = async () => {
+    setSending(true);
+    try {
+      const result = await sendCaseToLender(caseId, {
+        lender_name: lender.lender_name,
+        product_type: lender.product_type || 'LAP',
+      });
+      onSendToLender(result);
+    } catch (e) {
+      const msg = e.response?.data?.error || 'Failed to send';
+      if (e.response?.data?.redirect_hint) {
+        toast.error(msg, { duration: 5000 });
+      } else {
+        toast.error(msg);
+      }
+    } finally { setSending(false); }
+  };
 
   const handlePrepare = async () => {
     // If there are proposals from other lenders, ask to clone
@@ -278,7 +446,7 @@ function LenderActions({ lender, caseId, proposals, onProposalCreated }) {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {latestProposal ? (
           <>
             <button
@@ -301,7 +469,7 @@ function LenderActions({ lender, caseId, proposals, onProposalCreated }) {
         ) : (
           <button
             className="btn btn-primary"
-            style={{ width: '100%', padding: '10px', fontWeight: 700,
+            style={{ flex: 1, padding: '10px', fontWeight: 700,
                      background: 'linear-gradient(135deg,#2B6CB0,#553C9A)' }}
             onClick={handlePrepare}
             disabled={creating}
@@ -309,6 +477,25 @@ function LenderActions({ lender, caseId, proposals, onProposalCreated }) {
             {creating ? 'Creating...' : '📋 Prepare Proposal →'}
           </button>
         )}
+        <button
+          onClick={handleSendEmail}
+          disabled={sending}
+          title="Send proposal email to this lender's configured contact"
+          style={{ padding: '9px 12px', fontWeight: 700, fontSize: 12, borderRadius: 8,
+                   background: sending ? '#718096' : '#276749', color: '#fff', border: 'none',
+                   cursor: sending ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
+        >
+          <Send size={13} /> {sending ? '...' : 'Send'}
+        </button>
+        <button
+          onClick={onSendToOtherLender}
+          title="Send to a different lender contact from your directory"
+          style={{ padding: '9px 12px', fontWeight: 700, fontSize: 11, borderRadius: 8,
+                   background: 'transparent', color: '#553C9A', border: '1px solid #553C9A',
+                   cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
+        >
+          ↗ Other Lender
+        </button>
       </div>
     </div>
   );
@@ -318,6 +505,8 @@ function LenderActions({ lender, caseId, proposals, onProposalCreated }) {
 export default function EsrPage() {
   const { id: caseId } = useParams();
   const navigate = useNavigate();
+  const [sendConfirmResult, setSendConfirmResult] = useState(null);
+  const [showOtherLenderModal, setShowOtherLenderModal] = useState(false);
 
   const [loading, setLoading]       = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -380,7 +569,7 @@ export default function EsrPage() {
               : 'Run the eligibility engine to see matching lenders'}
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <button className="btn btn-ghost" onClick={() => navigate(`/cases/${caseId}/bureau-obligations`)}>
             <ChevronLeft size={16} /> Back
           </button>
@@ -473,6 +662,8 @@ export default function EsrPage() {
                     caseId={caseId}
                     proposals={proposals}
                     onProposalCreated={load}
+                    onSendToLender={setSendConfirmResult}
+                    onSendToOtherLender={() => setShowOtherLenderModal(true)}
                   />
                 </div>
               </div>
@@ -514,6 +705,19 @@ export default function EsrPage() {
           </div>
         </div>
       )}
+
+      {/* Modals */}
+      <SendConfirmationModal
+        isOpen={!!sendConfirmResult}
+        onClose={() => setSendConfirmResult(null)}
+        result={sendConfirmResult}
+      />
+      <SendToOtherLenderModal
+        isOpen={showOtherLenderModal}
+        onClose={() => setShowOtherLenderModal(false)}
+        caseId={caseId}
+        onSuccess={r => { setShowOtherLenderModal(false); setSendConfirmResult(r); }}
+      />
     </div>
   );
 }

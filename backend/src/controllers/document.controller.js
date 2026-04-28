@@ -30,9 +30,9 @@ async function listDocuments(req, res) {
             tenant_id: tenantId,             // Tenant isolation — always enforced
             status: 'ACTIVE',
         };
-        if (case_id)        where.case_id = parseInt(case_id, 10);
-        if (customer_id)    where.customer_id = parseInt(customer_id, 10);
-        if (document_type)  where.document_type = document_type;
+        if (case_id) where.case_id = parseInt(case_id, 10);
+        if (customer_id) where.customer_id = parseInt(customer_id, 10);
+        if (document_type) where.document_type = document_type;
 
         const documents = await prisma.document.findMany({
             where,

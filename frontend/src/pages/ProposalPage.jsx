@@ -5,8 +5,10 @@ import { toast } from 'react-hot-toast';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import {
   ChevronLeft, Send, Save, CheckCircle2, Clock, XCircle,
-  AlertCircle, TrendingUp, ChevronDown, ChevronUp, CheckSquare, Square, UploadCloud
+  AlertCircle, TrendingUp, ChevronDown, ChevronUp, CheckSquare, Square, UploadCloud,
+  X, Mail, Phone
 } from 'lucide-react';
+import { getTenantLenders, sendCaseToOtherLender } from '../api/tenantLenderService';
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 const fmtINR = (n, fallback = '—') => {
@@ -590,6 +592,8 @@ export default function ProposalPage() {
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [data, setData] = useState(null);
+  const [showOtherLenderModal, setShowOtherLenderModal] = useState(false);
+  const [sendConfirmResult, setSendConfirmResult] = useState(null);
   const [form, setForm] = useState({
     loan_purpose: '', remarks: '', preferred_banking_program: ''
   });
@@ -940,7 +944,7 @@ export default function ProposalPage() {
                 {lender?.name || 'Lender'}
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
               <button className="btn btn-ghost" onClick={() => navigate(`/cases/${caseId}/esr`)}
                 style={{ color: '#A0AEC0', fontSize: 12 }}>Cancel</button>
               <button className="btn btn-secondary" onClick={() => handleSave()} disabled={saving}
@@ -949,6 +953,15 @@ export default function ProposalPage() {
                   background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)'
                 }}>
                 <Save size={13} /> {saving ? 'Saving…' : 'Save Draft'}
+              </button>
+              <button onClick={() => setShowOtherLenderModal(true)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '10px 18px',
+                  background: 'transparent', color: '#A78BFA',
+                  border: '1px solid #A78BFA', borderRadius: 8,
+                  fontWeight: 700, fontSize: 13, cursor: 'pointer'
+                }}>
+                ↗ Send to Another Lender
               </button>
               <button onClick={handleSubmit} disabled={submitting}
                 style={{
@@ -972,6 +985,175 @@ export default function ProposalPage() {
             ? new Date(proposal.submitted_at).toLocaleString('en-IN') : '—'}
         </div>
       )}
+      <SendToOtherLenderModal
+        isOpen={showOtherLenderModal}
+        onClose={() => setShowOtherLenderModal(false)}
+        caseId={caseId}
+        onSuccess={r => { setShowOtherLenderModal(false); setSendConfirmResult(r); }}
+      />
+      <SendConfirmationModal
+        isOpen={!!sendConfirmResult}
+        onClose={() => setSendConfirmResult(null)}
+        result={sendConfirmResult}
+      />
+    </div>
+  );
+}
+
+// ─── SendToOtherLenderModal (inline in ProposalPage) ──────────────────────────
+function SendToOtherLenderModal({ isOpen, onClose, caseId, onSuccess }) {
+  const [lenders, setLenders] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [selectedLender, setSelectedLender] = useState(null);
+  const [selectedContact, setSelectedContact] = useState(null);
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setLoading(true);
+    setSelectedLender(null); setSelectedContact(null);
+    getTenantLenders()
+      .then(d => setLenders(d.filter(l => l.is_active && l.contacts?.length > 0)))
+      .catch(() => toast.error('Failed to load lenders'))
+      .finally(() => setLoading(false));
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const handleSend = async () => {
+    if (!selectedContact) { toast.error('Select a contact first'); return; }
+    setSending(true);
+    try {
+      const result = await sendCaseToOtherLender(caseId, { contact_id: selectedContact.id });
+      toast.success(`Proposal sent to ${selectedContact.contact_name}!`);
+      onSuccess(result);
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Failed to send');
+    } finally { setSending(false); }
+  };
+
+  const contacts = selectedLender?.contacts || [];
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ background: 'var(--bg-primary)', width: '94%', maxWidth: 500, borderRadius: 14, overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 24px', borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Send to Another Lender</h3>
+            <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--text-tertiary)' }}>Choose a contact from your lender directory</p>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 4 }}><X size={18} /></button>
+        </div>
+
+        <div style={{ padding: '20px 24px', maxHeight: '60vh', overflowY: 'auto' }}>
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: 30 }}><LoadingSpinner size={30} /></div>
+          ) : lenders.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '30px 20px' }}>
+              <div style={{ fontSize: 36, marginBottom: 12 }}>🏦</div>
+              <p style={{ color: 'var(--text-tertiary)', fontSize: 13, marginBottom: 12 }}>No lender contacts configured yet.</p>
+              <a href='/settings/lender-contacts' style={{ color: 'var(--primary)', fontSize: 13, fontWeight: 600 }}>+ Configure Lender Contacts →</a>
+            </div>
+          ) : (
+            <>
+              <div style={{ marginBottom: 18 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>Select Lender</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {lenders.map(l => (
+                    <button key={l.id} onClick={() => { setSelectedLender(l); setSelectedContact(null); }}
+                      style={{
+                        padding: '11px 14px', borderRadius: 8, textAlign: 'left', cursor: 'pointer',
+                        border: `2px solid ${selectedLender?.id === l.id ? 'var(--primary)' : 'var(--border)'}`,
+                        background: selectedLender?.id === l.id ? '#EEF2FF' : 'var(--bg-elevated)',
+                        color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                      }}>
+                      <span style={{ fontSize: 14, fontWeight: 600 }}>🏦 {l.lender_name}</span>
+                      <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{l.contacts.length} contact(s)</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {selectedLender && contacts.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>Select Contact</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {contacts.map(c => (
+                      <button key={c.id} onClick={() => setSelectedContact(c)}
+                        style={{
+                          padding: '12px 14px', borderRadius: 8, textAlign: 'left', cursor: 'pointer',
+                          border: `2px solid ${selectedContact?.id === c.id ? '#276749' : 'var(--border)'}`,
+                          background: selectedContact?.id === c.id ? '#F0FFF4' : 'var(--bg-elevated)',
+                          color: 'var(--text-primary)'
+                        }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                          <span style={{ fontSize: 13, fontWeight: 700 }}>{c.contact_name}</span>
+                          <span style={{ fontSize: 10, fontWeight: 700, background: '#EEF2FF', color: '#4F46E5', padding: '2px 8px', borderRadius: 10 }}>{c.product_type}</span>
+                        </div>
+                        <div style={{ display: 'flex', gap: 14, fontSize: 11, color: 'var(--text-secondary)' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><Mail size={10} /> {c.contact_email}</span>
+                          {c.contact_mobile && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><Phone size={10} /> {c.contact_mobile}</span>}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 10, background: 'var(--bg-elevated)' }}>
+          <button onClick={onClose} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Cancel</button>
+          <button onClick={handleSend} disabled={!selectedContact || sending}
+            style={{
+              padding: '10px 22px', borderRadius: 8, fontWeight: 700, fontSize: 13,
+              background: selectedContact ? '#276749' : 'var(--border)',
+              color: '#fff', border: 'none',
+              cursor: selectedContact ? 'pointer' : 'not-allowed',
+              display: 'flex', alignItems: 'center', gap: 6,
+              opacity: sending ? 0.75 : 1
+            }}>
+            <Send size={14} /> {sending ? 'Sending…' : 'Send Proposal'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── SendConfirmationModal ─────────────────────────────────────────────────────
+function SendConfirmationModal({ isOpen, onClose, result }) {
+  if (!isOpen || !result) return null;
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ background: 'var(--bg-primary)', width: '94%', maxWidth: 500, borderRadius: 14, overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+        <div style={{ background: 'linear-gradient(135deg,#F0FFF4,#EBF8FF)', padding: '28px 24px', textAlign: 'center', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 48, marginBottom: 10 }}>✅</div>
+          <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: '#276749' }}>Lead Sent Successfully!</h3>
+          <p style={{ color: '#4A5568', fontSize: 13, marginTop: 6 }}>Proposal dispatched to {result.contact_name}</p>
+        </div>
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ border: '1px solid #BEE3F8', borderRadius: 10, overflow: 'hidden' }}>
+            <div style={{ background: '#EBF8FF', padding: '10px 16px', fontSize: 12, fontWeight: 700, color: '#2B6CB0', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Mail size={13} /> EMAIL SENT
+            </div>
+            <div style={{ padding: '12px 16px', fontSize: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ color: 'var(--text-tertiary)' }}>To:</span>
+                <span style={{ fontWeight: 600 }}>{result.to}</span>
+              </div>
+              <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--bg-elevated)', borderRadius: 6, fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                <strong style={{ display: 'block', marginBottom: 2 }}>Subject:</strong>
+                {result.subject}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', background: 'var(--bg-elevated)' }}>
+          <button onClick={onClose} style={{ padding: '9px 24px', borderRadius: 8, fontWeight: 700, fontSize: 14, background: 'var(--primary)', color: '#fff', border: 'none', cursor: 'pointer' }}>Done</button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -8,7 +8,8 @@ import {
   Building,
   BarChart,
   Briefcase,
-  Activity
+  Activity,
+  Mail,
 } from 'lucide-react';
 
 export const NAV_ITEMS = [
@@ -34,7 +35,6 @@ export const NAV_ITEMS = [
     icon: Users,
     roles: ['SUPER_ADMIN'],
   },
-
   {
     id: 'admin-pricing',
     label: 'API Pricing',
@@ -98,6 +98,13 @@ export const NAV_ITEMS = [
     label: 'Create User',
     path: '/users/create',
     icon: UserPlus,
+    roles: ['DSA_ADMIN'],
+  },
+  {
+    id: 'dsa-lender-contacts',
+    label: 'Lender Contacts',
+    path: '/settings/lender-contacts',
+    icon: Mail,
     roles: ['DSA_ADMIN'],
   },
 
