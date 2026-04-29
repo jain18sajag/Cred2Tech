@@ -82,6 +82,7 @@ model User {
   manager_id      Int?
   hierarchy_path  String?
   status          UserStatus @default(ACTIVE)
+  designation     String?
   created_at      DateTime   @default(now())
   updated_at      DateTime   @updatedAt
 
@@ -325,6 +326,8 @@ model ApiPricing {
   id                  Int      @id @default(autoincrement())
   api_code            String   @unique
   api_name            String?
+  description         String?
+  vendor_cost         Float    @default(0)
   default_credit_cost Int      @default(0)
   is_active           Boolean  @default(true)
   created_at          DateTime @default(now())
@@ -332,6 +335,17 @@ model ApiPricing {
   updated_by          Int?
 
   @@map("api_pricing")
+}
+
+model VolumeDiscount {
+  id               Int      @id @default(autoincrement())
+  min_topup_amount Float
+  bonus_percentage Float
+  is_active        Boolean  @default(true)
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  @@map("volume_discounts")
 }
 
 model TenantApiPricingOverride {

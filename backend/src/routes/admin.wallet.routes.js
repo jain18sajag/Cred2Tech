@@ -9,6 +9,7 @@ router.use(requireRole('SUPER_ADMIN')); // Only Super Admins can manage wallets 
 
 router.get('/api-pricing', adminWalletController.getPricing);
 router.patch('/api-pricing/:id', adminWalletController.updatePricing);
+router.put('/volume-discounts', adminWalletController.updateVolumeDiscounts);
 router.post('/tenants/:tenant_id/wallet/topup', adminWalletController.topupWallet);
 router.post('/tenants/:tenant_id/wallet/deduct', adminWalletController.deductWallet);
 router.get('/tenants/wallets', adminWalletController.getAllWallets);

@@ -23,14 +23,14 @@ export const NAV_ITEMS = [
   },
   {
     id: 'tenants',
-    label: 'Manage DSA',
+    label: 'Manage DSAs',
     path: '/tenants',
     icon: Building,
     roles: ['SUPER_ADMIN'],
   },
   {
     id: 'internal-team',
-    label: 'Cred2Tech Team',
+    label: 'Employee Management',
     path: '/users',
     icon: Users,
     roles: ['SUPER_ADMIN'],

@@ -40,7 +40,7 @@ const CreateUserPage = () => {
     // Fetch same-tenant users for manager dropdown
     getUsers()
       .then(data => setTenantUsers(Array.isArray(data) ? data : data.users || []))
-      .catch(() => {});
+      .catch(() => { });
     // Fetch roles dynamically from backend
     setIsLoadingRoles(true);
     getRoles()
