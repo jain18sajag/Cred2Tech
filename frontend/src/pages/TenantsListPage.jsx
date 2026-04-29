@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, SlidersHorizontal, Eye, Edit, Building, RefreshCw, X } from 'lucide-react';
+import { Search, SlidersHorizontal, Eye, Edit, Building, RefreshCw, X, MapPin, Hash, Wallet, Activity } from 'lucide-react';
 import { getTenants, getTenantSummary } from '../api/tenantService';
 import { MOCK_TENANTS } from '../constants/mockData';
 import { STATUS_OPTIONS } from '../constants/roles';
@@ -28,10 +28,10 @@ const TenantsListPage = () => {
     setError('');
     try {
       const data = await getTenants();
-      setTenants(Array.isArray(data) ? data : data.tenants || MOCK_TENANTS);
+      setTenants(Array.isArray(data) ? data : data.tenants || []);
     } catch (err) {
-      setError(err?.response?.data?.message || 'Failed to load tenants. Showing demo data.');
-      setTenants(MOCK_TENANTS);
+      setError(err?.response?.data?.error || 'Failed to load DSAs.');
+      setTenants([]);
     } finally {
       setLoading(false);
     }
@@ -56,7 +56,9 @@ const TenantsListPage = () => {
   const filtered = useMemo(() => {
     return tenants.filter((t) => {
       const q = search.toLowerCase();
-      const matchSearch = !q || String(t.name).toLowerCase().includes(q) || String(t.id).toLowerCase().includes(q);
+      const matchSearch = !q ||
+        String(t.name).toLowerCase().includes(q) ||
+        String(t.pan_number || '').toLowerCase().includes(q);
       const matchType = !filterType || t.type === filterType;
       const matchStatus = !filterStatus || t.status === filterStatus;
       return matchSearch && matchType && matchStatus;
@@ -73,9 +75,9 @@ const TenantsListPage = () => {
   return (
     <div>
       <PageHeader
-        title="Tenants"
-        subtitle={`${filtered.length} tenant${filtered.length !== 1 ? 's' : ''} in the platform`}
-        breadcrumbs={[{ label: 'Dashboard', path: '/' }, { label: 'Tenants' }]}
+        title="Manage DSAs"
+        subtitle="All registered DSA entities"
+        breadcrumbs={[{ label: 'Dashboard', path: '/' }, { label: 'Manage DSA' }]}
         actions={
           <button className="btn btn-primary btn-sm" onClick={() => navigate('/tenants/create')}>
             <Building size={15} /> Create DSA
@@ -98,7 +100,7 @@ const TenantsListPage = () => {
             <input
               type="text"
               className="form-control"
-              placeholder="Search by name or ID…"
+              placeholder="Search by DSA name or PAN…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               style={{ paddingLeft: 36 }}
@@ -123,9 +125,9 @@ const TenantsListPage = () => {
       ) : filtered.length === 0 ? (
         <div className="card">
           <EmptyState
-            title="No tenants found"
-            description="Try adjusting your search or filters, or create a new tenant."
-            action={<button className="btn btn-primary btn-sm" onClick={() => navigate('/tenants/create')}><Building size={14} /> Create Tenant</button>}
+            title="No DSAs found"
+            description="Try adjusting your search or filters, or create a new DSA."
+            action={<button className="btn btn-primary btn-sm" onClick={() => navigate('/tenants/create')}><Building size={14} /> Create DSA</button>}
           />
         </div>
       ) : (
@@ -133,12 +135,14 @@ const TenantsListPage = () => {
           <table>
             <thead>
               <tr>
-                <th>Tenant</th>
-                <th>Tenant ID</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Created At</th>
-                <th>Actions</th>
+                <th>DSA NAME</th>
+                <th>PAN</th>
+                <th>CITY</th>
+                <th>WALLET</th>
+                <th>API CALLS (MTD)</th>
+                <th>LEAD SUB</th>
+                <th>STATUS</th>
+                <th>ACTION</th>
               </tr>
             </thead>
             <tbody>
@@ -146,27 +150,47 @@ const TenantsListPage = () => {
                 <tr key={t.id} onClick={() => openSummary(t.id)} style={{ cursor: 'pointer' }} className="hover-row">
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <div style={{ width: 32, height: 32, borderRadius: '6px', background: 'var(--primary-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)', flexShrink: 0 }}>
+                      <div style={{
+                        width: 32, height: 32, borderRadius: '6px',
+                        background: 'var(--primary-subtle)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        color: 'var(--primary)', flexShrink: 0
+                      }}>
                         <Building size={16} />
                       </div>
                       <div>
-                        <p style={{ fontWeight: 500, fontSize: 14 }}>{t.name}</p>
+                        <p style={{ fontWeight: 600, fontSize: 13, color: 'var(--primary)', margin: 0 }}>{t.name}</p>
+                        <p style={{ fontSize: 11, color: 'var(--text-tertiary)', margin: 0 }}>
+                          {t.city} · Since {new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                        </p>
                       </div>
                     </div>
                   </td>
-                  <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{t.id}</td>
-                  <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{t.type}</td>
-                  <td><Badge type="status" value={t.status} /></td>
-                  <td style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>{formatDate(t.created_at)}</td>
+                  <td style={{ color: 'var(--text-secondary)', fontSize: 12, fontWeight: 500 }}>{t.pan_number || '—'}</td>
+                  <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{t.city || '—'}</td>
                   <td>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <button className="btn btn-ghost btn-icon" title="View Summary Drilldown" onClick={() => openSummary(t.id)}>
-                        <Eye size={15} color="var(--primary)" />
-                      </button>
-                      <button className="btn btn-ghost btn-icon" title="Edit (coming soon)" disabled>
-                        <Edit size={15} color="var(--text-secondary)" style={{ opacity: 0.5 }} />
-                      </button>
-                    </div>
+                    <span style={{ fontWeight: 700, color: (t.wallet_balance || 0) < 500 ? '#C53030' : '#2F855A', fontSize: 13 }}>
+                      ₹{Number(t.wallet_balance || 0).toLocaleString()}
+                    </span>
+                  </td>
+                  <td style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 500, textAlign: 'center' }}>
+                    {t.api_calls_mtd || 0}
+                  </td>
+                  <td>
+                    <span style={{
+                      fontSize: 11, fontWeight: 600,
+                      color: t.type === 'DSA' ? '#2F855A' : '#718096',
+                      background: t.type === 'DSA' ? '#F0FFF4' : '#EDF2F7',
+                      padding: '2px 8px', borderRadius: 4
+                    }}>
+                      {t.type === 'DSA' ? 'Active' : 'None'}
+                    </span>
+                  </td>
+                  <td><Badge type="status" value={t.status} /></td>
+                  <td>
+                    <button className="btn btn-outline btn-xs" style={{ fontSize: 11, padding: '2px 10px' }} onClick={(e) => { e.stopPropagation(); openSummary(t.id); }}>
+                      View
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -175,12 +199,20 @@ const TenantsListPage = () => {
         </div>
       )}
 
-      {/* Slide-out Drawer for Tenant Summary */}
+      {/* Slide-out Drawer for DSA Summary */}
       {selectedTenantId && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', justifyContent: 'flex-end', overflow: 'hidden' }} onClick={() => setSelectedTenantId(null)}>
           <div style={{ background: '#fff', width: '500px', height: '100%', padding: '24px', boxShadow: '-4px 0 15px rgba(0,0,0,0.1)', overflowY: 'auto', position: 'relative' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <h3 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>DSA Summary</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ width: 40, height: 40, borderRadius: 8, background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
+                  <Building size={20} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>{summaryData?.tenant_name || 'DSA Details'}</h3>
+                  <p style={{ fontSize: 12, color: 'var(--text-tertiary)', margin: 0 }}>Detailed analytics and profile</p>
+                </div>
+              </div>
               <button className="btn btn-ghost btn-icon" onClick={() => setSelectedTenantId(null)}>
                 <X size={20} />
               </button>
@@ -190,51 +222,117 @@ const TenantsListPage = () => {
               <div style={{ padding: 40, textAlign: 'center' }}><LoadingSpinner /></div>
             ) : summaryData ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                <div className="card" style={{ padding: 16 }}>
-                  <h4 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 10px 0' }}>{summaryData.tenant_name}</h4>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div className="card" style={{ padding: 20, background: 'var(--bg-secondary)' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
                     <div>
-                      <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0 }}>Wallet Balance</p>
-                      <p style={{ fontSize: 18, fontWeight: 600, color: 'var(--success)', margin: 0 }}>{summaryData.wallet_balance} credits</p>
+                      <p style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-tertiary)', margin: '0 0 4px 0' }}>Wallet Balance</p>
+                      <p style={{ fontSize: 20, fontWeight: 800, color: 'var(--primary)', margin: 0 }}>₹{Number(summaryData.wallet_balance).toLocaleString()}</p>
                     </div>
                     <div>
-                      <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0 }}>Team Size</p>
-                      <p style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>{summaryData.team_size}</p>
+                      <p style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-tertiary)', margin: '0 0 4px 0' }}>Total API Calls</p>
+                      <p style={{ fontSize: 20, fontWeight: 800, margin: 0 }}>{summaryData.total_api_usage}</p>
                     </div>
                   </div>
                 </div>
 
                 <div className="card" style={{ padding: 16 }}>
-                  <h4 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 15px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: 8 }}>Portfolio Volume</h4>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-                    <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Total Customers</span>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>{summaryData.total_customers}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Total Cases</span>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>{summaryData.total_cases}</span>
+                  <h4 style={{ fontSize: 13, fontWeight: 700, margin: '0 0 12px 0', textTransform: 'uppercase', color: 'var(--text-tertiary)' }}>Profile</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div>
+                      <p style={{ fontSize: 11, color: 'var(--text-tertiary)', margin: '0 0 2px 0' }}>PAN</p>
+                      <p style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>{summaryData.pan_number || '—'}</p>
+                    </div>
+                    <div>
+                      <p style={{ fontSize: 11, color: 'var(--text-tertiary)', margin: '0 0 2px 0' }}>GSTIN</p>
+                      <p style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>{summaryData.gst_number || '—'}</p>
+                    </div>
+                    <div>
+                      <p style={{ fontSize: 11, color: 'var(--text-tertiary)', margin: '0 0 2px 0' }}>Phone</p>
+                      <p style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>{summaryData.mobile || '—'}</p>
+                    </div>
+                    <div>
+                      <p style={{ fontSize: 11, color: 'var(--text-tertiary)', margin: '0 0 2px 0' }}>Email</p>
+                      <p style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>{summaryData.email || '—'}</p>
+                    </div>
+                    <div>
+                      <p style={{ fontSize: 11, color: 'var(--text-tertiary)', margin: '0 0 2px 0' }}>City</p>
+                      <p style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>{summaryData.city || '—'}</p>
+                    </div>
                   </div>
                 </div>
 
-                <div className="card" style={{ padding: 16 }}>
-                  <h4 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 15px 0', borderBottom: '1px solid var(--border-color)', paddingBottom: 8 }}>Data Pull Statistics</h4>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-                    <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Bureau Pulls</span>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>{summaryData.bureau_pulls}</span>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                  <div className="card" style={{ padding: 16 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                      <Activity size={16} color="var(--primary)" />
+                      <h4 style={{ fontSize: 13, fontWeight: 700, margin: 0 }}>Activity (MTD)</h4>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>ITR Calls</span>
+                        <span style={{ fontSize: 12, fontWeight: 600 }}>{summaryData.itr_pulls}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>GST Calls</span>
+                        <span style={{ fontSize: 12, fontWeight: 600 }}>{summaryData.gst_pulls}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Bureau Pulls</span>
+                        <span style={{ fontSize: 12, fontWeight: 600 }}>{summaryData.bureau_pulls}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-                    <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>GST Fetches</span>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>{summaryData.gst_pulls}</span>
+
+                  <div className="card" style={{ padding: 16 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                      <Building size={16} color="var(--primary)" />
+                      <h4 style={{ fontSize: 13, fontWeight: 700, margin: 0 }}>Portfolio</h4>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Customers</span>
+                        <span style={{ fontSize: 12, fontWeight: 600 }}>{summaryData.total_customers}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Total Cases</span>
+                        <span style={{ fontSize: 12, fontWeight: 600 }}>{summaryData.total_cases}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Team Size</span>
+                        <span style={{ fontSize: 12, fontWeight: 600 }}>{summaryData.team_size}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>ITR Fetches</span>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>{summaryData.itr_pulls}</span>
+                </div>
+
+                <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                  <div style={{ padding: '12px 16px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-color)' }}>
+                    <h4 style={{ fontSize: 13, fontWeight: 700, margin: 0 }}>Recent Wallet Activity</h4>
                   </div>
+                  {summaryData.recent_wallet_transactions?.length > 0 ? (
+                    <table style={{ margin: 0, border: 'none' }}>
+                      <tbody style={{ border: 'none' }}>
+                        {summaryData.recent_wallet_transactions.map(tx => (
+                          <tr key={tx.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                            <td style={{ padding: '10px 16px', fontSize: 12 }}>
+                              <p style={{ margin: 0, fontWeight: 500 }}>{tx.remarks || tx.api_code || 'Wallet Update'}</p>
+                              <p style={{ margin: 0, fontSize: 10, color: 'var(--text-tertiary)' }}>{formatDate(tx.created_at)}</p>
+                            </td>
+                            <td style={{ padding: '10px 16px', fontSize: 12, textAlign: 'right', fontWeight: 700, color: tx.transaction_type === 'CREDIT' ? 'var(--success)' : 'var(--error)' }}>
+                              {tx.transaction_type === 'CREDIT' ? '+' : '-'} {tx.amount}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>No recent transactions</div>
+                  )}
                 </div>
 
               </div>
             ) : (
-              <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>Failed to map summary metrics.</p>
+              <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>Failed to load DSA metrics.</p>
             )}
           </div>
         </div>

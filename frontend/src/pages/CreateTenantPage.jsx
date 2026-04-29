@@ -147,16 +147,16 @@ const CreateTenantPage = () => {
   return (
     <div>
       <PageHeader
-        title="Create Tenant"
+        title="Onboard New DSA"
         subtitle="Onboard a new DSA or Team ecosystem with an initial admin user."
-        breadcrumbs={[{ label: 'Dashboard', path: '/' }, { label: 'Tenants', path: '/tenants' }, { label: 'Create Tenant' }]}
+        breadcrumbs={[{ label: 'Dashboard', path: '/' }, { label: 'Manage DSA', path: '/tenants' }, { label: 'Create DSA' }]}
       />
 
       <div style={{ maxWidth: 760, margin: '0 auto' }}>
         {success && (
           <div className="notice" style={{ background: 'var(--success-bg)', borderColor: '#6EE7B7', color: '#064E3B', marginBottom: 20 }}>
             <CheckCircle size={16} style={{ flexShrink: 0 }} />
-            Tenant and admin user created successfully! Redirecting…
+            DSA and admin user created successfully! Redirecting…
           </div>
         )}
 
@@ -170,12 +170,12 @@ const CreateTenantPage = () => {
         <form onSubmit={handleSubmit}>
           {/* Organization Details */}
           <div className="card card-padded" style={{ marginBottom: 20 }}>
-            {sectionHeading('Organization Details')}
+            {sectionHeading('DSA Organization Details')}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
               <FormField label="Organization Name" name="name" value={form.name} onChange={handleChange} placeholder="e.g. Acme FinServe" required error={errors.name} />
               <FormField label="Official Email" name="email" type="email" value={form.email} onChange={handleChange} placeholder="e.g. admin@acme.com" required error={errors.email} />
               <FormField label="Mobile Number" name="mobile" value={form.mobile} onChange={handleChange} placeholder="e.g. 9876543210" hint="Optional contact number" />
-              <FormField label="Tenant Type" name="type" required error={errors.type}>
+              <FormField label="Organization Type" name="type" required error={errors.type}>
                 <select name="type" value={form.type} onChange={handleChange} className={`form-control${errors.type ? ' error-input' : ''}`}>
                   {TENANT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
@@ -208,7 +208,7 @@ const CreateTenantPage = () => {
               {sectionHeading('Initial Admin User')}
             </div>
             <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 18, marginTop: -12 }}>
-              This user will be created as <strong>DSA Admin</strong> for the new tenant and will be able to log in immediately.
+              This user will be created as <strong>DSA Admin</strong> for the new organization and will be able to log in immediately.
             </p>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
               <FormField label="Admin Full Name" name="admin_name" value={form.admin_name} onChange={handleChange} placeholder="e.g. John Smith" required error={errors.admin_name} />
@@ -223,7 +223,7 @@ const CreateTenantPage = () => {
               Cancel
             </button>
             <button type="submit" className="btn btn-primary" disabled={isLoading || success} style={{ minWidth: 180, justifyContent: 'center' }}>
-              {isLoading ? <>{spinner} {stepLabel}</> : <><Building2 size={15} /> Create Tenant & Admin</>}
+              {isLoading ? <>{spinner} {stepLabel}</> : <><Building2 size={15} /> Create DSA & Admin</>}
             </button>
           </div>
         </form>

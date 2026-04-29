@@ -72,14 +72,14 @@ const DashboardPage = () => {
     <div>
       <PageHeader
         title={`${greeting}, ${user?.name?.split(' ')[0] || 'User'} 👋`}
-        subtitle={user?.role === 'SUPER_ADMIN' ? "Overview of Platform tenants." : "Here's an overview of your organization."}
+        subtitle={user?.role === 'SUPER_ADMIN' ? "Overview of Platform DSAs." : "Here's an overview of your organization."}
       />
 
       {/* Stat cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginBottom: 28 }}>
-        <StatCard title={user?.role === 'SUPER_ADMIN' ? "Total DSA" : "Total Visible Users"} value={loading ? '…' : users.length} icon={user?.role === 'SUPER_ADMIN' ? Building2 : Users} color="var(--primary)" subtitle={loading ? '' : 'In your access scope'} loading={loading} />
+        <StatCard title={user?.role === 'SUPER_ADMIN' ? "Total DSAs" : "Total Visible Users"} value={loading ? '…' : users.length} icon={user?.role === 'SUPER_ADMIN' ? Building2 : Users} color="var(--primary)" subtitle={loading ? '' : 'In your access scope'} loading={loading} />
         <StatCard title="Your Role" value={user?.role || '—'} icon={Shield} color="var(--role-admin)" subtitle="Platform access level" />
-        <StatCard title="Organization Scope" value={user?.tenant_type || 'Tenant'} icon={Building2} color="var(--role-dsa)" subtitle={`DSA ID: ${user?.tenant_id || 'Global'}`} />
+        <StatCard title="Organization Scope" value={user?.tenant_type || 'DSA'} icon={Building2} color="var(--role-dsa)" subtitle={`DSA ID: ${user?.tenant_id || 'Global'}`} />
         {user?.role !== 'SUPER_ADMIN' && <StatCard title="Hierarchy Level" value={user?.hierarchy_level || 'Root'} icon={Layers} color="var(--role-employee)" subtitle={user?.hierarchy_path || '/'} />}
       </div>
 
@@ -132,7 +132,7 @@ const DashboardPage = () => {
         {/* Quick actions */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Quick Actions</h3>
-          {user?.role === 'SUPER_ADMIN' && <QuickAction icon={Building2} label="Manage DSA" desc="Create and edit DSA" color="var(--primary)" onClick={() => navigate('/tenants')} />}
+          {user?.role === 'SUPER_ADMIN' && <QuickAction icon={Building2} label="Manage DSAs" desc="Create and edit DSAs" color="var(--primary)" onClick={() => navigate('/tenants')} />}
           {user?.role === 'SUPER_ADMIN' && <QuickAction icon={Building2} label="Create DSA" desc="Onboard a new DSA/Cred2Tech" color="var(--success)" onClick={() => navigate('/tenants/create')} />}
           {user?.role !== 'SUPER_ADMIN' && <QuickAction icon={UserPlus} label="Create User" desc="Add a new user to the system" color="var(--success)" onClick={() => navigate('/users/create')} />}
           <QuickAction icon={User} label="My Profile" desc="View your profile & session" color="var(--role-dsa)" onClick={() => navigate('/profile')} />

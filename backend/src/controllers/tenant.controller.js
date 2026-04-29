@@ -49,9 +49,28 @@ async function createTenant(req, res) {
 
 async function getTenants(req, res) {
   try {
-    const tenants = await prisma.tenant.findMany();
-    res.json(tenants);
+    const tenants = await prisma.tenant.findMany({
+      include: {
+        wallet: true,
+        api_logs: {
+          where: {
+            created_at: {
+              gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+            }
+          }
+        }
+      }
+    });
+
+    const enriched = tenants.map(t => ({
+      ...t,
+      wallet_balance: t.wallet?.balance || 0,
+      api_calls_mtd: t.api_logs.length
+    }));
+
+    res.json(enriched);
   } catch (error) {
+    console.error('getTenants error:', error);
     res.status(500).json({ error: 'Failed to fetch tenants' });
   }
 }

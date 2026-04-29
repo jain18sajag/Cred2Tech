@@ -23,7 +23,7 @@ export const NAV_ITEMS = [
   },
   {
     id: 'tenants',
-    label: 'Tenant Management',
+    label: 'Manage DSA',
     path: '/tenants',
     icon: Building,
     roles: ['SUPER_ADMIN'],
@@ -44,7 +44,7 @@ export const NAV_ITEMS = [
   },
   {
     id: 'admin-wallets',
-    label: 'Tenant Wallets',
+    label: 'DSA Wallets',
     path: '/admin/wallets',
     icon: Briefcase,
     roles: ['SUPER_ADMIN'],

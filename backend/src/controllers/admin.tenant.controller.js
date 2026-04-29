@@ -48,6 +48,11 @@ async function getTenantSummary(req, res) {
     res.json({
       tenant_id: tenant.id,
       tenant_name: tenant.name,
+      pan_number: tenant.pan_number,
+      gst_number: tenant.gst_number,
+      city: tenant.city,
+      email: tenant.email,
+      mobile: tenant.mobile,
       wallet_balance: wallet?.balance || 0,
       total_customers: totalCustomers,
       total_cases: totalCases,
