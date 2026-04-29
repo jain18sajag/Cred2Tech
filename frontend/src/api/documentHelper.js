@@ -49,3 +49,22 @@ export async function viewDocument(documentId) {
 export function getDocumentViewUrl(documentId) {
     return `/documents/${documentId}/view`;
 }
+/**
+ * Upload a document directly to a case.
+ * @param {File} file
+ * @param {number} caseId
+ * @param {string} docType
+ */
+export async function uploadDocument(file, caseId, docType) {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('case_id', caseId);
+    formData.append('document_type', docType || 'OTHER');
+
+    const response = await api.post('/documents/upload', formData, {
+        headers: {
+            'Content-Type': 'multipart/form-data',
+        },
+    });
+    return response.data;
+}

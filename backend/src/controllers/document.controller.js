@@ -10,6 +10,7 @@
  *   GET /api/documents/:id/download → attachment download (Content-Disposition: attachment)
  */
 
+const path = require('path');
 const prisma = require('../../config/db');
 const { streamDocument } = require('../services/document.service');
 
@@ -116,4 +117,65 @@ async function downloadDocument(req, res) {
     return serveDocument(req, res, 'attachment');
 }
 
-module.exports = { listDocuments, viewDocument, downloadDocument };
+/**
+ * Upload a document for a case.
+ * POST /api/documents/upload  (multipart/form-data)
+ * Body fields: case_id (required), document_type (optional, default OTHER)
+ * File field:  file (required)
+ */
+async function uploadDocument(req, res) {
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+        const { case_id, document_type } = req.body;
+        if (!case_id) return res.status(400).json({ error: 'case_id is required' });
+
+        const tenantId = req.user.tenant_id;
+        const userId = req.user.id;
+
+        // Verify case belongs to this tenant
+        const caseRows = await prisma.$queryRawUnsafe(
+            `SELECT id FROM cases WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+            parseInt(case_id), tenantId
+        );
+        if (!caseRows[0]) return res.status(404).json({ error: 'Case not found' });
+
+        const UPLOADS_ROOT = path.resolve(process.env.UPLOADS_ROOT || './uploads');
+        // Store relative key (not absolute) — same as LocalStorageProvider
+        const storagePath = path.relative(UPLOADS_ROOT, req.file.path).replace(/\\/g, '/');
+
+        const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '') || 'bin';
+        const mimeType = req.file.mimetype || 'application/octet-stream';
+        const docType = (document_type || 'OTHER').toUpperCase();
+
+        const doc = await prisma.document.create({
+            data: {
+                tenant_id: tenantId,
+                case_id: parseInt(case_id),
+                document_type: docType,
+                source_type: 'DIRECT_UPLOAD',
+                storage_provider: 'LOCAL',
+                storage_path: storagePath,    // relative key
+                file_name: req.file.filename,
+                original_file_name: req.file.originalname,
+                mime_type: mimeType,
+                extension: ext,
+                file_size_bytes: req.file.size,
+                status: 'ACTIVE',
+                uploaded_by_user_id: userId,
+            },
+            select: {
+                id: true, document_type: true, original_file_name: true,
+                file_name: true, mime_type: true, extension: true,
+                file_size_bytes: true, status: true, case_id: true, created_at: true,
+            }
+        });
+
+        console.log(`[document.controller] Upload: doc #${doc.id} (${docType}) for case=${case_id}, path=${storagePath}`);
+        res.status(201).json({ success: true, data: doc });
+    } catch (error) {
+        console.error('[document.controller] uploadDocument error:', error);
+        res.status(500).json({ error: error.message });
+    }
+}
+
+module.exports = { listDocuments, viewDocument, downloadDocument, uploadDocument };

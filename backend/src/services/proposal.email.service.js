@@ -187,30 +187,39 @@ async function sendProposalToLender({
   // Fetch documents
   const docs = await fetchCaseDocuments(caseId, tenantId);
 
-  // Build attachment list — only include files that actually exist on disk
+  // Resolve relative storage keys → absolute disk paths (same logic as LocalStorageProvider)
   const fs = require('fs');
+  const path = require('path');
+  const UPLOADS_ROOT = path.resolve(process.env.UPLOADS_ROOT || './uploads');
+
   const attachments = docs
     .filter(d => {
       if (d.storage_path) {
-        // Local file — verify it exists before attaching
-        const exists = fs.existsSync(d.storage_path);
+        // storage_path is a relative key like "documents/5/13/2026/04/file.xlsx"
+        // resolve it to the absolute path under UPLOADS_ROOT
+        const absPath = path.resolve(UPLOADS_ROOT, d.storage_path);
+        const exists = fs.existsSync(absPath);
         if (!exists) {
-          console.warn(`[email] Skipping missing attachment: ${d.storage_path}`);
+          console.warn(`[email] Skipping missing attachment: ${absPath}`);
         }
         return exists;
       }
       if (d.source_url && d.source_url.startsWith('http')) {
-        // Remote URL — include directly (nodemailer will fetch it)
-        return true;
+        return true; // remote URL — nodemailer fetches it directly
       }
       return false;
     })
-    .map(d => ({
-      filename: d.original_file_name || d.file_name || `${d.document_type}.pdf`,
-      path: d.storage_path || d.source_url,
-    }));
+    .map(d => {
+      const absPath = d.storage_path
+        ? path.resolve(UPLOADS_ROOT, d.storage_path)
+        : d.source_url;
+      return {
+        filename: d.original_file_name || d.file_name || `${d.document_type}.pdf`,
+        path: absPath,
+      };
+    });
 
-  console.log(`[email] Attachments: ${attachments.length} of ${docs.length} docs included`);
+  console.log(`[email] Attachments: ${attachments.length} of ${docs.length} docs resolved`);
 
   const fromEmail = process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER || 'platform@cred2tech.com';
   const fromName  = process.env.SMTP_FROM_NAME  || 'Cred2Tech Platform';

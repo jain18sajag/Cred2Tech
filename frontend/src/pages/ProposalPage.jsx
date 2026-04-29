@@ -9,6 +9,7 @@ import {
   X, Mail, Phone
 } from 'lucide-react';
 import { getTenantLenders, sendCaseToOtherLender } from '../api/tenantLenderService';
+import { uploadDocument } from '../api/documentHelper';
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 const fmtINR = (n, fallback = '—') => {
@@ -444,7 +445,7 @@ const OTHER_REQUIRED_DOCS = [
   { type: 'SALE_DEED', label: 'Partnership Deed / MOA', required: false },
 ];
 
-function KYCDocumentsSection({ applicationApplicants, docs, onToggle, isSubmitted }) {
+function KYCDocumentsSection({ applicationApplicants, docs, onToggle, isSubmitted, caseId, onUploaded }) {
   const getPrimary = () => applicationApplicants.find(a => a.type === 'PRIMARY');
   const getCoApplicants = () => applicationApplicants.filter(a => a.type !== 'PRIMARY');
 
@@ -471,6 +472,9 @@ function KYCDocumentsSection({ applicationApplicants, docs, onToggle, isSubmitte
               doc={docList[0]}
               onToggle={onToggle && docList[0] ? () => onToggle(docList[0]) : null}
               isSubmitted={isSubmitted}
+              caseId={caseId}
+              docType={req.type}
+              onUploaded={onUploaded}
             />
           );
         })}
@@ -486,6 +490,9 @@ function KYCDocumentsSection({ applicationApplicants, docs, onToggle, isSubmitte
                 doc={docList[0]}
                 onToggle={onToggle && docList[0] ? () => onToggle(docList[0]) : null}
                 isSubmitted={isSubmitted}
+                caseId={caseId}
+                docType={req.type}
+                onUploaded={onUploaded}
               />
             );
           })
@@ -505,6 +512,9 @@ function KYCDocumentsSection({ applicationApplicants, docs, onToggle, isSubmitte
               onToggle={onToggle && docList[0] ? () => onToggle(docList[0]) : null}
               required={req.required}
               isSubmitted={isSubmitted}
+              caseId={caseId}
+              docType={req.type}
+              onUploaded={onUploaded}
             />
           );
         })}
@@ -522,8 +532,27 @@ function KYCDocumentsSection({ applicationApplicants, docs, onToggle, isSubmitte
   );
 }
 
-function DocCard({ label, uploaded, doc, onToggle, required = true, isSubmitted }) {
+function DocCard({ label, uploaded, doc, onToggle, required = true, isSubmitted, caseId, docType, onUploaded }) {
   const isAttached = doc?.is_attached;
+  const [uploading, setUploading] = useState(false);
+  const inputRef = React.useRef(null);
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      await uploadDocument(file, caseId, docType || 'OTHER');
+      toast.success(`${file.name} uploaded ✓`);
+      onUploaded?.();
+    } catch (err) {
+      toast.error(err.response?.data?.error || err.message || 'Upload failed');
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+
   return (
     <div style={{
       border: `1px solid ${!uploaded && required ? '#FEB2B2' : uploaded ? '#9AE6B4' : 'var(--border)'}`,
@@ -533,36 +562,62 @@ function DocCard({ label, uploaded, doc, onToggle, required = true, isSubmitted 
         <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4, lineHeight: 1.3 }}>
           {label}
         </div>
-        <div style={{
-          fontSize: 11, fontWeight: 700,
-          color: uploaded ? '#276749' : required ? '#C53030' : '#718096'
-        }}>
-          {uploaded ? '✓ Uploaded' : required ? '△ Pending' : '— Optional'}
+        <div style={{ fontSize: 11, fontWeight: 700, color: uploaded ? '#276749' : required ? '#C53030' : '#718096' }}>
+          {uploaded
+            ? `✓ ${doc?.original_file_name || 'Uploaded'}`
+            : required ? '△ Pending' : '— Optional'}
         </div>
       </div>
       <div style={{ padding: '6px 8px', borderTop: `1px solid var(--border)`, background: 'var(--bg-elevated)' }}>
+        {/* Hidden file input */}
+        <input
+          ref={inputRef}
+          type="file"
+          style={{ display: 'none' }}
+          accept=".pdf,.xlsx,.xls,.csv,.jpg,.jpeg,.png,.docx,.doc,.zip"
+          onChange={handleFileChange}
+          disabled={isSubmitted || uploading}
+        />
         {uploaded && doc ? (
-          <button
-            onClick={() => onToggle?.()}
-            disabled={isSubmitted}
-            style={{
-              width: '100%', padding: '5px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
-              border: isAttached ? '1px solid #9AE6B4' : '1px solid var(--border)',
-              borderRadius: 5, background: isAttached ? '#F0FFF4' : 'var(--bg-primary)',
-              color: isAttached ? '#276749' : 'var(--text-secondary)'
-            }}>
-            {isAttached ? '✓ Included' : 'Re-upload / Include'}
-          </button>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button
+              onClick={() => onToggle?.()}
+              disabled={isSubmitted}
+              style={{
+                flex: 1, padding: '5px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                border: isAttached ? '1px solid #9AE6B4' : '1px solid var(--border)',
+                borderRadius: 5, background: isAttached ? '#F0FFF4' : 'var(--bg-primary)',
+                color: isAttached ? '#276749' : 'var(--text-secondary)'
+              }}>
+              {isAttached ? '✓ Included' : 'Include'}
+            </button>
+            {!isSubmitted && (
+              <button
+                onClick={() => inputRef.current?.click()}
+                disabled={uploading}
+                style={{
+                  padding: '5px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                  border: '1px solid var(--border)', borderRadius: 5,
+                  background: 'var(--bg-primary)', color: 'var(--text-secondary)'
+                }}
+                title="Replace file">
+                ↑
+              </button>
+            )}
+          </div>
         ) : (
           <button
-            onClick={() => toast('Upload this document via the case Documents section, then return here.')}
+            onClick={() => inputRef.current?.click()}
+            disabled={isSubmitted || uploading}
             style={{
               width: '100%', padding: '5px 8px', fontSize: 11, fontWeight: 700,
-              cursor: 'pointer', border: 'none', borderRadius: 5,
-              background: required ? 'var(--primary)' : '#718096', color: '#fff',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4
+              cursor: isSubmitted || uploading ? 'not-allowed' : 'pointer',
+              border: 'none', borderRadius: 5,
+              background: uploading ? '#718096' : required ? 'var(--primary)' : '#718096',
+              color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4
             }}>
-            <UploadCloud size={12} /> + Upload
+            <UploadCloud size={12} />
+            {uploading ? 'Uploading…' : '+ Upload'}
           </button>
         )}
       </div>
@@ -821,6 +876,8 @@ export default function ProposalPage() {
           docs={documents_by_category || {}}
           onToggle={isSubmitted ? null : handleToggleDoc}
           isSubmitted={isSubmitted}
+          caseId={caseId}
+          onUploaded={load}
         />
       </Section>
 
