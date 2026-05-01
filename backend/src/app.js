@@ -43,6 +43,7 @@ const documentRoutes = require('./routes/document.routes');
 const onboardingRoutes       = require('./routes/onboarding.routes');
 const tenantLenderRoutes     = require('./routes/tenantLender.routes');
 const tenantLenderContactRoutes = require('./routes/tenantLenderContacts.routes');
+const vendorRoutes = require('./routes/vendor.routes');
 
 const apiRouter = express.Router();
 
@@ -58,6 +59,7 @@ apiRouter.use('/wallet', dsaWalletRoutes);
 apiRouter.use('/admin/wallet', adminWalletRoutes);
 apiRouter.use('/admin/api-logs', adminApiLogsRoutes);
 apiRouter.use('/admin/tenants', adminTenantRoutes);
+apiRouter.use('/admin/vendors', vendorRoutes);
 apiRouter.use('/admin/lenders', adminLenderRoutes);
 apiRouter.use('/external', externalApiRoutes);
 apiRouter.use('/verification', bureauRoutes);

@@ -18,6 +18,7 @@ const initialForm = {
   role_id: '',
   hierarchy_level: '',
   manager_id: '',
+  designation: '',
 };
 
 const INTERNAL_ROLE_NAMES = ['SUPER_ADMIN', 'CRED2TECH_MEMBER'];
@@ -89,6 +90,7 @@ const CreateUserPage = () => {
         tenant_id: currentUser.tenant_id,    // backend overrides this — sent for context only
         hierarchy_level: form.hierarchy_level || undefined,
         manager_id: form.manager_id ? Number(form.manager_id) : undefined,
+        designation: form.designation || undefined,
       });
       setSuccess(true);
       toast.success('User created successfully!');
@@ -143,6 +145,7 @@ const CreateUserPage = () => {
               <FormField label="Full Name" name="name" value={form.name} onChange={handleChange} placeholder="e.g. John Doe" required error={errors.name} />
               <FormField label="Email Address" name="email" type="email" value={form.email} onChange={handleChange} placeholder="e.g. john@example.com" required error={errors.email} />
               <FormField label="Mobile Number" name="mobile" value={form.mobile} onChange={handleChange} placeholder="e.g. 9876543210" hint="Optional — 10-digit mobile number" />
+              <FormField label="Designation" name="designation" value={form.designation} onChange={handleChange} placeholder="e.g. Operations Executive" hint="Optional" />
               <FormField label="Password" name="password" type="password" value={form.password} onChange={handleChange} placeholder="Min. 6 characters" required error={errors.password} />
             </div>
           </div>

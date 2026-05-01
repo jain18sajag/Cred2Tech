@@ -10,6 +10,7 @@ import {
   Briefcase,
   Activity,
   Mail,
+  Network,
 } from 'lucide-react';
 
 export const NAV_ITEMS = [
@@ -29,6 +30,13 @@ export const NAV_ITEMS = [
     roles: ['SUPER_ADMIN'],
   },
   {
+    id: 'vendor-management',
+    label: 'Vendor Management',
+    path: '/admin/vendors',
+    icon: Network,
+    roles: ['SUPER_ADMIN'],
+  },
+  {
     id: 'internal-team',
     label: 'Employee Management',
     path: '/users',
@@ -44,7 +52,7 @@ export const NAV_ITEMS = [
   },
   {
     id: 'admin-wallets',
-    label: 'DSA Wallets',
+    label: 'Wallet Management',
     path: '/admin/wallets',
     icon: Briefcase,
     roles: ['SUPER_ADMIN'],

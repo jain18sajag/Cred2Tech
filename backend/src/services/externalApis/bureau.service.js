@@ -41,7 +41,7 @@ async function runBureauCheck({ caseId, applicantId, mobileNumber, firstName, la
   const hash = crypto.createHash('sha256').update(rawString).digest('hex');
 
   const payload = {
-    sourceEntityType: "ET11",
+    sourceEntityType: "IT_SERVICE",
     verificationType: "CREDIT_SCORE_CHECK",
     userId: userId,
     clientCode: clientCode,

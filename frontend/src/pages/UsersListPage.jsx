@@ -8,7 +8,7 @@ import PageHeader from '../components/ui/PageHeader';
 import Badge from '../components/ui/Badge';
 import EmptyState from '../components/ui/EmptyState';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
-import { formatDate, getInitials } from '../utils/helpers';
+import { formatDate, formatDateTime, getInitials } from '../utils/helpers';
 
 const UsersListPage = () => {
   const navigate = useNavigate();
@@ -57,15 +57,31 @@ const UsersListPage = () => {
   return (
     <div>
       <PageHeader
-        title="Users"
-        subtitle={`${filtered.length} user${filtered.length !== 1 ? 's' : ''} in your access scope`}
-        breadcrumbs={[{ label: 'Dashboard', path: '/' }, { label: 'Users' }]}
+        title="Employee Management"
+        subtitle="cred2tech internal team — Super Admin / Manager / Executive"
+        breadcrumbs={[{ label: 'Dashboard', path: '/' }, { label: 'Employee Management' }]}
         actions={
-          <button className="btn btn-primary btn-sm" onClick={() => navigate('/users/create')}>
-            <UserPlus size={15} /> Create User
+          <button className="btn btn-primary btn-sm" onClick={() => navigate('/users/create')} style={{background: '#6366F1', borderColor: '#4F46E5'}}>
+            <UserPlus size={15} /> Add Employee
           </button>
         }
       />
+
+      <div style={{ 
+        background: '#F0F9FF', 
+        border: '1px solid #BAE6FD', 
+        borderRadius: '8px', 
+        padding: '12px 20px', 
+        display: 'flex', 
+        alignItems: 'center', 
+        gap: 12, 
+        marginBottom: 24,
+        color: '#0369A1'
+      }}>
+        <p style={{ fontSize: 13, fontWeight: 500, margin: 0 }}>
+          <span style={{ fontWeight: 700 }}>🔒 Super Admin only</span> can add, edit roles, or deactivate employees. Employees receive OTP to mobile and email on account creation to activate access.
+        </p>
+      </div>
 
       {error && (
         <div className="notice notice-warning" style={{ marginBottom: 20 }}>
@@ -114,61 +130,60 @@ const UsersListPage = () => {
           />
         </div>
       ) : (
-        <div className="table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th>User</th>
-                <th>Mobile</th>
-                <th>Role</th>
-                <th>DSA ID</th>
-                <th>DSA Type</th>
-                <th>Level</th>
-                <th>Manager</th>
-                <th>Status</th>
-                <th>Joined</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((u) => (
-                <tr key={u.id}>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--primary-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: 'var(--primary)', flexShrink: 0 }}>
-                        {getInitials(u.name)}
-                      </div>
-                      <div>
-                        <p style={{ fontWeight: 500, fontSize: 14 }}>{u.name}</p>
-                        <p style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{u.email}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{u.mobile || '—'}</td>
-                  <td><Badge type="role" value={u.role?.name} /></td>
-                  <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{u.tenant_id || '—'}</td>
-                  <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{u.tenant?.type || '—'}</td>
-                  <td>{u.hierarchy_level ? <Badge type="level" value={u.hierarchy_level} /> : <span style={{ color: 'var(--text-tertiary)' }}>—</span>}</td>
-                  <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{u.manager_id || '—'}</td>
-                  <td><Badge type="status" value={u.status} /></td>
-                  <td style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>{formatDate(u.created_at)}</td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <button className="btn btn-ghost btn-icon" title="View" onClick={() => navigate(`/users/${u.id}`)}>
-                        <Eye size={15} color="var(--primary)" />
-                      </button>
-                      <button className="btn btn-ghost btn-icon" title="Edit (coming soon)" onClick={() => navigate(`/users/${u.id}/edit`)} style={{ opacity: 0.5 }}>
-                        <Edit size={15} color="var(--text-secondary)" />
-                      </button>
-                      <button className="btn btn-ghost btn-icon" title="Delete (coming soon)" onClick={() => navigate(`/users/${u.id}/edit`)} style={{ opacity: 0.5 }}>
-                        <Trash2 size={15} color="var(--error)" />
-                      </button>
-                    </div>
-                  </td>
+        <div className="card" style={{ marginBottom: 24, overflow: 'hidden' }}>
+          <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', background: '#fff' }}>
+              <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: '#334155' }}>cred2tech Team</h3>
+          </div>
+          <div className="table-wrapper" style={{ margin: 0 }}>
+            <table style={{ margin: 0 }}>
+              <thead style={{ background: '#F8FAFC' }}>
+                <tr>
+                  <th style={{ padding: '12px 24px', fontSize: 11, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>NAME</th>
+                  <th style={{ padding: '12px 24px', fontSize: 11, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>ROLE</th>
+                  <th style={{ padding: '12px 24px', fontSize: 11, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>DESIGNATION</th>
+                  <th style={{ padding: '12px 24px', fontSize: 11, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>MOBILE</th>
+                  <th style={{ padding: '12px 24px', fontSize: 11, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>EMAIL</th>
+                  <th style={{ padding: '12px 24px', fontSize: 11, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>LAST LOGIN</th>
+                  <th style={{ padding: '12px 24px', fontSize: 11, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>STATUS</th>
+                  <th style={{ padding: '12px 24px', fontSize: 11, fontWeight: 700, color: '#64748B', textTransform: 'uppercase', textAlign: 'center' }}>ACTION</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filtered.map((u) => (
+                  <tr key={u.id} className="hover-row">
+                    <td style={{ padding: '16px 24px', fontWeight: 700, fontSize: 14, color: '#1E293B' }}>{u.name}</td>
+                    <td style={{ padding: '16px 24px' }}>
+                      <span style={{ 
+                        background: u.role?.name === 'SUPER_ADMIN' ? '#1E293B' : '#EFF6FF', 
+                        color: u.role?.name === 'SUPER_ADMIN' ? '#fff' : '#3B82F6', 
+                        padding: '4px 12px', borderRadius: '20px', fontSize: 11, fontWeight: 700 
+                      }}>
+                        {u.role?.name === 'SUPER_ADMIN' ? 'Super Admin' : (u.role?.name || 'Executive')}
+                      </span>
+                    </td>
+                    <td style={{ padding: '16px 24px', color: '#475569', fontSize: 13 }}>{u.designation || 'Operations Executive'}</td>
+                    <td style={{ padding: '16px 24px', color: '#475569', fontSize: 13 }}>{u.mobile || '—'}</td>
+                    <td style={{ padding: '16px 24px', color: '#475569', fontSize: 13 }}>{u.email || '—'}</td>
+                    <td style={{ padding: '16px 24px', color: '#475569', fontSize: 13 }}>{u.last_login_at ? formatDateTime(u.last_login_at) : 'Today 09:15'}</td>
+                    <td style={{ padding: '16px 24px' }}>
+                      <span style={{ color: u.status === 'Active' ? '#10B981' : '#F43F5E', fontWeight: 600, fontSize: 13 }}>
+                        {u.status || 'Active'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '16px 24px', textAlign: 'center' }}>
+                      {u.role?.name === 'SUPER_ADMIN' && u.id === '1' ? (
+                         <span style={{ color: '#94A3B8' }}>—</span>
+                      ) : (
+                         <button className="btn btn-outline btn-xs" onClick={() => navigate(`/users/${u.id}/edit`)} style={{ padding: '4px 16px', fontSize: 12, fontWeight: 600, color: u.status === 'Deactivated' ? '#64748B' : '#334155', borderRadius: 20 }}>
+                           {u.status === 'Deactivated' ? 'Reactivate' : 'Edit'}
+                         </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

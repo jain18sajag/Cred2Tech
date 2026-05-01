@@ -1031,3 +1031,36 @@ model EligibilityReport {
   @@index([case_id])
   @@map("eligibility_reports")
 }
+
+// --- Vendor Management Models ---
+
+model Vendor {
+  id            Int      @id @default(autoincrement())
+  vendor_id     String   @unique 
+  name          String
+  website       String?
+  api_type      String   
+  role          String   
+  contract_start DateTime
+  contract_end   DateTime
+  billing_model String   
+  status        String   @default("Active")
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  slabs         VendorSlab[]
+
+  @@map("vendors")
+}
+
+model VendorSlab {
+  id          Int      @id @default(autoincrement())
+  vendor_id   Int
+  from_calls  Int
+  to_calls    Int?     
+  rate        Float
+  
+  vendor      Vendor   @relation(fields: [vendor_id], references: [id], onDelete: Cascade)
+
+  @@map("vendor_slabs")
+}

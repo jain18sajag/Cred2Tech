@@ -15,7 +15,7 @@ const storage = multer.diskStorage({
     const yyyy = now.getUTCFullYear();
     const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
     const tenantId = req.user?.tenant_id || 'unknown';
-    const dir = path.join(UPLOADS_ROOT, 'documents', String(tenantId), 'uploads', String(yyyy), mm);
+    const dir = path.join(UPLOADS_ROOT, String(yyyy), mm);
     fs.mkdirSync(dir, { recursive: true });
     cb(null, dir);
   },

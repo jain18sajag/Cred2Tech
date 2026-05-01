@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, AlertTriangle, Construction } from 'lucide-react';
-import { getUserById, getUsers } from '../api/userService';
+import { ChevronLeft, Save } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { getUserById, getUsers, updateUser } from '../api/userService';
 import { MOCK_USERS } from '../constants/mockData';
 import PageHeader from '../components/ui/PageHeader';
 import FormField from '../components/ui/FormField';
@@ -17,7 +18,8 @@ const EditUserPage = () => {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState({ name: '', email: '', mobile: '', role: '', tenant_id: '', hierarchy_level: '', manager_id: '' });
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ name: '', email: '', mobile: '', role: '', tenant_id: '', hierarchy_level: '', manager_id: '', designation: '', status: '' });
   const [tenantUsers, setTenantUsers] = useState([]);
 
   useEffect(() => {
@@ -40,6 +42,8 @@ const EditUserPage = () => {
           tenant_id: u.tenant_id?.toString() || '',
           hierarchy_level: u.hierarchy_level || '',
           manager_id: u.manager_id?.toString() || '',
+          designation: u.designation || '',
+          status: u.status || '',
         });
       } catch {
         const mock = MOCK_USERS.find((u) => u.id === Number(id));
@@ -53,6 +57,8 @@ const EditUserPage = () => {
             tenant_id: mock.tenant_id?.toString() || '',
             hierarchy_level: mock.hierarchy_level || '',
             manager_id: mock.manager_id?.toString() || '',
+            designation: mock.designation || '',
+            status: mock.status || '',
           });
         }
       } finally {
@@ -63,6 +69,28 @@ const EditUserPage = () => {
   }, [id]);
 
   const handleChange = (e) => setForm((p) => ({ ...p, [e.target.name]: e.target.value }));
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await updateUser(id, {
+        name: form.name,
+        email: form.email,
+        mobile: form.mobile,
+        designation: form.designation,
+        status: form.status,
+        hierarchy_level: form.hierarchy_level || null,
+        manager_id: form.manager_id ? Number(form.manager_id) : null,
+      });
+      toast.success('User updated successfully');
+      navigate('/users');
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Failed to update user');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   if (loading) return <LoadingSpinner fullPage />;
 
@@ -84,24 +112,16 @@ const EditUserPage = () => {
         }
       />
 
-      {/* Backend limitation notice */}
-      <div className="notice notice-warning" style={{ marginBottom: 24 }}>
-        <Construction size={20} style={{ flexShrink: 0, marginTop: 1 }} />
-        <div>
-          <strong style={{ display: 'block', marginBottom: 4 }}>Backend endpoint not yet implemented</strong>
-          The <code>PUT /users/:id</code> endpoint is not yet available in the backend. This form is pre-filled and functional from the UI side — once the backend is implemented, submitting this form will save the changes.
-        </div>
-      </div>
-
-      <div style={{ maxWidth: 720 }}>
+      <form onSubmit={handleSubmit} style={{ maxWidth: 720 }}>
         <div className="card card-padded" style={{ marginBottom: 20 }}>
           <h3 style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 20 }}>
             Basic Information
           </h3>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
-            <FormField label="Full Name" name="name" value={form.name} onChange={handleChange} />
-            <FormField label="Email Address" name="email" type="email" value={form.email} onChange={handleChange} />
+            <FormField label="Full Name" name="name" value={form.name} onChange={handleChange} required />
+            <FormField label="Email Address" name="email" type="email" value={form.email} onChange={handleChange} required />
             <FormField label="Mobile" name="mobile" value={form.mobile} onChange={handleChange} />
+            <FormField label="Designation" name="designation" value={form.designation} onChange={handleChange} placeholder="e.g. Executive" />
           </div>
         </div>
 
@@ -111,9 +131,16 @@ const EditUserPage = () => {
           </h3>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
             <FormField label="Platform Role" name="role">
-              <select name="role" value={form.role} onChange={handleChange} className="form-control">
+              <select name="role" value={form.role} onChange={handleChange} className="form-control" disabled>
                 <option value="">Select role…</option>
                 {ROLE_OPTIONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </select>
+            </FormField>
+            <FormField label="Status" name="status">
+              <select name="status" value={form.status} onChange={handleChange} className="form-control" required>
+                <option value="ACTIVE">Active</option>
+                <option value="INACTIVE">Inactive</option>
+                <option value="SUSPENDED">Suspended</option>
               </select>
             </FormField>
             <FormField label="DSA ID" name="tenant_id" value={form.tenant_id} onChange={handleChange} disabled />
@@ -133,17 +160,16 @@ const EditUserPage = () => {
         </div>
 
         <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
-          <button className="btn btn-secondary" onClick={() => navigate(`/users/${id}`)}>Cancel</button>
+          <button type="button" className="btn btn-secondary" onClick={() => navigate(`/users`)} disabled={saving}>Cancel</button>
           <button
+            type="submit"
             className="btn btn-primary"
-            disabled
-            title="Backend endpoint not yet implemented"
-            style={{ opacity: 0.6, cursor: 'not-allowed' }}
+            disabled={saving}
           >
-            <AlertTriangle size={14} /> Save Changes (Backend Pending)
+            <Save size={14} /> {saving ? 'Saving...' : 'Save Changes'}
           </button>
         </div>
-      </div>
+      </form>
     </div>
   );
 };

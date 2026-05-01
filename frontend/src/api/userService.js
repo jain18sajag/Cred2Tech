@@ -15,10 +15,8 @@ export const createUser = async (userData) => {
   return response.data;
 };
 
-// NOTE: updateUser (PUT /users/:id) is not yet implemented in the backend.
-// The UI will show a placeholder with appropriate messaging.
 export const updateUser = async (id, userData) => {
-  const response = await api.put(`/users/${id}`, userData);
+  const response = await api.patch(`/users/${id}`, userData);
   return response.data;
 };
 

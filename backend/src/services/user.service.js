@@ -4,7 +4,7 @@ const { hashPassword } = require('../utils/hash');
 async function createUser(data, currentUser) {
   console.log('CREATE USER PAYLOAD:', JSON.stringify(data));
 
-  const { name, email, mobile, password, role_id, tenant_id, hierarchy_level, manager_id } = data;
+  const { name, email, mobile, password, role_id, tenant_id, hierarchy_level, manager_id, designation } = data;
 
   if (!role_id) throw Object.assign(new Error('role_id is required'), { status: 400 });
 
@@ -99,6 +99,7 @@ async function createUser(data, currentUser) {
       tenant_id: parsedTenantId,
       hierarchy_level,
       manager_id: parsedManagerId,
+      designation: designation || null,
       created_by: currentUser.id,
       updated_by: currentUser.id
     };
@@ -136,6 +137,8 @@ async function getUsers(currentUser) {
       manager_id: true,
       hierarchy_path: true,
       status: true,
+      designation: true,
+      last_login_at: true,
       created_at: true,
       role: { select: { name: true } }
     },
@@ -163,6 +166,8 @@ async function getUserById(id, currentUser) {
       manager_id: true,
       hierarchy_path: true,
       status: true,
+      designation: true,
+      last_login_at: true,
     }
   });
 

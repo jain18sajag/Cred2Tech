@@ -109,7 +109,7 @@ function buildStorageKey(tenantId, customerId, extension) {
     const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
     const customerSlug = customerId ? String(customerId) : 'shared';
     const uniqueName = `${uuidv4()}${extension}`;
-    return path.posix.join('documents', String(tenantId), customerSlug, String(yyyy), mm, uniqueName);
+    return path.posix.join(String(yyyy), mm, uniqueName);
 }
 
 // ─── Core Service Functions ───────────────────────────────────────────────────

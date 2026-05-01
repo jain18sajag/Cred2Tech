@@ -67,6 +67,38 @@ async function getTenantLogs(req, res) {
   }
 }
 
+async function getTenantApiUsageSummary(req, res) {
+  try {
+    const tenant_id = parseInt(req.params.tenant_id, 10);
+    const now = new Date();
+    const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const logs = await prisma.apiUsageLog.groupBy({
+      by: ['api_code', 'status'],
+      where: {
+        tenant_id,
+        created_at: { gte: firstDayOfMonth }
+      },
+      _count: { api_code: true },
+      _sum: { credits_used: true }
+    });
+
+    // We also need vendor pricing data to compute accurate rates if we don't store it per log
+    // For MTD, we just use the logs.
+    const mapped = logs.map(l => ({
+      api_code: l.api_code,
+      status: l.status,
+      count: l._count.api_code,
+      credits_used: l._sum.credits_used || 0
+    }));
+
+    res.json({ usage: mapped });
+  } catch (error) {
+    console.error('getTenantApiUsageSummary error:', error);
+    res.status(500).json({ error: 'Failed to fetch tenant API usage summary' });
+  }
+}
+
 async function getLogsSummary(req, res) {
   // #swagger.tags = ['API Usage Logs']
   // #swagger.summary = 'Get aggregated visual KPIs'
@@ -99,5 +131,6 @@ async function getLogsSummary(req, res) {
 module.exports = {
   getApiLogs,
   getTenantLogs,
-  getLogsSummary
+  getLogsSummary,
+  getTenantApiUsageSummary
 };

@@ -13,6 +13,7 @@ router.put('/volume-discounts', adminWalletController.updateVolumeDiscounts);
 router.post('/tenants/:tenant_id/wallet/topup', adminWalletController.topupWallet);
 router.post('/tenants/:tenant_id/wallet/deduct', adminWalletController.deductWallet);
 router.get('/tenants/wallets', adminWalletController.getAllWallets);
+router.get('/tenants/:tenant_id/wallet', adminWalletController.getWalletDetail);
 router.get('/tenants/:tenant_id/wallet/ledger', adminWalletController.getLedger);
 
 module.exports = router;

@@ -10,5 +10,6 @@ router.use(requireRole('SUPER_ADMIN'));
 router.get('/summary', adminApiLogsController.getLogsSummary);
 router.get('/', adminApiLogsController.getApiLogs);
 router.get('/:tenant_id', adminApiLogsController.getTenantLogs);
+router.get('/:tenant_id/summary/mtd', adminApiLogsController.getTenantApiUsageSummary);
 
 module.exports = router;

@@ -24,7 +24,9 @@ const AddCustomerWizardPage = lazy(() => import('../pages/AddCustomerWizardPage'
 const CustomerProfilePage = lazy(() => import('../pages/CustomerProfilePage'));
 const SuperadminPricingPage = lazy(() => import('../pages/SuperadminPricingPage'));
 const SuperadminWalletManager = lazy(() => import('../pages/SuperadminWalletManager'));
+const SuperadminWalletDetail = lazy(() => import('../pages/SuperadminWalletDetail'));
 const SuperadminApiLogsPage = lazy(() => import('../pages/SuperadminApiLogsPage'));
+const VendorManagementPage = lazy(() => import('../pages/VendorManagementPage'));
 const LenderConfigPage = lazy(() => import('../pages/LenderConfigPage'));
 const IncomeSummaryPage = lazy(() => import('../pages/IncomeSummaryPage'));
 const BureauObligationsPage = lazy(() => import('../pages/BureauObligationsPage'));
@@ -82,11 +84,17 @@ const AppRouter = () => (
             <Route path="/hierarchy" element={<HierarchyPage />} />
 
             {/* Superadmin Dashboards */}
+            <Route path="/admin/vendors" element={
+               <ProtectedRoute allowedRoles={['SUPER_ADMIN']}><VendorManagementPage /></ProtectedRoute>
+            } />
             <Route path="/admin/pricing" element={
                <ProtectedRoute allowedRoles={['SUPER_ADMIN']}><SuperadminPricingPage /></ProtectedRoute>
             } />
             <Route path="/admin/wallets" element={
                <ProtectedRoute allowedRoles={['SUPER_ADMIN']}><SuperadminWalletManager /></ProtectedRoute>
+            } />
+            <Route path="/admin/wallets/:dsaId" element={
+               <ProtectedRoute allowedRoles={['SUPER_ADMIN']}><SuperadminWalletDetail /></ProtectedRoute>
             } />
             <Route path="/admin/logs" element={
                <ProtectedRoute allowedRoles={['SUPER_ADMIN']}><SuperadminApiLogsPage /></ProtectedRoute>

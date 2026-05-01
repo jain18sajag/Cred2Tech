@@ -153,7 +153,11 @@ async function getAllWallets(req, res) {
       });
       return {
         tenant_id: t.id,
+        code: `DSA-${String(t.id).padStart(3, '0')}`,
         tenant_name: t.name,
+        mobile: t.mobile || '—',
+        city: t.city || '—',
+        status: t.status,
         wallet_balance: t.wallet?.balance || 0,
         total_usage: t._count.api_logs,
         last_transaction_date: lastTx?.created_at || null
@@ -162,7 +166,70 @@ async function getAllWallets(req, res) {
 
     res.json({ tenants: mapped, total, page, totalPages: Math.ceil(total / limit) });
   } catch (error) {
+    console.error('getAllWallets error:', error);
     res.status(500).json({ error: 'Failed to fetch wallets' });
+  }
+}
+
+async function getWalletDetail(req, res) {
+  try {
+    const tenant_id = parseInt(req.params.tenant_id, 10);
+    
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenant_id, type: 'DSA' },
+      include: { wallet: true }
+    });
+
+    if (!tenant) return res.status(404).json({ error: 'DSA Tenant not found' });
+
+    // Calculate MTD Spent (Debit transactions in current month)
+    const now = new Date();
+    const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    
+    const spentMtdResult = await prisma.walletTransaction.aggregate({
+      where: {
+        tenant_id: tenant_id,
+        transaction_type: 'DEBIT',
+        created_at: { gte: firstDayOfMonth }
+      },
+      _sum: { amount: true }
+    });
+
+    // Calculate Lifetime Free Credits (Credit transactions of type ADMIN_TOPUP)
+    const lifetimeFreeCreditsResult = await prisma.walletTransaction.aggregate({
+      where: {
+        tenant_id: tenant_id,
+        transaction_type: 'CREDIT',
+        reference_type: 'ADMIN_TOPUP'
+      },
+      _sum: { amount: true }
+    });
+
+    const lastTx = await prisma.walletTransaction.findFirst({
+        where: { tenant_id: tenant_id },
+        orderBy: { created_at: 'desc' }
+    });
+
+    res.json({
+      tenant: {
+        id: tenant.id,
+        code: `DSA-${String(tenant.id).padStart(3, '0')}`,
+        name: tenant.name,
+        mobile: tenant.mobile || '—',
+        city: tenant.city || '—',
+        status: tenant.status,
+      },
+      wallet: {
+        balance: tenant.wallet?.balance || 0,
+        spent_this_month: spentMtdResult._sum.amount || 0,
+        lifetime_free_credits: lifetimeFreeCreditsResult._sum.amount || 0,
+        last_recharge: lastTx?.created_at || null
+      }
+    });
+
+  } catch (error) {
+    console.error('getWalletDetail error:', error);
+    res.status(500).json({ error: 'Failed to fetch wallet detail' });
   }
 }
 
@@ -222,5 +289,6 @@ module.exports = {
   topupWallet,
   deductWallet,
   getAllWallets,
+  getWalletDetail,
   getLedger
 };
