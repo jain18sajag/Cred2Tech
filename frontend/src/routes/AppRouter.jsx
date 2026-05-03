@@ -170,6 +170,8 @@ const AppRouter = () => (
                 </ProtectedRoute>
               }
             />
+
+
           </Route>
 
           {/* Fallbacks */}

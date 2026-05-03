@@ -66,6 +66,9 @@ model Tenant {
   bank_statements       BankStatementAnalysisRequest[]
   itr_analytics         ItrAnalyticsRequest[]
   documents             Document[]
+  tenant_lenders        TenantLender[]
+  commission_rules      LenderCommissionRule[]
+  audit_logs            AuditLog[]
 
   @@map("tenants")
 }
@@ -103,6 +106,7 @@ model User {
   created_otps      OtpVerification[] @relation("OtpCreator")
   api_logs          ApiUsageLog[]
   activity_logs     ActivityLog[]
+  audit_logs        AuditLog[]
 
   @@map("users")
 }
@@ -1063,4 +1067,134 @@ model VendorSlab {
   vendor      Vendor   @relation(fields: [vendor_id], references: [id], onDelete: Cascade)
 
   @@map("vendor_slabs")
+}
+
+// --- Commission Configuration Models ---
+
+enum PayoutBasis {
+  NET_DISBURSED
+  GROSS_SANCTIONED
+}
+
+enum CommissionType {
+  PERCENTAGE
+  FIXED_PER_CASE
+  HYBRID
+}
+
+enum CommissionSpecialSchemeBasis {
+  VOLUME
+  CASE_COUNT
+}
+
+model LenderCommissionRule {
+  id               Int            @id @default(autoincrement())
+  tenant_id        Int
+  tenant_lender_id Int
+  product_type     LenderProductType
+  payout_basis     PayoutBasis
+  commission_type  CommissionType
+  is_active        Boolean        @default(true)
+  created_at       DateTime       @default(now())
+  updated_at       DateTime       @updatedAt
+
+  tenant           Tenant         @relation(fields: [tenant_id], references: [id])
+  tenant_lender    TenantLender   @relation(fields: [tenant_lender_id], references: [id], onDelete: Cascade)
+  
+  volume_slabs     CommissionVolumeSlab[]
+  case_count_slabs CommissionCaseCountSlab[]
+  special_schemes  CommissionSpecialScheme[]
+
+  @@unique([tenant_id, tenant_lender_id, product_type])
+  @@map("lender_commission_rules")
+}
+
+model CommissionVolumeSlab {
+  id            Int                  @id @default(autoincrement())
+  rule_id       Int
+  from_amount   Float
+  to_amount     Float?               // Use null for "Infinity"
+  percent_rate  Float
+
+  rule          LenderCommissionRule @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+
+  @@map("commission_volume_slabs")
+}
+
+model CommissionCaseCountSlab {
+  id              Int                  @id @default(autoincrement())
+  rule_id         Int
+  from_cases      Int
+  to_cases        Int?                 // Use null for "Infinity"
+  payout_per_case Float
+
+  rule            LenderCommissionRule @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+
+  @@map("commission_case_count_slabs")
+}
+
+model CommissionSpecialScheme {
+  id              Int                          @id @default(autoincrement())
+  rule_id         Int
+  scheme_name     String
+  bonus_percent   Float?
+  bonus_per_case  Float?
+  basis           CommissionSpecialSchemeBasis
+  valid_from      DateTime
+  valid_to        DateTime
+  is_active       Boolean                      @default(true)
+
+  rule            LenderCommissionRule         @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+
+  @@map("commission_special_schemes")
+}
+
+model AuditLog {
+  id            Int      @id @default(autoincrement())
+  tenant_id     Int
+  user_id       Int
+  action        String
+  description   String?
+  timestamp     DateTime @default(now())
+
+  tenant        Tenant   @relation(fields: [tenant_id], references: [id])
+  user          User     @relation(fields: [user_id], references: [id])
+
+  @@map("audit_logs")
+}
+
+// --- Tenant Lender Contacts (Added to schema to fix db push) ---
+
+model TenantLender {
+  id                 Int      @id @default(autoincrement())
+  tenant_id          Int
+  lender_name        String
+  is_active          Boolean  @default(true)
+  created_by_user_id Int?
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  tenant             Tenant   @relation(fields: [tenant_id], references: [id])
+  contacts           TenantLenderContact[]
+  commission_rules   LenderCommissionRule[]
+
+  @@map("tenant_lenders")
+}
+
+model TenantLenderContact {
+  id                 Int      @id @default(autoincrement())
+  tenant_lender_id   Int
+  tenant_id          Int
+  product_type       String
+  contact_name       String
+  contact_email      String
+  contact_mobile     String?
+  is_primary         Boolean  @default(false)
+  created_by_user_id Int?
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  lender             TenantLender @relation(fields: [tenant_lender_id], references: [id], onDelete: Cascade)
+
+  @@map("tenant_lender_contacts")
 }
