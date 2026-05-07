@@ -24,6 +24,11 @@ export async function deleteTenantLender(id) {
   return data;
 }
 
+export async function getPlatformLenders() {
+  const { data } = await api.get('/platform-lenders');
+  return data;
+}
+
 // ── Contacts ─────────────────────────────────────────────────────────────────
 export async function createTenantLenderContact(payload) {
   const { data } = await api.post('/tenant/lender-contacts', payload);

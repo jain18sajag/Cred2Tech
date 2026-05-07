@@ -1,4 +1,5 @@
 const prisma = require('../../../config/db');
+const { updateStage } = require('../case.service');
 
 // ---------- HELPER UTILITIES ----------
 
@@ -124,7 +125,7 @@ function parseDynamicFoir(valString, monthlyIncome) {
 
 
 // ------ EVALUATE SCHEME ------
-function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender }) {
+function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest_cibil_score }) {
     console.log(`\n[ESR ENGINE] Evaluating Scheme: ${scheme.scheme_name} | Lender: ${lender.name} | Product: ${product.product_type}`);
     const paramMap = getParamMap(scheme.parameter_values);
     console.log(`[ESR ENGINE] Parsed Parameter Map:`, JSON.stringify(paramMap, null, 2));
@@ -145,15 +146,22 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender }) {
 
     const pref = pType === 'hl' ? 'hl' : 'lap';
 
-    // A. Bureau Cutoff
+    // A. Bureau Cutoff — use lowest_cibil_score to be conservative (worst applicant in pool)
     const rawBureau = paramMap['bureau_cutoff'];
+    // Effective CIBIL is the lowest across all applicants; fall back to primary score if no bureau pulls done
+    const effectiveCibil = (lowest_cibil_score !== undefined && lowest_cibil_score !== null)
+        ? lowest_cibil_score
+        : esr.bureau_score;
+
     if (rawBureau !== undefined && rawBureau !== null && rawBureau !== '') {
         const bureauCutoff = toNumber(rawBureau);
-        if (bureauCutoff && (!esr.bureau_score || esr.bureau_score < bureauCutoff)) {
+        if (bureauCutoff && (!effectiveCibil || effectiveCibil < bureauCutoff)) {
             isEligible = false;
-            failure_reasons.push(esr.bureau_score ? `CIBIL score ${esr.bureau_score} is below bureau cutoff ${bureauCutoff}` : "Bureau score missing.");
+            failure_reasons.push(effectiveCibil
+                ? `Lowest CIBIL score ${effectiveCibil} is below bureau cutoff ${bureauCutoff}`
+                : "Bureau score missing.");
         }
-    } else if (esr.bureau_score === null) {
+    } else if (effectiveCibil === null) {
         warnings.push("Bureau score missing, but no cutoff defined.");
     }
 
@@ -292,15 +300,86 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
 
     const pType = esr.product_type.toUpperCase();
 
+    // 2. Resolve CIBIL scores (Corrected: moved before lender evaluation)
+    // Fetch all applicants with their latest successful bureau checks
+    const applicants = await prisma.applicant.findMany({
+        where: { case_id },
+        include: {
+            bureau_checks: {
+                where: { status: 'SUCCESS' },
+                orderBy: { created_at: 'desc' },
+                take: 1
+            }
+        }
+    });
+
+    let primary_cibil = null;
+    let scores = [];
+    const co_applicant_cibils = [];
+
+    applicants.forEach(app => {
+        let appScore = null;
+        if (app.bureau_checks.length > 0) {
+            appScore = parseInt(app.bureau_checks[0].score);
+        }
+        if (appScore === null || isNaN(appScore)) {
+            appScore = app.cibil_score; // Fallback to applicant field
+        }
+        
+        if (appScore !== null && !isNaN(appScore)) {
+            scores.push(appScore);
+            if (app.is_primary) {
+                primary_cibil = appScore;
+            } else {
+                co_applicant_cibils.push({ applicant_id: app.id, score: appScore });
+            }
+        }
+    });
+
+    // Final fallback to case snapshot for primary
+    if (primary_cibil === null) {
+        primary_cibil = esr.case_entity.cibil_score;
+        if (primary_cibil !== null) scores.push(primary_cibil);
+    }
+
+    const lowest_cibil = scores.length > 0 ? Math.min(...scores) : primary_cibil;
+
     console.log(`\n======================================================`);
     console.log(`[ESR ENGINE] Starting Dynamic ESR Calculation`);
     console.log(`[ESR ENGINE] Case ID: ${case_id} | Product Type: ${pType}`);
+    console.log(`[ESR ENGINE] CIBIL — Primary: ${primary_cibil}, Lowest: ${lowest_cibil}`);
     console.log(`[ESR ENGINE] Input Payload:`, JSON.stringify(esr, null, 2));
     console.log(`======================================================\n`);
 
-    // 2. Fetch Active Lenders
+    // 3. Fetch Active Lenders (Two-Layer Architecture)
+    // Step 3a: Fetch tenant's ESR-enabled lenders with platform link
+    const tenantEsrLenders = await prisma.tenantLender.findMany({
+        where: {
+            tenant_id,                         // strict tenant isolation
+            is_active: true,
+            is_esr_enabled: true,
+            platform_lender_id: { not: null }  // must have platform link
+        },
+        select: {
+            id: true,                          // tenant_lender_id for output rows
+            lender_name: true,
+            platform_lender_id: true
+        }
+    });
+
+    if (tenantEsrLenders.length === 0) {
+        throw new Error('No ESR-enabled lenders configured. Please link and enable at least one lender in Lender Directory before generating ESR.');
+    }
+
+    // Step 3b: Collect platform lender IDs from tenant selection
+    const platformLenderIds = tenantEsrLenders.map(tl => tl.platform_lender_id);
+
+    // Step 3c: Fetch platform lender matrix for only those IDs
     const lenders = await prisma.lender.findMany({
-        where: { status: 'ACTIVE' },
+        where: {
+            id: { in: platformLenderIds },
+            status: 'ACTIVE'
+        },
         include: {
             products: {
                 where: { status: 'ACTIVE', product_type: pType },
@@ -317,6 +396,12 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
             }
         }
     });
+
+    // Step 3d: Build lookup map: platform_lender_id → tenant_lender_id (resolved, no more name fuzzing)
+    const tenantLenderIdMap = {};
+    for (const tl of tenantEsrLenders) {
+        tenantLenderIdMap[tl.platform_lender_id] = tl.id;
+    }
 
     const lenderResults = [];
 
@@ -345,7 +430,7 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
             }
 
             for (const scheme of schemes) {
-                const evalOutput = evaluateDynamicSchemeEligibility({ esr, scheme, product, lender });
+                const evalOutput = evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest_cibil_score: lowest_cibil });
 
                 if (evalOutput.is_eligible && lenderIneligibilityReason === "Property value missing for secured loan eligibility.") {
                     evalOutput.is_eligible = false;
@@ -430,55 +515,170 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         return 0;
     });
 
+    // 5. Fetch Full Obligations List for Snapshot — tenant-safe via case ownership
+    // CaseCreditObligation has case_id FK; case is already validated to belong to tenant via ESR financials lookup
+    const obligationsList = await prisma.caseCreditObligation.findMany({
+        where: {
+            case_id,
+            status: 'ACTIVE',
+            case_entity: { tenant_id }  // enforce tenant ownership at DB level
+        },
+        select: {
+            id: true,
+            lender_name: true,
+            loan_type: true,
+            emi_per_month: true,
+            outstanding_amount: true,
+            include_in_foir: true,
+            source: true
+        }
+    });
+
     const combinedAnnualIncome = (esr.selected_monthly_income || 0) * 12;
 
-    // 5. Transaction Persistence
+    // 6. Versioning and Snapshot Tracking
+    const latestESR = await prisma.eligibilityReport.findFirst({
+        where: { case_id, tenant_id, is_latest: true },
+        orderBy: { version_number: 'desc' }
+    });
+
+    const nextVersion = (latestESR?.version_number || 0) + 1;
+
+    // 7. Build Comprehensive Input Snapshot for full audit traceability
+    const inputSnapshot = {
+        source: "CASE_ESR_FINANCIALS",
+        case_esr_financial_id: esr.id,
+        generated_at: new Date().toISOString(),
+        lender_count_evaluated: lenders.length,
+
+        // Case identifiers
+        case_id,
+        tenant_id,
+
+        // Product
+        product_type: esr.product_type,
+        requested_loan_amount: esr.requested_loan_amount,
+        requested_tenure_months: esr.requested_tenure_months,
+
+        // Property
+        property_value: esr.property_value,
+        property_type: esr.property_type,
+        occupancy_type: esr.occupancy_type,
+
+        // Income summary
+        selected_income_method: esr.selected_income_method,
+        selected_monthly_income: esr.selected_monthly_income,
+        combined_annual_income: combinedAnnualIncome,
+
+        // Income methods (all three computed)
+        net_profit_income: esr.net_profit_income,
+        gst_income: esr.gst_income,
+        banking_income: esr.banking_income,
+
+        // ITR
+        itr_pat: esr.itr_pat,
+        itr_depreciation: esr.itr_depreciation,
+        itr_finance_cost: esr.itr_finance_cost,
+        itr_gross_receipts: esr.itr_gross_receipts,
+
+        // GST
+        gst_avg_monthly_sales: esr.gst_avg_monthly_sales,
+        gst_industry_type: esr.gst_industry_type,
+        gst_industry_margin: esr.gst_industry_margin,
+
+        // Bank
+        bank_avg_balance: esr.bank_avg_balance,
+        bank_monthly_income: esr.bank_monthly_income,
+
+        // Obligations
+        existing_obligations: esr.existing_obligations,
+        total_emi_per_month: esr.existing_obligations,  // alias for downstream clarity
+        icici_exposure: esr.icici_exposure,
+
+        // Bureau
+        primary_cibil_score: primary_cibil,
+        lowest_cibil_score: lowest_cibil,
+        co_applicant_cibils: co_applicant_cibils,
+        applicant_age: esr.applicant_age,
+
+        // Full FOIR obligation detail
+        obligations_detail: obligationsList
+    };
+
+    // 8. Resolve tenant_lender_id mapping for each lender result
+    // Already resolved in Step 3d using exact FK matching.
+
+    // 9. Transaction Persistence
     await prisma.$transaction(async (tx) => {
-        await tx.eligibilityReport.upsert({
-            where: { case_id },
-            create: {
+        // Mark old versions as not latest
+        await tx.eligibilityReport.updateMany({
+            where: { case_id, tenant_id, is_latest: true },
+            data: { is_latest: false }
+        });
+
+        // Create new EligibilityReport
+        const newESR = await tx.eligibilityReport.create({
+            data: {
                 case_id,
+                tenant_id,
+                version_number: nextVersion,
+                is_latest: true,
                 generated_by_user_id: user_id,
                 combined_income: combinedAnnualIncome,
                 property_value: esr.property_value,
-                primary_cibil_score: esr.bureau_score,
-                lowest_cibil_score: esr.bureau_score,
+                primary_cibil_score: primary_cibil,
+                lowest_cibil_score: lowest_cibil,
                 total_emi_per_month: esr.existing_obligations,
                 status: 'GENERATED',
-                raw_payload: {
-                    source: "CASE_ESR_FINANCIALS",
-                    case_esr_financial_id: esr.id,
-                    product_type: esr.product_type,
-                    selected_income_method: esr.selected_income_method,
-                    selected_monthly_income: esr.selected_monthly_income,
-                    lenders: lenderResults
-                }
-            },
-            update: {
-                generated_at: new Date(),
-                generated_by_user_id: user_id,
-                combined_income: combinedAnnualIncome,
-                property_value: esr.property_value,
-                primary_cibil_score: esr.bureau_score,
-                lowest_cibil_score: esr.bureau_score,
-                total_emi_per_month: esr.existing_obligations,
-                status: 'GENERATED',
-                updated_at: new Date(),
-                raw_payload: {
-                    source: "CASE_ESR_FINANCIALS",
-                    case_esr_financial_id: esr.id,
-                    product_type: esr.product_type,
-                    selected_income_method: esr.selected_income_method,
-                    selected_monthly_income: esr.selected_monthly_income,
-                    lenders: lenderResults
+                input_snapshot: inputSnapshot,
+                raw_payload: { lenders: lenderResults }, // Debugging only
+                lenders: {
+                    create: lenderResults.map(l => {
+                        // FIX 7: Resolve tenant_lender_id by exact FK link
+                        const resolvedTenantLenderId = tenantLenderIdMap[l.lender_id] || null;
+
+                        if (!resolvedTenantLenderId) {
+                            console.warn(`[ESR PERSIST] Failed to resolve tenant_lender_id for platform lender_id: "${l.lender_id}".`);
+                        }
+
+                        return {
+                            tenant_lender_id: resolvedTenantLenderId,
+                            lender_id: l.lender_id || null,
+                            lender_name: l.lender_name,
+                            product_type: l.product_type,
+                            product_display_name: l.product_display_name || null,
+                            best_scheme_name: l.best_scheme_name || null,
+                            is_eligible: l.is_eligible,
+                            eligible_amount: l.final_eligible_loan_amount || null,
+                            roi: l.roi_min || null,
+                            tenure_months: l.max_tenure_months || null,
+                            emi: l.max_eligible_emi || null,
+                            ltv: l.applicable_ltv_percent || null,
+                            foir: l.foir_allowed_percent || null,
+                            remarks: l.ineligibility_reason || null,
+                            rejection_reasons: l.is_eligible ? null : { 
+                                reasons: l.ineligibility_reason ? l.ineligibility_reason.split(" | ") : ["Failed criteria"] 
+                            },
+                            scheme_evaluations: l.scheme_evaluations || null
+                        };
+                    })
                 }
             }
         });
 
-        await tx.case.update({
-            where: { id: case_id },
-            data: { stage: 'ESR_GENERATED', esr_generated: true }
-        });
+        return newESR;
+    });
+
+    // ISSUE 3 FIX: Call updateStage OUTSIDE the transaction.
+    // updateStage uses the global prisma client internally (not a tx-client).
+    // Calling it inside $transaction would deadlock the connection pool.
+    // It handles: tenant validation + CaseStageHistory + ActivityLog + stage lock rules.
+    await updateStage(case_id, tenant_id, 'ESR_GENERATED', user_id);
+
+    // Set esr_generated flag tenant-safely (ISSUE 5: WHERE includes tenant_id)
+    await prisma.case.updateMany({
+        where: { id: case_id, tenant_id },
+        data: { esr_generated: true }
     });
 
     // Provide generic response back mirroring legacy system response wrapper
@@ -488,8 +688,8 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         total_count: lenderResults.length,
         combined_income: combinedAnnualIncome,
         property_value: esr.property_value,
-        primary_cibil_score: esr.bureau_score,
-        lowest_cibil_score: esr.bureau_score,
+        primary_cibil_score: primary_cibil,
+        lowest_cibil_score: lowest_cibil,
         total_emi_per_month: esr.existing_obligations
     };
 }

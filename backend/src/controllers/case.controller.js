@@ -206,6 +206,46 @@ async function getActivityLog(req, res) {
   }
 }
 
+async function getPipeline(req, res) {
+  try {
+    const tenant_id = req.user.tenant_id;
+    const { search, stage, lender, entity_type, alert, sort_by, sort_order, page, limit } = req.query;
+    
+    const result = await caseService.getPipeline(tenant_id, {
+      search, stage, lender, entity_type, alert, sort_by, sort_order,
+      page: parseInt(page) || 1,
+      limit: parseInt(limit) || 10
+    });
+    
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Internal server error while fetching pipeline cases.' });
+  }
+}
+
+async function updateStage(req, res) {
+  try {
+    const caseId = parseInt(req.params.id, 10);
+    const { stage } = req.body;
+    const tenant_id = req.user.tenant_id;
+    
+    if (!stage) return res.status(400).json({ error: 'Stage is required' });
+    
+    // Protection: Financial stages must only be reached via Disbursement Service
+    if (['PARTLY_DISBURSED', 'DISBURSED'].includes(stage)) {
+      return res.status(400).json({ error: `Direct update to ${stage} is not allowed. Please use the Disbursement flow.` });
+    }
+
+    const updatedCase = await caseService.updateStage(caseId, tenant_id, stage, req.user.id);
+    res.json(updatedCase);
+  } catch (error) {
+    if (error.message === 'Case not found or unauthorized.') return res.status(403).json({ error: error.message });
+    console.error(error);
+    res.status(500).json({ error: 'Internal server error while updating case stage.' });
+  }
+}
+
 module.exports = {
   createCase,
   addApplicant,
@@ -215,5 +255,7 @@ module.exports = {
   getCaseById,
   getSummary,
   getCoBorrowers,
-  getActivityLog
+  getActivityLog,
+  getPipeline,
+  updateStage
 };

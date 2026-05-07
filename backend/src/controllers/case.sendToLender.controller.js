@@ -13,25 +13,32 @@ async function performSend({ caseId, tenantId, userId, contact, lenderName, loan
     caseId, tenantId, userId, contact, lenderName, loanAmount
   });
 
-  // 2. Update case stage and proposal tracking
-  await prisma.$executeRawUnsafe(`
-    UPDATE cases
-    SET stage = 'LEAD_SENT_TO_LENDER',
-        proposal_sent_at = NOW(),
-        proposal_sent_by_user_id = $1,
-        updated_at = NOW()
-    WHERE id = $2 AND tenant_id = $3
-  `, userId, caseId, tenantId);
+  // 2. Update case stage and proposal tracking using centralized logic
+  const { updateStage } = require('../services/case.service');
+  await updateStage(Number(caseId), Number(tenantId), 'LEAD_SENT_TO_LENDER', Number(userId));
+
+  // Update additional tracking fields natively
+  await prisma.case.update({
+    where: { id: Number(caseId) },
+    data: {
+      proposal_sent_at: new Date(),
+      proposal_sent_by_user_id: Number(userId)
+    }
+  });
 
   // 3. Insert activity log
   const description = result.emailSent
     ? `Proposal sent to ${lenderName} (${contact.contact_name} — ${contact.contact_email})`
     : `Proposal send attempted to ${lenderName} — email delivery failed`;
 
-  await prisma.$executeRawUnsafe(`
-    INSERT INTO activity_logs (case_id, activity_type, description, performed_by_user_id, created_at)
-    VALUES ($1, 'PROPOSAL_SENT', $2, $3, NOW())
-  `, caseId, description, userId);
+  await prisma.activityLog.create({
+    data: {
+      case_id: Number(caseId),
+      activity_type: 'PROPOSAL_SENT',
+      description,
+      performed_by_user_id: Number(userId)
+    }
+  });
 
   return result;
 }
@@ -49,11 +56,14 @@ async function sendToLender(req, res) {
     if (!product_type) return res.status(400).json({ error: 'product_type is required' });
 
     // Verify case belongs to tenant
-    const caseRows = await prisma.$queryRawUnsafe(
-      `SELECT id, loan_amount FROM cases WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
-      caseId, tenantId
-    );
-    if (!caseRows[0]) return res.status(404).json({ error: 'Case not found' });
+    const caseEntity = await prisma.case.findFirst({
+      where: {
+        id: Number(caseId),
+        tenant_id: Number(tenantId)
+      },
+      select: { id: true, loan_amount: true }
+    });
+    if (!caseEntity) return res.status(404).json({ error: 'Case not found' });
 
     // Resolve contact
     const contact = await resolveContactForLender({ tenantId, lenderName: lender_name, productType: product_type });
@@ -70,7 +80,7 @@ async function sendToLender(req, res) {
       userId,
       contact,
       lenderName: lender_name,
-      loanAmount: loan_amount || caseRows[0].loan_amount,
+      loanAmount: loan_amount || caseEntity.loan_amount,
     });
 
     res.json({ success: true, ...result });
@@ -92,11 +102,14 @@ async function sendToOtherLender(req, res) {
     if (!contact_id) return res.status(400).json({ error: 'contact_id is required' });
 
     // Verify case
-    const caseRows = await prisma.$queryRawUnsafe(
-      `SELECT id, loan_amount FROM cases WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
-      caseId, tenantId
-    );
-    if (!caseRows[0]) return res.status(404).json({ error: 'Case not found' });
+    const caseEntity = await prisma.case.findFirst({
+      where: {
+        id: Number(caseId),
+        tenant_id: Number(tenantId)
+      },
+      select: { id: true, loan_amount: true }
+    });
+    if (!caseEntity) return res.status(404).json({ error: 'Case not found' });
 
     // Resolve contact (tenant-scoped)
     const contact = await resolveContactById(parseInt(contact_id), tenantId);
@@ -110,7 +123,7 @@ async function sendToOtherLender(req, res) {
       userId,
       contact,
       lenderName: contact.lender_name,
-      loanAmount: loan_amount || caseRows[0].loan_amount,
+      loanAmount: loan_amount || caseEntity.loan_amount,
     });
 
     res.json({ success: true, ...result });

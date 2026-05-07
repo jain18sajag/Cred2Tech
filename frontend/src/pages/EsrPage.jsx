@@ -549,10 +549,12 @@ export default function EsrPage() {
     </div>
   );
 
-  const lenders = esr?.raw_payload?.lenders || [];
+  const lenders = esr?.lenders || [];
   const eligibleLenders   = lenders.filter(l => l.is_eligible);
   const ineligibleLenders = lenders.filter(l => !l.is_eligible);
-  const monthlyIncome = esr?.raw_payload?.selected_monthly_income
+  
+  // Use snapshot data for income summary if available, else fallback to main fields
+  const monthlyIncome = esr?.input_snapshot?.selected_monthly_income
     || (esr?.combined_income ? esr.combined_income / 12 : null);
 
   return (
@@ -641,10 +643,10 @@ export default function EsrPage() {
                 <div style={{ padding: '16px 20px' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 4 }}>
                     {[
-                      { label: 'Loan Amount', value: formatDynamicCurrency(lender.final_eligible_loan_amount), color: 'var(--success)' },
-                      { label: 'ROI', value: lender.roi_min ? `${lender.roi_min}% p.a.` + (lender.roi_max ? ` – ${lender.roi_max}%` : '') : '—', color: 'var(--text-primary)' },
-                      { label: 'LTV', value: lender.applicable_ltv_percent ? `${(lender.applicable_ltv_percent * 100).toFixed(0)}%` : '—', color: 'var(--text-primary)' },
-                      { label: 'Max Tenure', value: formatDynamicTenure(lender.max_tenure_months), color: 'var(--text-primary)' }
+                      { label: 'Loan Amount', value: formatDynamicCurrency(lender.eligible_amount), color: 'var(--success)' },
+                      { label: 'ROI', value: lender.roi ? `${lender.roi}% p.a.` : '—', color: 'var(--text-primary)' },
+                      { label: 'LTV', value: lender.ltv ? `${(lender.ltv * 100).toFixed(0)}%` : '—', color: 'var(--text-primary)' },
+                      { label: 'Max Tenure', value: formatDynamicTenure(lender.tenure_months), color: 'var(--text-primary)' }
                     ].map(({ label, value, color }) => value && (
                       <div key={label} style={{ background: 'var(--bg-elevated)', borderRadius: 8, padding: '10px 12px' }}>
                         <div style={{ fontSize: 10, color: 'var(--text-tertiary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</div>
@@ -691,10 +693,10 @@ export default function EsrPage() {
                   <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8, lineHeight: 1.5 }}>
                     {lender.product_display_name || lender.product_type}
                   </p>
-                  {lender.ineligibility_reason && (
+                  {lender.remarks && (
                     <div style={{ marginTop: 10, padding: '8px 10px', background: '#FFF5F5', borderRadius: 6,
                       fontSize: 11, color: 'var(--error)', border: '1px solid #FED7D7' }}>
-                      ❌ {lender.ineligibility_reason}
+                      ❌ {lender.remarks}
                     </div>
                   )}
                   <CalcBreakdownPanel evaluations={lender.scheme_evaluations} monthlyIncome={monthlyIncome} />

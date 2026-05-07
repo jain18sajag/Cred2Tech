@@ -383,20 +383,11 @@ async function handleSignzyCallback(req, res) {
         });
 
         if (!dbReq) {
-            // Attempt fallback mapping: Find the latest request that was created for the AuthLink mode or IN_SYSTEM that is still waiting for a callback.
-            dbReq = await prisma.gstrAnalyticsRequest.findFirst({
-                where: {
-                    status: { in: ['AUTH_LINK_CREATED', 'PROCESSING', 'OTP_VERIFIED'] }
-                },
-                orderBy: { id: 'desc' }
-            });
-
-            if (!dbReq) {
-                console.warn(`[Webhook] Unmapped GST Request: ${providerRequestId}`);
-                return res.status(200).send("Unmapped but OK");
-            } else {
-                console.log(`[Webhook] Fallback mapped disconnected requestId ${providerRequestId} to nearest pending GST Request ID: ${dbReq.id}`);
-            }
+            // SECURITY FIX: Do NOT fallback to searching by status without tenant_id.
+            // A missing provider_request_id mapping means this is an orphaned/late callback.
+            // Acknowledge receipt to stop Signzy from retrying, but take no action.
+            console.warn(`[GST Webhook] Unmapped provider_request_id: ${providerRequestId}. No DB record found. Ignoring safely.`);
+            return res.status(200).send("OK");
         }
 
         if (dbReq.status === 'COMPLETED' || dbReq.status === 'REPORT_READY') {

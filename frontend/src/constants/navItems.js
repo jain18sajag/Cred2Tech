@@ -115,6 +115,13 @@ export const NAV_ITEMS = [
     icon: Mail,
     roles: ['DSA_ADMIN'],
   },
+  {
+    id: 'dsa-part-disbursement',
+    label: 'Part Disbursement',
+    path: '/disbursements/partial',
+    icon: Activity,
+    roles: ['DSA_ADMIN', 'DSA_MEMBER'],
+  },
 
 
 

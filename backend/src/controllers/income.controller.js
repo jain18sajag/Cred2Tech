@@ -41,7 +41,7 @@ async function deleteEntry(req, res) {
 async function confirm(req, res) {
   try {
     const caseId = parseInt(req.params.id, 10);
-    const updated = await incomeService.confirmIncomeSummary(caseId, req.user.tenant_id);
+    const updated = await incomeService.confirmIncomeSummary(caseId, req.user.tenant_id, req.user.id);
     res.json(updated);
   } catch (err) {
     if (err.message === 'Case not found or unauthorized.') return res.status(403).json({ error: err.message });

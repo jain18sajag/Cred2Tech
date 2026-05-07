@@ -153,6 +153,19 @@ exports.fetchPanIntelligence = async (req, res) => {
                     }
                 }
                 
+                // Update Customer profile with fresh data from PAN intelligence
+                await prisma.customer.update({
+                    where: { id: customer_id },
+                    data: {
+                        business_name: legalName || customer.business_name,
+                        entity_type: constitutionOfBusiness || customer.entity_type
+                    }
+                });
+
+                // Harden: Sync Case snapshots
+                const { syncCustomerSnapshots } = require('../services/case.service');
+                syncCustomerSnapshots(customer_id, tenantId).catch(err => console.error('Snapshot sync failed:', err));
+
                 return {
                    apiResponse, 
                    gstRecords,

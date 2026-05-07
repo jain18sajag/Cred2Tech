@@ -18,12 +18,14 @@ async function list(req, res) {
 // POST /api/tenant/lenders
 async function create(req, res) {
   try {
-    const { lender_name } = req.body;
+    const { lender_name, platform_lender_id, is_esr_enabled } = req.body;
     if (!lender_name?.trim()) return res.status(400).json({ error: 'lender_name is required' });
 
     const data = await svc.createTenantLender({
       tenantId: req.user.tenant_id,
       lenderName: lender_name,
+      platformLenderId: platform_lender_id,
+      isEsrEnabled: is_esr_enabled,
       userId: req.user.id,
     });
     res.status(201).json(data);
@@ -37,10 +39,12 @@ async function create(req, res) {
 async function update(req, res) {
   try {
     const id = parseInt(req.params.id);
-    const { lender_name, is_active } = req.body;
+    const { lender_name, is_active, platform_lender_id, is_esr_enabled } = req.body;
     const data = await svc.updateTenantLender(id, req.user.tenant_id, {
       lenderName: lender_name,
       isActive:   is_active,
+      platformLenderId: platform_lender_id,
+      isEsrEnabled: is_esr_enabled,
     });
     res.json(data);
   } catch (e) {

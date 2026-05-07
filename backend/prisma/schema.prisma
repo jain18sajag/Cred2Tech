@@ -69,6 +69,11 @@ model Tenant {
   tenant_lenders        TenantLender[]
   commission_rules      LenderCommissionRule[]
   audit_logs            AuditLog[]
+  eligibility_reports   EligibilityReport[]
+  proposals             Proposal[]
+  sanctions             CaseSanction[]
+  disbursements        Disbursement[]
+  pdd_tasks             PDDTask[]
 
   @@map("tenants")
 }
@@ -107,6 +112,7 @@ model User {
   api_logs          ApiUsageLog[]
   activity_logs     ActivityLog[]
   audit_logs        AuditLog[]
+  stage_history     CaseStageHistory[]
 
   @@map("users")
 }
@@ -196,6 +202,9 @@ enum CaseStage {
   IN_REVIEW
   APPROVED
   REJECTED
+  DISBURSED
+  PARTLY_DISBURSED
+  CLOSED
 }
 
 model Case {
@@ -213,8 +222,26 @@ model Case {
   dsa_notes          String?
   esr_generated      Boolean   @default(false)  // NEW Phase 1
   stage              CaseStage @default(DRAFT)
+  
+  // Pipeline Snapshot Fields (Performance Design)
+  customer_name      String?
+  entity_type        String?
+  cibil_score        Int?
+  alert_flag         String?
+  lead_date          DateTime  @default(now())
+  is_locked          Boolean   @default(false)
+
+  // Financial Summary Snapshot (Source of Truth is Disbursement table)
+  sanctioned_amount             Decimal?  @db.Decimal(18, 2)
+  total_disbursed_amount        Decimal?  @db.Decimal(18, 2) @default(0)
+  remaining_disbursement_amount Decimal?  @db.Decimal(18, 2) @default(0)
+  first_disbursement_date       DateTime?
+  last_disbursement_date        DateTime?
+
   created_at         DateTime  @default(now())
   updated_at         DateTime  @updatedAt
+  proposal_sent_at   DateTime?
+  proposal_sent_by_user_id Int?
 
   created_by_user_id Int
 
@@ -235,9 +262,19 @@ model Case {
   property         CasePropertyDetails?
   income_entries   CaseIncomeEntry[]
   obligations      CaseCreditObligation[]
-  esr              EligibilityReport?
+  esrs             EligibilityReport[]
   esr_financials   CaseEsrFinancials?
+  stage_history    CaseStageHistory[]
+  proposals        Proposal[]
 
+  // Sanction & Disbursement
+  sanction         CaseSanction?
+  disbursements    Disbursement[]
+  pdd_tasks        PDDTask[]
+
+  @@index([tenant_id, stage])
+  @@index([tenant_id, lender_name])
+  @@index([tenant_id, lead_date])
   @@map("cases")
 }
 
@@ -256,6 +293,7 @@ model Applicant {
   email          String?
   cibil_score    Int?
   emi            Float?        // DEPRECATED: use sum of CaseCreditObligation.emi_per_month
+  is_primary     Boolean       @default(false)
   otp_verified   Boolean       @default(false)
   bureau_fetched Boolean       @default(false)
   created_at     DateTime      @default(now())
@@ -289,6 +327,23 @@ model ActivityLog {
   @@index([case_id])
   @@index([customer_id])
   @@map("activity_logs")
+}
+
+model CaseStageHistory {
+  id           Int       @id @default(autoincrement())
+  case_id      Int
+  tenant_id    Int
+  old_stage    CaseStage
+  new_stage    CaseStage
+  changed_by   Int?
+  changed_at   DateTime  @default(now())
+
+  case         Case      @relation(fields: [case_id], references: [id])
+  user         User?     @relation(fields: [changed_by], references: [id])
+
+  @@index([case_id])
+  @@index([tenant_id])
+  @@map("case_stage_history")
 }
 
 enum OtpPurpose {
@@ -746,7 +801,9 @@ model Lender {
   created_by Int?
   updated_by Int?
 
-  products   LenderProduct[]
+  products       LenderProduct[]
+  proposals      Proposal[]
+  tenant_lenders TenantLender[]   // back-relation: DSA lenders linked to this platform lender
 
   @@map("lenders")
 }
@@ -894,6 +951,7 @@ model Document {
   customer   Customer?  @relation(fields: [customer_id], references: [id])
   case_entity Case?     @relation(fields: [case_id], references: [id])
   applicant   Applicant? @relation(fields: [applicant_id], references: [id])
+  proposal_docs ProposalDocument[]
 
   @@index([tenant_id])
   @@index([customer_id])
@@ -1017,23 +1075,66 @@ model CaseEsrFinancials {
 
 model EligibilityReport {
   id                    Int      @id @default(autoincrement())
-  case_id               Int      @unique
+  case_id               Int
+  tenant_id             Int
+
+  version_number        Int
+  is_latest             Boolean  @default(true)
+
   generated_at          DateTime @default(now())
   generated_by_user_id  Int?
+
   combined_income       Float?
   property_value        Float?
   primary_cibil_score   Int?
   lowest_cibil_score    Int?
   total_emi_per_month   Float?
-  raw_payload           Json?    // Per-lender eligibility breakdown
+
+  input_snapshot        Json
+  raw_payload           Json?    // Debugging only
+
   status                String   @default("GENERATED")
+  
+  lenders               EligibilityReportLender[]
+
   created_at            DateTime @default(now())
   updated_at            DateTime @updatedAt
 
   case_entity           Case     @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  tenant                Tenant   @relation(fields: [tenant_id], references: [id])
 
-  @@index([case_id])
+  @@index([case_id, tenant_id, is_latest])
   @@map("eligibility_reports")
+}
+
+model EligibilityReportLender {
+  id                 Int      @id @default(autoincrement())
+  esr_id             Int
+  tenant_lender_id   Int?
+  lender_id          String?
+
+  lender_name        String
+  product_type       String
+  product_display_name String?
+  best_scheme_name   String?
+  is_eligible        Boolean
+
+  eligible_amount    Float?
+  roi                Float?
+  tenure_months      Int?
+  emi                Float?
+  ltv                Float?
+  foir               Float?
+  
+  remarks            String?
+  rejection_reasons  Json?
+  scheme_evaluations Json?
+
+  created_at         DateTime @default(now())
+
+  esr                EligibilityReport @relation(fields: [esr_id], references: [id], onDelete: Cascade)
+
+  @@map("eligibility_report_lenders")
 }
 
 // --- Vendor Management Models ---
@@ -1170,11 +1271,20 @@ model TenantLender {
   tenant_id          Int
   lender_name        String
   is_active          Boolean  @default(true)
+
+  // Two-layer ESR architecture fields
+  // platform_lender_id: links to platform Lender master. null = manual/non-ESR lender.
+  platform_lender_id String?  
+  // is_esr_enabled: DSA_ADMIN controlled. Only meaningful when platform_lender_id is set.
+  // Platform lender must also be ACTIVE for ESR inclusion.
+  is_esr_enabled     Boolean  @default(false)
+
   created_by_user_id Int?
   created_at         DateTime @default(now())
   updated_at         DateTime @updatedAt
 
-  tenant             Tenant   @relation(fields: [tenant_id], references: [id])
+  tenant             Tenant               @relation(fields: [tenant_id], references: [id])
+  platform_lender    Lender?              @relation(fields: [platform_lender_id], references: [id])
   contacts           TenantLenderContact[]
   commission_rules   LenderCommissionRule[]
 
@@ -1197,4 +1307,159 @@ model TenantLenderContact {
   lender             TenantLender @relation(fields: [tenant_lender_id], references: [id], onDelete: Cascade)
 
   @@map("tenant_lender_contacts")
+}
+
+model Proposal {
+  id                        Int      @id @default(autoincrement())
+  tenant_id                 Int
+  case_id                   Int
+  lender_id                 String?
+  scheme_id                 Int?
+  case_esr_financial_id     Int?
+  proposal_source_id        Int?
+
+  proposal_number           String   @unique
+  proposal_status           String   @default("draft")
+  lender_submission_status  String?  @default("draft")
+
+  requested_amount          Float?
+  eligible_amount           Float?
+  roi_min                   Float?
+  roi_max                   Float?
+  tenure_months             Int?
+  
+  loan_purpose              String?
+  remarks                   String?
+  additional_notes          String?
+  preferred_banking_program String?
+
+  submitted_at              DateTime?
+  created_at                DateTime @default(now())
+  updated_at                DateTime @updatedAt
+
+  created_by_user_id        Int
+  updated_by_user_id        Int
+
+  // Relations
+  tenant                    Tenant   @relation(fields: [tenant_id], references: [id])
+  case                      Case     @relation(fields: [case_id], references: [id])
+  lender                    Lender?  @relation(fields: [lender_id], references: [id])
+  documents                 ProposalDocument[]
+
+  @@map("proposals")
+}
+
+model ProposalDocument {
+  id            Int      @id @default(autoincrement())
+  proposal_id   Int
+  document_id   Int
+  document_type String?
+
+  proposal      Proposal @relation(fields: [proposal_id], references: [id], onDelete: Cascade)
+  document      Document @relation(fields: [document_id], references: [id], onDelete: Cascade)
+
+  @@unique([proposal_id, document_id])
+  @@map("proposal_documents")
+}
+
+// ─── Sanction & Disbursement Flow ──────────────────────────────────────────
+
+model CaseSanction {
+  id                   Int      @id @default(autoincrement())
+  tenant_id            Int
+  case_id              Int      @unique
+  
+  // Snapshotted from selection/ESR
+  tenant_lender_id     Int?
+  lender_name          String
+  product_type         String
+  
+  loan_account_number  String
+  sanction_date        DateTime
+  sanctioned_amount    Decimal  @db.Decimal(18, 2)
+  confirmed_roi        Decimal  @db.Decimal(18, 4)
+  processing_fee       Decimal  @db.Decimal(18, 2)
+  
+  remarks              String?
+  created_by_user_id   Int
+  created_at           DateTime @default(now())
+  updated_at           DateTime @updatedAt
+
+  tenant               Tenant   @relation(fields: [tenant_id], references: [id])
+  case_entity          Case     @relation(fields: [case_id], references: [id])
+  disbursements        Disbursement[]
+
+  @@map("case_sanctions")
+}
+
+enum DisbursementStatus {
+  RECORDED
+  CANCELLED
+}
+
+model Disbursement {
+  id                   Int                @id @default(autoincrement())
+  tenant_id            Int
+  case_id              Int
+  case_sanction_id     Int
+  
+  // Snapshotted from sanction at time of entry
+  tenant_lender_id     Int?
+  lender_name          String
+  product_type         String
+  
+  tranche_number       Int
+  amount               Decimal            @db.Decimal(18, 2)
+  disbursement_date    DateTime
+  next_disbursement_due_date DateTime?
+  
+  status               DisbursementStatus @default(RECORDED)
+  remarks              String?
+  idempotency_key      String?
+  
+  created_by_user_id   Int
+  created_at           DateTime           @default(now())
+  updated_at           DateTime           @updatedAt
+
+  tenant               Tenant             @relation(fields: [tenant_id], references: [id])
+  case_entity          Case               @relation(fields: [case_id], references: [id])
+  sanction             CaseSanction       @relation(fields: [case_sanction_id], references: [id])
+  pdd_tasks            PDDTask[]
+
+  @@unique([tenant_id, case_id, idempotency_key])
+  @@map("disbursements")
+}
+
+enum PDDTaskStatus {
+  PENDING
+  RECEIVED
+  WAIVED
+}
+
+enum PDDTaskSource {
+  DISBURSEMENT
+  MANUAL
+}
+
+model PDDTask {
+  id                   Int           @id @default(autoincrement())
+  tenant_id            Int
+  case_id              Int
+  disbursement_id      Int?
+  
+  document_name        String
+  due_date             DateTime?
+  status               PDDTaskStatus @default(PENDING)
+  source_type          PDDTaskSource @default(MANUAL)
+  
+  remarks              String?
+  created_by_user_id   Int
+  created_at           DateTime      @default(now())
+  updated_at           DateTime      @updatedAt
+
+  tenant               Tenant        @relation(fields: [tenant_id], references: [id])
+  case_entity          Case          @relation(fields: [case_id], references: [id])
+  disbursement         Disbursement? @relation(fields: [disbursement_id], references: [id])
+
+  @@map("pdd_tasks")
 }

@@ -28,23 +28,25 @@ async function listTenantLenders(tenantId) {
 }
 
 // ── Create a tenant lender ────────────────────────────────────────────────────
-async function createTenantLender({ tenantId, lenderName, userId }) {
+async function createTenantLender({ tenantId, lenderName, platformLenderId, isEsrEnabled, userId }) {
   const rows = await prisma.$queryRawUnsafe(`
-    INSERT INTO tenant_lenders (tenant_id, lender_name, is_active, created_by_user_id, updated_at)
-    VALUES ($1, $2, true, $3, NOW())
+    INSERT INTO tenant_lenders (tenant_id, lender_name, is_active, platform_lender_id, is_esr_enabled, created_by_user_id, updated_at)
+    VALUES ($1, $2, true, $4, $5, $3, NOW())
     RETURNING *
-  `, tenantId, lenderName.trim(), userId);
+  `, tenantId, lenderName.trim(), userId, platformLenderId || null, isEsrEnabled || false);
   return rows[0];
 }
 
 // ── Update a tenant lender ────────────────────────────────────────────────────
-async function updateTenantLender(id, tenantId, { lenderName, isActive }) {
+async function updateTenantLender(id, tenantId, { lenderName, isActive, platformLenderId, isEsrEnabled }) {
   const sets = [];
   const vals = [];
   let idx = 1;
 
   if (lenderName !== undefined) { sets.push(`lender_name = $${idx++}`); vals.push(lenderName.trim()); }
-  if (isActive  !== undefined) { sets.push(`is_active = $${idx++}`);   vals.push(isActive); }
+  if (isActive   !== undefined) { sets.push(`is_active = $${idx++}`);   vals.push(isActive); }
+  if (platformLenderId !== undefined) { sets.push(`platform_lender_id = $${idx++}`); vals.push(platformLenderId); }
+  if (isEsrEnabled !== undefined) { sets.push(`is_esr_enabled = $${idx++}`); vals.push(isEsrEnabled); }
 
   if (sets.length === 0) throw new Error('No fields to update');
   sets.push(`updated_at = NOW()`);

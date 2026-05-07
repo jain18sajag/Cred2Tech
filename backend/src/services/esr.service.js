@@ -160,13 +160,17 @@ async function generateESR(case_id, user_id, tenant_id) {
  * getESR — fetches the latest ESR for a case.
  */
 async function getESR(case_id, tenant_id) {
-  const caseRecord = await prisma.case.findFirst({
-    where: { id: case_id, tenant_id },
-    include: { esr: true }
+  const latestESR = await prisma.eligibilityReport.findFirst({
+    where: { case_id, tenant_id, is_latest: true },
+    include: { lenders: true },
+    orderBy: { version_number: 'desc' }
   });
-  if (!caseRecord) throw new Error('Case not found or unauthorized.');
-  if (!caseRecord.esr) throw new Error('No ESR generated for this case yet.');
-  return caseRecord.esr;
+
+  if (!latestESR) {
+    throw new Error('No ESR generated for this case yet.');
+  }
+
+  return latestESR;
 }
 
 module.exports = { generateESR, getESR };

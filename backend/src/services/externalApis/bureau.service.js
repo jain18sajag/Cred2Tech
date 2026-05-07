@@ -150,9 +150,27 @@ async function runBureauCheck({ caseId, applicantId, mobileNumber, firstName, la
 
   // 3. Mark Applicant Native Boolean Flag if SUCCESS
   if (apiStatus === 'SUCCESS') {
-    await prisma.applicant.update({
-      where: { id: parseInt(applicantId) },
-      data: { bureau_fetched: true, cibil_score: score ? parseInt(score) : null }
+    const scoreVal = score ? parseInt(score) : null;
+
+    // Use a transaction to ensure both Applicant and Case (if primary) are updated
+    await prisma.$transaction(async (tx) => {
+      // Update Applicant
+      const updatedApplicant = await tx.applicant.update({
+        where: { id: parseInt(applicantId) },
+        data: { bureau_fetched: true, cibil_score: scoreVal }
+      });
+
+      // SYNC RULE: If this is the primary applicant, update the Case snapshot (ONLY if not in financial/locked stage)
+      if (updatedApplicant.is_primary) {
+        const caseRecord = await tx.case.findUnique({ where: { id: parseInt(caseId) } });
+        const financialStages = ['DISBURSED', 'PARTLY_DISBURSED', 'CLOSED'];
+        if (caseRecord && !financialStages.includes(caseRecord.stage)) {
+          await tx.case.update({
+            where: { id: parseInt(caseId) },
+            data: { cibil_score: scoreVal }
+          });
+        }
+      }
     });
   }
 

@@ -126,4 +126,34 @@ export const caseService = {
     const response = await axiosInstance.post(`/cases/${caseId}/proposals/${proposalId}/clone`, payload);
     return response.data;
   },
+
+  // Pipeline (List, Filter, Sort, Pagination)
+  getPipeline: async (params) => {
+    const response = await axiosInstance.get('/cases/pipeline', { params });
+    return response.data;
+  },
+
+  updateCaseStage: async (id, stage) => {
+    const response = await axiosInstance.patch(`/cases/${id}/stage`, { stage });
+    return response.data;
+  },
+
+  // ─── Sanction & Disbursement Flow ──────────────────────────────────────────
+  sanctionCase: async (caseId, payload) => {
+    const response = await axiosInstance.post(`/cases/${caseId}/sanction`, payload);
+    return response.data;
+  },
+  recordDisbursement: async (caseId, payload, idempotencyKey) => {
+    const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {};
+    const response = await axiosInstance.post(`/cases/${caseId}/disbursements`, payload, { headers });
+    return response.data;
+  },
+  getDisbursementSummary: async (caseId) => {
+    const response = await axiosInstance.get(`/cases/${caseId}/disbursements`);
+    return response.data;
+  },
+  getPartialDisbursements: async () => {
+    const response = await axiosInstance.get('/disbursements/partial');
+    return response.data;
+  }
 };

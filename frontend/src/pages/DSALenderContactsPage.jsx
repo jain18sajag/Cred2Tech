@@ -8,6 +8,7 @@ import LoadingSpinner from '../components/ui/LoadingSpinner';
 import {
   getTenantLenders, createTenantLender, updateTenantLender, deleteTenantLender,
   createTenantLenderContact, updateTenantLenderContact, deleteTenantLenderContact,
+  getPlatformLenders
 } from '../api/tenantLenderService';
 import {
   getCommissionRules, createCommissionRule, updateCommissionRule, 
@@ -37,14 +38,20 @@ function ProductBadge({ type }) {
   );
 }
 
-// ── Modal: Add Lender ──────────────────────────────────────────────────
-function LenderModal({ isOpen, onClose, onSave }) {
+// ── Modal: Add/Edit Lender ──────────────────────────────────────────────────
+function LenderModal({ isOpen, onClose, onSave, platformLenders = [], initialData = null }) {
   const [lenderName, setLenderName] = useState('');
+  const [platformLenderId, setPlatformLenderId] = useState('');
+  const [isEsrEnabled, setIsEsrEnabled] = useState(false);
   const [saving, setSaving]         = useState(false);
 
   useEffect(() => {
-    if (isOpen) setLenderName('');
-  }, [isOpen]);
+    if (isOpen) {
+      setLenderName(initialData?.lender_name || '');
+      setPlatformLenderId(initialData?.platform_lender_id || '');
+      setIsEsrEnabled(initialData?.is_esr_enabled || false);
+    }
+  }, [isOpen, initialData]);
 
   if (!isOpen) return null;
 
@@ -52,7 +59,12 @@ function LenderModal({ isOpen, onClose, onSave }) {
     if (!lenderName.trim()) { toast.error('Lender name is required'); return; }
     setSaving(true);
     try {
-      await onSave({ lender_name: lenderName, is_active: true });
+      await onSave({ 
+        lender_name: lenderName, 
+        platform_lender_id: platformLenderId || null,
+        is_esr_enabled: isEsrEnabled,
+        is_active: true 
+      });
       onClose();
     } catch (e) {
       toast.error(e.response?.data?.error || 'Failed to save lender');
@@ -63,22 +75,69 @@ function LenderModal({ isOpen, onClose, onSave }) {
     <div style={overlay}>
       <div style={modalBox}>
         <div style={modalHeader}>
-          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Add New Lender</h3>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{initialData ? 'Edit Lender Settings' : 'Add New Lender'}</h3>
           <button onClick={onClose} style={iconBtn}><X size={18} /></button>
         </div>
-        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
           <div>
             <label style={labelStyle}>LENDER NAME *</label>
             <input value={lenderName} onChange={e => setLenderName(e.target.value)}
               placeholder="e.g. HDFC Bank, Axis Bank, ICICI Bank"
               style={inputStyle} onKeyDown={e => e.key === 'Enter' && handleSave()} />
           </div>
+
+          <div style={{ padding: '16px', background: '#F9FAFB', borderRadius: 12, border: '1px solid #E5E7EB' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <Briefcase size={16} color="#6366F1" />
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#374151' }}>ESR CONFIGURATION</span>
+            </div>
+            
+            <div style={{ marginBottom: 16 }}>
+              <label style={labelStyle}>LINK TO PLATFORM LENDER</label>
+              <select 
+                value={platformLenderId} 
+                onChange={e => setPlatformLenderId(e.target.value)}
+                style={inputStyle}
+              >
+                <option value="">-- Manual Lender (No ESR Matrix) --</option>
+                {platformLenders.map(p => (
+                  <option key={p.id} value={p.id}>{p.name} ({p.code})</option>
+                ))}
+              </select>
+              <div style={{ fontSize: 11, color: '#6B7280', marginTop: 6 }}>
+                Link this lender to evaluate cases against the platform's automated eligibility rules.
+              </div>
+            </div>
+
+            {platformLenderId && (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Enable in ESR</div>
+                  <div style={{ fontSize: 11, color: '#6B7280' }}>Include this lender in ESR generation</div>
+                </div>
+                <div 
+                  onClick={() => setIsEsrEnabled(!isEsrEnabled)}
+                  style={{
+                    width: 44, height: 24, borderRadius: 12, padding: 2, cursor: 'pointer',
+                    background: isEsrEnabled ? '#6366F1' : '#E5E7EB',
+                    transition: 'all 0.2s', position: 'relative'
+                  }}
+                >
+                  <div style={{
+                    width: 20, height: 20, background: 'white', borderRadius: '50%',
+                    transform: isEsrEnabled ? 'translateX(20px)' : 'translateX(0)',
+                    transition: 'all 0.2s'
+                  }} />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
         <div style={modalFooter}>
           <button onClick={onClose} style={btnOutline}>Cancel</button>
           <button onClick={handleSave} disabled={saving}
             style={{ ...btnPrimary, opacity: saving ? 0.7 : 1 }}>
-            {saving ? 'Saving...' : 'Add Lender'}
+            {saving ? 'Saving...' : initialData ? 'Save Changes' : 'Add Lender'}
           </button>
         </div>
       </div>
@@ -91,11 +150,12 @@ export default function DSALenderContactsPage() {
   const isAdmin = hasRole('DSA_ADMIN');
 
   const [lenders, setLenders]   = useState([]);
+  const [platformLenders, setPlatformLenders] = useState([]);
   const [commissionRules, setCommissionRules] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [expanded, setExpanded] = useState({});
 
-  const [lenderModal, setLenderModal] = useState({ open: false });
+  const [lenderModal, setLenderModal] = useState({ open: false, initialData: null });
 
   // For inline editing states
   const [contactEdits, setContactEdits] = useState({}); // { lenderId: { ...contact } }
@@ -105,12 +165,14 @@ export default function DSALenderContactsPage() {
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const [lendersData, rulesData] = await Promise.all([
+      const [lendersData, rulesData, platformData] = await Promise.all([
         getTenantLenders(),
-        getCommissionRules()
+        getCommissionRules(),
+        getPlatformLenders()
       ]);
       setLenders(lendersData);
       setCommissionRules(rulesData);
+      setPlatformLenders(platformData);
       
       // Initialize states
       const initialActiveTabs = {};
@@ -136,8 +198,13 @@ export default function DSALenderContactsPage() {
 
   // ── Lender actions ──
   const handleAddLender = async (payload) => {
-    await createTenantLender(payload);
-    toast.success('Lender added');
+    if (lenderModal.initialData) {
+      await updateTenantLender(lenderModal.initialData.id, payload);
+      toast.success('Lender settings updated');
+    } else {
+      await createTenantLender(payload);
+      toast.success('Lender added');
+    }
     await load();
   };
 
@@ -317,7 +384,23 @@ export default function DSALenderContactsPage() {
                       {lender.lender_name.substring(0, 2).toUpperCase()}
                     </div>
                     <div>
-                      <div style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>{lender.lender_name}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>{lender.lender_name}</div>
+                        {lender.platform_lender_id ? (
+                          lender.is_esr_enabled ? (
+                            <span style={{ fontSize: 10, fontWeight: 700, background: '#D1FAE5', color: '#065F46', padding: '2px 8px', borderRadius: 10 }}>ESR ENABLED</span>
+                          ) : (
+                            <span style={{ fontSize: 10, fontWeight: 700, background: '#F3F4F6', color: '#374151', padding: '2px 8px', borderRadius: 10 }}>LINKED</span>
+                          )
+                        ) : (
+                          <span style={{ fontSize: 10, fontWeight: 700, background: '#FEF3C7', color: '#92400E', padding: '2px 8px', borderRadius: 10 }}>MANUAL LENDER</span>
+                        )}
+                      </div>
+                      {!lender.platform_lender_id && (
+                         <div style={{ fontSize: 11, color: '#92400E', marginTop: 2 }}>
+                           Not evaluated in ESR until linked.
+                         </div>
+                      )}
                       <div style={{ fontSize: 12, color: '#6B7280', marginTop: 4 }}>
                         LAP · HL · Working Capital · Term Loan
                       </div>
@@ -326,6 +409,21 @@ export default function DSALenderContactsPage() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: '#10B981' }}>Active</span>
                     <span style={{ fontSize: 12, fontWeight: 600, color: '#4B5563' }}>{configuredProductsCount} products configured</span>
+                    {isAdmin && (
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLenderModal({ open: true, initialData: lender });
+                        }}
+                        style={{
+                          background: '#fff', color: '#4B5563', border: '1px solid #D1D5DB', borderRadius: 20,
+                          padding: '6px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                          display: 'flex', alignItems: 'center', gap: 6
+                        }}
+                      >
+                        <Edit2 size={14} /> Edit Settings
+                      </button>
+                    )}
                     <button 
                       onClick={(e) => {
                         e.stopPropagation();
@@ -581,8 +679,10 @@ export default function DSALenderContactsPage() {
       {/* Modals */}
       <LenderModal
         isOpen={lenderModal.open}
-        onClose={() => setLenderModal({ open: false })}
+        onClose={() => setLenderModal({ open: false, initialData: null })}
         onSave={handleAddLender}
+        platformLenders={platformLenders}
+        initialData={lenderModal.initialData}
       />
     </div>
   );

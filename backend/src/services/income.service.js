@@ -129,14 +129,9 @@ async function deleteIncomeEntry(entry_id, case_id, tenant_id) {
 /**
  * confirmIncomeSummary — advances the case stage to INCOME_REVIEWED.
  */
-async function confirmIncomeSummary(case_id, tenant_id) {
-  const caseRecord = await prisma.case.findFirst({ where: { id: case_id, tenant_id } });
-  if (!caseRecord) throw new Error('Case not found or unauthorized.');
-
-  return prisma.case.update({
-    where: { id: case_id },
-    data: { stage: 'INCOME_REVIEWED' }
-  });
+async function confirmIncomeSummary(case_id, tenant_id, userId) {
+  const { updateStage } = require('./case.service');
+  return await updateStage(case_id, tenant_id, 'INCOME_REVIEWED', userId);
 }
 
 module.exports = {

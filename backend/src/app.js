@@ -43,8 +43,10 @@ const documentRoutes = require('./routes/document.routes');
 const onboardingRoutes       = require('./routes/onboarding.routes');
 const tenantLenderRoutes     = require('./routes/tenantLender.routes');
 const tenantLenderContactRoutes = require('./routes/tenantLenderContacts.routes');
+const platformLenderRoutes = require('./routes/platformLender.routes');
 const vendorRoutes = require('./routes/vendor.routes');
 const commissionRoutes = require('./routes/lenderCommission.routes');
+const disbursementRoutes = require('./routes/disbursement.routes');
 
 const apiRouter = express.Router();
 
@@ -72,6 +74,8 @@ apiRouter.use('/cases/:id', onboardingRoutes);
 // Tenant-scoped lender contact configuration (DSA only)
 apiRouter.use('/tenant/lenders', tenantLenderRoutes);
 apiRouter.use('/tenant/lender-contacts', tenantLenderContactRoutes);
+apiRouter.use('/platform-lenders', platformLenderRoutes);
+apiRouter.use('/disbursements', disbursementRoutes);
 
 app.use('/api', apiRouter);
 

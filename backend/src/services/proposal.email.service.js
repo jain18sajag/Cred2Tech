@@ -65,37 +65,49 @@ function amountInLakhs(n) {
 
 // ── Fetch case metadata for email ─────────────────────────────────────────────
 async function fetchCaseMeta(caseId, tenantId) {
-  const rows = await prisma.$queryRawUnsafe(`
-    SELECT c.id, c.product_type, c.loan_amount, c.stage,
-           cu.business_name, cu.business_pan,
-           t.name AS tenant_name,
-           u.name AS created_by_name
-    FROM cases c
-    JOIN customers cu ON cu.id = c.customer_id
-    JOIN tenants t ON t.id = c.tenant_id
-    JOIN users u ON u.id = c.created_by_user_id
-    WHERE c.id = $1 AND c.tenant_id = $2
-    LIMIT 1
-  `, caseId, tenantId);
-  return rows[0] || null;
+  const caseEntity = await prisma.case.findFirst({
+    where: {
+      id: Number(caseId),
+      tenant_id: Number(tenantId)
+    },
+    include: {
+      customer: true,
+      tenant: true,
+      created_by: true
+    }
+  });
+
+  if (!caseEntity) return null;
+
+  return {
+    id: caseEntity.id,
+    product_type: caseEntity.product_type,
+    loan_amount: caseEntity.loan_amount,
+    stage: caseEntity.stage,
+    business_name: caseEntity.customer.business_name,
+    business_pan: caseEntity.customer.business_pan,
+    tenant_name: caseEntity.tenant.name,
+    created_by_name: caseEntity.created_by.name
+  };
 }
 
 // ── Fetch sender user details ─────────────────────────────────────────────────
 async function fetchUser(userId) {
-  const rows = await prisma.$queryRawUnsafe(
-    `SELECT id, name, email, mobile FROM users WHERE id = $1 LIMIT 1`, userId
-  );
-  return rows[0] || {};
+  const user = await prisma.user.findUnique({
+    where: { id: Number(userId) },
+    select: { id: true, name: true, email: true, mobile: true }
+  });
+  return user || {};
 }
 
 // ── Fetch DSA code for subject line ──────────────────────────────────────────
 async function fetchDsaCode(tenantId) {
-  const rows = await prisma.$queryRawUnsafe(
-    `SELECT id, name FROM tenants WHERE id = $1 LIMIT 1`, tenantId
-  );
-  const t = rows[0];
-  if (!t) return `DSA-${tenantId}`;
-  return `DSA-${String(t.id).padStart(4, '0')}`;
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: Number(tenantId) },
+    select: { id: true, name: true }
+  });
+  if (!tenant) return `DSA-${tenantId}`;
+  return `DSA-${String(tenant.id).padStart(4, '0')}`;
 }
 
 // ── Build email content ───────────────────────────────────────────────────────
@@ -160,12 +172,25 @@ function buildEmailContent({ caseMeta, sender, contact, dsaCode, loanAmount }) {
 
 // ── Fetch case documents for attachment ───────────────────────────────────────
 async function fetchCaseDocuments(caseId, tenantId) {
-  return prisma.$queryRawUnsafe(`
-    SELECT id, document_type, original_file_name, file_name, storage_path, source_url, mime_type
-    FROM documents
-    WHERE case_id = $1 AND tenant_id = $2 AND status = 'ACTIVE'
-    ORDER BY document_type ASC
-  `, caseId, tenantId);
+  return prisma.document.findMany({
+    where: {
+      case_id: Number(caseId),
+      tenant_id: Number(tenantId),
+      status: 'ACTIVE'
+    },
+    select: {
+      id: true,
+      document_type: true,
+      original_file_name: true,
+      file_name: true,
+      storage_path: true,
+      source_url: true,
+      mime_type: true
+    },
+    orderBy: {
+      document_type: 'asc'
+    }
+  });
 }
 
 // ── Main: Send proposal email ─────────────────────────────────────────────────

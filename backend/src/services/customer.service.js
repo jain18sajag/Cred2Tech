@@ -56,6 +56,10 @@ async function createOrAttachCustomer(data, tenant_id, user_id) {
     });
   }
 
+  // Harden: Sync Case snapshots (customer_name, entity_type) to prevent stale data in Pipeline
+  const { syncCustomerSnapshots } = require('./case.service');
+  syncCustomerSnapshots(customer.id, tenant_id).catch(err => console.error('Snapshot sync failed:', err));
+
   return customer;
 }
 
