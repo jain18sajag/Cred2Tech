@@ -1,21 +1,111 @@
 const prisma = require('../../config/db');
 
 async function checkCustomerByPan(business_pan, tenant_id) {
+  const pan = business_pan?.trim().toUpperCase();
   const customer = await prisma.customer.findFirst({
     where: {
-      business_pan,
+      business_pan: pan,
       tenant_id
     }
   });
   return customer;
 }
 
+async function findDuplicates({ pan, mobile, email }, tenant_id) {
+  // Normalize PAN
+  const normalizedPan = pan?.trim().toUpperCase();
+
+  // If PAN is provided, it is the primary identifier. We should only match by PAN.
+  if (normalizedPan) {
+    return await prisma.customer.findFirst({
+      where: {
+        business_pan: normalizedPan,
+        tenant_id
+      }
+    });
+  }
+
+  // If no PAN is provided yet, fallback to mobile or email
+  const or = [];
+  if (mobile) or.push({ business_mobile: mobile });
+  if (email) or.push({ business_email: email });
+
+  if (or.length === 0) return null;
+
+  return await prisma.customer.findFirst({
+    where: {
+      tenant_id,
+      OR: or
+    }
+  });
+}
+
+async function getReusableSummary(customer_id, tenant_id) {
+  const [gst, itr, bank, allCases] = await Promise.all([
+    prisma.gstrAnalyticsRequest.findFirst({
+      where: { customer_id, status: { in: ['COMPLETED', 'REPORT_READY', 'CALLBACK_RECEIVED'] } },
+      orderBy: { updated_at: 'desc' }
+    }),
+    prisma.itrAnalyticsRequest.findFirst({
+      where: { customer_id, status: 'COMPLETED' },
+      orderBy: { updated_at: 'desc' }
+    }),
+    prisma.bankStatementAnalysisRequest.findFirst({
+      where: { customer_id, status: 'COMPLETED' },
+      orderBy: { updated_at: 'desc' }
+    }),
+    prisma.case.findMany({
+      where: { customer_id, tenant_id },
+      orderBy: { created_at: 'desc' },
+      include: {
+        applicants: {
+          include: {
+            bureau_checks: { where: { status: { in: ['SUCCESS', 'COMPLETED'] } }, orderBy: { created_at: 'desc' }, take: 1 },
+            salary_ocr_results: { where: { ocr_status: 'COMPLETED' }, orderBy: { created_at: 'desc' }, take: 3 },
+            income_entries: true,
+            obligations: true
+          }
+        }
+      }
+    })
+  ]);
+
+  const latestCase = allCases[0] || null;
+  const allApplicants = latestCase?.applicants || [];
+  const allIncomeEntries = allApplicants.flatMap(a => a.income_entries || []);
+
+  const bureauAvailable = allApplicants.some(a => a.bureau_checks.length > 0 || a.obligations.length > 0);
+  const ocrAvailable = allApplicants.some(a => a.salary_ocr_results.length > 0);
+
+  return {
+    has_previous_case: !!latestCase,
+    previous_cases_count: allCases.length,
+    latest_case_id: latestCase?.id || null,
+    gst: gst ? { available: true, last_updated: gst.updated_at } : { available: false, last_updated: null },
+    itr: itr ? { available: true, last_updated: itr.updated_at } : { available: false, last_updated: null },
+    bank: bank ? { available: true, last_updated: bank.updated_at } : { available: false, last_updated: null },
+    bureau: bureauAvailable ? { available: true, last_updated: null } : { available: false, last_updated: null },
+    salary_ocr: ocrAvailable ? { available: true, last_updated: null } : { available: false, last_updated: null },
+    income_entries: allIncomeEntries.length > 0 ? { available: true, count: allIncomeEntries.length } : { available: false, count: 0 },
+    applicants: allApplicants.length > 0 ? { available: true, count: allApplicants.length } : { available: false, count: 0 }
+  };
+}
+
 async function createOrAttachCustomer(data, tenant_id, user_id) {
   const { business_pan, business_mobile, business_email, business_name, customer_id } = data;
+  const normalizedPan = business_pan?.trim().toUpperCase();
 
   if (customer_id) {
+    const existing = await prisma.customer.findFirst({
+      where: { id: parseInt(customer_id, 10), tenant_id }
+    });
+    
+    if (!existing) {
+        throw new Error('Customer not found or unauthorized.');
+    }
+
     return await prisma.customer.update({
-      where: { id: parseInt(customer_id, 10) },
+      where: { id: existing.id },
       data: {
         business_mobile,
         business_email,
@@ -27,7 +117,7 @@ async function createOrAttachCustomer(data, tenant_id, user_id) {
   // Try to find the existing customer within this tenant
   let customer = await prisma.customer.findFirst({
     where: {
-      business_pan,
+      business_pan: normalizedPan,
       tenant_id
     }
   });
@@ -37,7 +127,7 @@ async function createOrAttachCustomer(data, tenant_id, user_id) {
     customer = await prisma.customer.create({
       data: {
         tenant_id,
-        business_pan,
+        business_pan: normalizedPan,
         business_mobile,
         business_email,
         business_name,
@@ -65,5 +155,7 @@ async function createOrAttachCustomer(data, tenant_id, user_id) {
 
 module.exports = {
   checkCustomerByPan,
+  findDuplicates,
+  getReusableSummary,
   createOrAttachCustomer
 };

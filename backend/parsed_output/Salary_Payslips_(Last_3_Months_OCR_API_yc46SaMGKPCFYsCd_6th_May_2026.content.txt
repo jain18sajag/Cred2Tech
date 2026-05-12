@@ -1,0 +1,192 @@
+6th	May	2026
+OCR	API
+API	Documentation
+----------------Page (0) Break----------------
+								
+								--form	'extra_accuracy="true"'
+								--form	'model="v1"'	\
+								--form	'parserApp="yc46SaMGKPCFYsCd"'	\
+								--form	'file=@"/path/to/your/file"'	\
+								--header	'x-api-key:	SUN-AMA-224CEF-UPRRUL-E4I55PIT'	\
+				curl	--location	'https://prod-ml.fracto.tech/upload-file-smart-ocr'	\
+Sample	CURL	Request
+API	Key:	Used	for	authentication	and	authorization.
+used	according	to	data	format.
+Model:	There	are	High	Intelligence	(v1)	and	Low	Intelligence	(v2)	models	that	can	be
+precise	and	efficient	OCR	processing.
+options.	Each	parser	is	managed	through	a	unique	API	key	and	schema,	enabling
+different	document	types,	such	as	invoices	or	contracts,	with	customizable	accuracy
+converting	them	into	structured	JSON	format.	It	allows	automated	data	extraction	for
+Parser:	A	tailored	workflow	that	extracts	specified	data	fields	from	documents,
+Elements	of	OCR	API
+API	Key:	SUN-AMA-224CEF-UPRRUL-E4I55PIT
+API:	OCR	API
+Client	Name:	Salary	Payslips	(Last	3	Months
+Provider:	Fracto
+OCR	API
+----------------Page (1) Break----------------
+values	such	as	2,	3-4,	1.              as	2,	3-4,	1
+page_range  string                                  No                0
+Number,	range	or	comma-separated         values	such
+handwritten	and	blur	accuracy.
+extra_accuracyboolean                                 No    true,	false  false
+Toggles	extra	accuracy	for
+parsing.                               intel)
+model    string                                  No     v1,	v2
+Selects	the	model	version	for                      v1	(high
+use.
+parserApp   string                                  Yes       -       -
+The	ID	of	the	parser	application	to
+processing.
+file       file                                   Yes       -       -
+The	file	to	be	uploaded	for
+Values   Value
+Parameter  Type            Description          Required
+Possible Default
+Request	Body	Parameters
+x-api-key   string         Client's	API	key	for	authentication.            Yes
+Header    Type                   Description                    Required
+Request	Head	Parameters
+								
+				}
+								"total_pages":	1
+								"totalAttempts":	1,
+												},
+																JSON	STRUCTURE
+												{
+								"parsedData":	
+								"job_status":	"success",
+								"job_id":	31033,
+				{
+Expected	Response
+----------------Page (2) Break----------------
+																								     the	job.
+funds	to	process	the	job."	}
+403 Rejection                                            the	wallet	to	process
+"rejected",	"message":	"Insufficient	
+Insufficient	funds	in
+												{	"jobId":	4766,	"status":	
+																								
+specified	parser.
+found	for	the	specified	parser."	}
+403 Rejection                                              available	for	the
+"rejected",	"message":	"No	commercials	
+No	commercials
+												{	"jobId":	4765,	"status":	
+																								
+provided	API	key.
+found	for	the	provided	API	key."	}
+403 Rejection                                            associated	with	the
+"rejected",	"message":	"No	active	wallet	
+No	active	wallet
+												{	"jobId":	4764,	"status":	
+																								
+}
+mode	to	be	enabled.
+enabled.	Please	enable	'extra	accuracy'."	
+403 Rejection                                              'extra	accuracy'
+functions	when	'extra	accuracy'	mode	is	
+The	parser	requires
+"rejected",	"Error":	"This	parser	only	
+												{	"jobId":	4763,	"status":	
+																								
+provided	is	invalid.
+used"	}
+403 Rejection
+"rejected",	"Error":	"Invalid	parser	ID	    The	parserApp	ID
+												{	"jobId":	4761,	"status":	
+																								
+is	invalid	or	missing.
+403 Rejection        "Error":	"Invalid	API	Key"	}
+The	provided	API	key
+												{	"status":	"rejected",	
+accepted.
+																								
+and	PDF	files	are
+allowed."	}
+403 Rejection   Only	PNG,	JPEG,	WEBP,	and	PDF	files	are	    PNG,	JPEG,	WEBP,
+"rejected",	"Error":	"Invalid	file	type.	
+unsupported.	Only
+												{	"jobId":	4762,	"status":	
+The	file	type	is
+																								
+the	request	body.
+403 Rejection        "Error":	"No	file	uploaded"	}
+No	file	attached	in
+												{	"status":	"rejected",	
+any	errors.
+																								
+200  Success                                            successfully	without
+												{	"status":	"success"	}
+Job	processed
+Code  Type
+Response                      Description
+Status Error
+Error	Codes
+----------------Page (3) Break----------------
+This	ensures	that	all	your	async	processes	are	executed	efficiently.
+Polling	API:	Clients	can	periodically	query	the	server	for	job	status	using	a	job	ID.
+polling.
+result	once	the	processing	is	complete.	This	eliminates	the	need	for	continuous
+Webhook:	Clients	can	provide	a	callback	URL	where	the	server	sends	the	status	and
+blocking	workflows	for	large	or	time-consuming	operations.
+or	can	check	the	status	using	a	polling	API.	This	ensures	faster	interactions	and	non-
+task	in	the	background.	The	client	is	notified	of	the	task's	completion	via	a	webhook
+block	the	client's	execution	flow.	The	request	is	sent,	and	the	server	processes	the
+Async	API	refers	to	an	asynchronous	programming	method	where	API	requests	do	not
+OCR	API	–	Webhook	(Async)
+Error                    																												   file.
+occurred	during	file	upload:	"	}
+500  Server                                      occurred	while	uploading	the
+"rejected",	"Error":	"An	error	
+Internal      																{	"status":	         An	unexpected	error
+Error                    																					r	e	a	d			th	e		uploaded	PDF	file.
+"Failed	to	read	PDF	file."	}
+500  Server                                        error	while	attempting	to
+"status":	"rejected",	"Error":	
+Internal   																{	"jobId":	4767,	   The	system	encountered	an
+																									n	o	n	-integer	values.
+values	must	be	integers."	}
+400 Rejection                                       invalid	because	it	contains
+"rejected",	"Error":	"Page	range	
+																{	"status":	      The	page	range	provided	is
+																												
+upload)                                              limit	of	5.
+5	files."	}
+400   (Multi-   files	uploaded.	Maximum	allowed	is	   files	exceeds	the	maximum
+"rejected",	"Error":	"Too	many	
+Rejection                                       The	number	of	uploaded
+																{	"status":	
+																												
+the	allowable	limit	of	10	MB.
+exceeds	the	10	MB	limit."	}
+400 Rejection
+"rejected",	"Error":	"File	size	
+Uploaded	file	size	exceeds
+																{	"status":	
+Code  Type
+Response                      Description
+Status Error
+----------------Page (4) Break----------------
+Note:	JOB	ID	must	be	dynamically	sent	in	the	URL.	You	can	only	extract	your	own	Job	IDs.
+												
+				--header	'x-api-key:	SUN-AMA-224CEF-UPRRUL-E4I55PIT'
+job_id=22958'	\
+				curl	--location	'https://prod-ml.fracto.tech/get-job-status?
+Polling	API
+												
+				}
+								"status":	"processing",
+								"job_id":	31033,
+				{
+Expected	Response
+												
+								--form	'extra_accuracy="true"'
+								--form	'model="v1"'	\
+								--form	'parserApp="yc46SaMGKPCFYsCd"'	\
+								--form	'file=@"/path/to/your/file"'	\
+								--header	'x-api-key:	SUN-AMA-224CEF-UPRRUL-E4I55PIT'	\
+\
+curl	--location	'https://prod-ml.fracto.tech/upload-file-smart-ocr-async'	
+Sample	CURL	Request
+----------------Page (5) Break----------------

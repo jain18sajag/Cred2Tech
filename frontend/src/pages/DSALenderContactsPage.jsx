@@ -145,6 +145,94 @@ function LenderModal({ isOpen, onClose, onSave, platformLenders = [], initialDat
   );
 }
 
+// ── Modal: Add/Edit Contact ─────────────────────────────────────────────────
+function ContactModal({ isOpen, onClose, onSave, lender, initialData = null }) {
+  const [formData, setFormData] = useState({
+    product_type: 'ALL',
+    contact_name: '',
+    contact_email: '',
+    contact_mobile: '',
+    dsa_code: '',
+    is_primary: false
+  });
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      if (initialData) setFormData(initialData);
+      else setFormData({ product_type: 'ALL', contact_name: '', contact_email: '', contact_mobile: '', dsa_code: '', is_primary: false });
+    }
+  }, [isOpen, initialData]);
+
+  if (!isOpen) return null;
+
+  const handleSave = async () => {
+    if (!formData.contact_name.trim()) return toast.error('Name is required');
+    if (!formData.contact_email.trim()) return toast.error('Email is required');
+    if (!formData.product_type) return toast.error('Product type is required');
+
+    setSaving(true);
+    try {
+      await onSave(lender, formData);
+      onClose();
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Failed to save contact');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={overlay}>
+      <div style={modalBox}>
+        <div style={modalHeader}>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
+            {initialData ? 'Edit Contact' : 'Add Contact'} — {lender?.lender_name}
+          </h3>
+          <button onClick={onClose} style={iconBtn}><X size={18} /></button>
+        </div>
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <div>
+              <label style={labelStyle}>Product Type *</label>
+              <select style={inputStyle} value={formData.product_type} onChange={e => setFormData({...formData, product_type: e.target.value})}>
+                <option value="ALL">ALL (Fallback/General)</option>
+                {PRODUCT_TYPES.map(pt => <option key={pt} value={pt}>{pt}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>DSA Code</label>
+              <input style={inputStyle} value={formData.dsa_code || ''} onChange={e => setFormData({...formData, dsa_code: e.target.value})} placeholder="e.g. DSA-1234" />
+            </div>
+          </div>
+          <div>
+            <label style={labelStyle}>Contact Name *</label>
+            <input style={inputStyle} value={formData.contact_name} onChange={e => setFormData({...formData, contact_name: e.target.value})} placeholder="e.g. Suresh Nair" />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <div>
+              <label style={labelStyle}>Email *</label>
+              <input style={inputStyle} value={formData.contact_email} onChange={e => setFormData({...formData, contact_email: e.target.value})} placeholder="suresh@bank.com" />
+            </div>
+            <div>
+              <label style={labelStyle}>Mobile</label>
+              <input style={inputStyle} value={formData.contact_mobile || ''} onChange={e => setFormData({...formData, contact_mobile: e.target.value})} placeholder="9820000000" />
+            </div>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: '#374151', marginTop: 8, cursor: 'pointer' }}>
+            <input type="checkbox" checked={formData.is_primary} onChange={e => setFormData({...formData, is_primary: e.target.checked})} style={{ width: 16, height: 16 }} />
+            Mark as Primary Contact for {formData.product_type}
+          </label>
+        </div>
+        <div style={modalFooter}>
+          <button onClick={onClose} style={btnOutline}>Cancel</button>
+          <button onClick={handleSave} disabled={saving} style={btnPrimary}>{saving ? 'Saving...' : 'Save Contact'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DSALenderContactsPage() {
   const { hasRole } = useAuth();
   const isAdmin = hasRole('DSA_ADMIN');
@@ -156,9 +244,9 @@ export default function DSALenderContactsPage() {
   const [expanded, setExpanded] = useState({});
 
   const [lenderModal, setLenderModal] = useState({ open: false, initialData: null });
+  const [contactModal, setContactModal] = useState({ open: false, lender: null, initialData: null });
 
   // For inline editing states
-  const [contactEdits, setContactEdits] = useState({}); // { lenderId: { ...contact } }
   const [ruleEdits, setRuleEdits] = useState({}); // { `${lenderId}_${product}`: ruleConfig }
   const [activeProductTabs, setActiveProductTabs] = useState({}); // { lenderId: 'LAP' }
 
@@ -209,40 +297,30 @@ export default function DSALenderContactsPage() {
   };
 
   // ── Contact actions ──
-  const handleSaveContact = async (lenderId) => {
-    const edit = contactEdits[lenderId];
-    if (!edit || !edit.contact_name) {
-       toast.error('Contact Name is required');
-       return;
+  const handleSaveContact = async (lender, payload) => {
+    if (payload.id) {
+      await updateTenantLenderContact(payload.id, payload);
+      toast.success('Contact updated');
+    } else {
+      await createTenantLenderContact({
+        tenant_lender_id: lender.tenant_lender_id || undefined,
+        platform_lender_id: lender.platform_lender_id || undefined,
+        ...payload
+      });
+      toast.success('Contact added');
     }
-    
-    // Find if the lender already has a primary contact
-    const lender = lenders.find(l => l.id === lenderId);
-    const primaryContact = lender.contacts?.find(c => c.is_primary);
-
+    await load();
+  };
+  
+  const handleDeleteContact = async (id) => {
+    if (!window.confirm('Delete this contact?')) return;
     try {
-      if (primaryContact) {
-        await updateTenantLenderContact(primaryContact.id, {
-          ...primaryContact,
-          contact_name: edit.contact_name,
-          contact_mobile: edit.contact_mobile,
-          contact_email: edit.contact_email
-        });
-        toast.success('Contact details updated');
-      } else {
-        await createTenantLenderContact({
-          tenant_lender_id: lenderId,
-          product_type: 'ALL', // Global contact for prototype sake
-          is_primary: true,
-          contact_name: edit.contact_name,
-          contact_mobile: edit.contact_mobile,
-          contact_email: edit.contact_email
-        });
-        toast.success('Contact added');
-      }
-      setContactEdits(prev => { const n = {...prev}; delete n[lenderId]; return n; });
+      await deleteTenantLenderContact(id);
+      toast.success('Contact deleted');
       await load();
-    } catch (e) { toast.error(e.response?.data?.error || 'Failed'); }
+    } catch(e) {
+      toast.error(e.response?.data?.error || 'Failed to delete');
+    }
   };
 
   // ── Rule actions ──
@@ -356,9 +434,6 @@ export default function DSALenderContactsPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {lenders.map(lender => {
             const isExpanded = expanded[lender.id];
-            const primaryContact = lender.contacts?.find(c => c.is_primary) || {};
-            const isEditingContact = !!contactEdits[lender.id];
-            
             const activeProduct = activeProductTabs[lender.id] || PRODUCT_TYPES[0];
             const ruleState = getActiveRuleState(lender.id, activeProduct);
             const isEditingRule = !!ruleEdits[`${lender.id}_${activeProduct}`];
@@ -427,16 +502,7 @@ export default function DSALenderContactsPage() {
                     <button 
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (!isExpanded) toggleExpand(lender.id);
-                        if (!isEditingContact) {
-                          setContactEdits({ ...contactEdits, [lender.id]: {
-                            contact_name: primaryContact.contact_name || '',
-                            contact_mobile: primaryContact.contact_mobile || '',
-                            contact_email: primaryContact.contact_email || ''
-                          }});
-                        } else {
-                          handleSaveContact(lender.id);
-                        }
+                        setContactModal({ open: true, lender, initialData: null });
                       }}
                       style={{
                         background: '#6366F1', color: 'white', border: 'none', borderRadius: 20,
@@ -444,8 +510,7 @@ export default function DSALenderContactsPage() {
                         display: 'flex', alignItems: 'center', gap: 6
                       }}
                     >
-                      {isEditingContact ? <Check size={14} /> : <div style={{width: 14, height: 2, background: 'white'}}/>}
-                      {isEditingContact ? 'Save Contact' : 'Edit Contact'}
+                      <Plus size={14} /> Add Contact
                     </button>
                     {isExpanded ? <ChevronUp size={20} color="#9CA3AF" /> : <ChevronDown size={20} color="#9CA3AF" />}
                   </div>
@@ -456,39 +521,45 @@ export default function DSALenderContactsPage() {
                   <div style={{ borderTop: '1px solid #E5E7EB' }}>
                     {/* Contact Details Section */}
                     <div style={{ padding: '24px' }}>
-                      <div style={sectionTitle}>CONTACT DETAILS</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 24, marginTop: 12 }}>
-                        <div>
-                          <label style={inputLabel}>CONTACT PERSON</label>
-                          <input 
-                            value={isEditingContact ? contactEdits[lender.id].contact_name : primaryContact.contact_name || ''}
-                            onChange={e => setContactEdits({...contactEdits, [lender.id]: {...contactEdits[lender.id], contact_name: e.target.value}})}
-                            disabled={!isEditingContact}
-                            style={{...inputStyle, background: isEditingContact ? '#fff' : '#F9FAFB'}}
-                            placeholder="Suresh Nair"
-                          />
-                        </div>
-                        <div>
-                          <label style={inputLabel}>MOBILE</label>
-                          <input 
-                            value={isEditingContact ? contactEdits[lender.id].contact_mobile : primaryContact.contact_mobile || ''}
-                            onChange={e => setContactEdits({...contactEdits, [lender.id]: {...contactEdits[lender.id], contact_mobile: e.target.value}})}
-                            disabled={!isEditingContact}
-                            style={{...inputStyle, background: isEditingContact ? '#fff' : '#F9FAFB'}}
-                            placeholder="9820001122"
-                          />
-                        </div>
-                        <div>
-                          <label style={inputLabel}>EMAIL</label>
-                          <input 
-                            value={isEditingContact ? contactEdits[lender.id].contact_email : primaryContact.contact_email || ''}
-                            onChange={e => setContactEdits({...contactEdits, [lender.id]: {...contactEdits[lender.id], contact_email: e.target.value}})}
-                            disabled={!isEditingContact}
-                            style={{...inputStyle, background: isEditingContact ? '#fff' : '#F9FAFB'}}
-                            placeholder="suresh.nair@hdfc.com"
-                          />
-                        </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                        <div style={sectionTitle}>CONTACT PERSONS ({lender.contacts?.length || 0})</div>
+                        <button onClick={() => setContactModal({ open: true, lender, initialData: null })}
+                          style={{ background: 'none', border: 'none', color: '#6366F1', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <Plus size={14} /> Add Contact
+                        </button>
                       </div>
+
+                      {(!lender.contacts || lender.contacts.length === 0) ? (
+                        <div style={{ padding: '20px', background: '#F9FAFB', borderRadius: 8, textAlign: 'center', color: '#6B7280', fontSize: 13 }}>
+                          No contacts configured yet. Add one to send proposals to this lender.
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                          {lender.contacts.map(c => (
+                            <div key={c.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', border: '1px solid #E5E7EB', borderRadius: 8, background: '#fff' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                                <div>
+                                  <div style={{ fontSize: 14, fontWeight: 600, color: '#111827', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    {c.contact_name}
+                                    {c.is_primary && <span style={{ fontSize: 10, padding: '2px 6px', background: '#FEF3C7', color: '#92400E', borderRadius: 10, fontWeight: 700 }}>PRIMARY</span>}
+                                  </div>
+                                  <div style={{ fontSize: 13, color: '#6B7280', marginTop: 2 }}>{c.contact_email} {c.contact_mobile ? `· ${c.contact_mobile}` : ''}</div>
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                                <div style={{ textAlign: 'right' }}>
+                                  <ProductBadge type={c.product_type} />
+                                  {c.dsa_code && <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 4 }}>DSA Code: {c.dsa_code}</div>}
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  <button onClick={() => setContactModal({ open: true, lender, initialData: c })} style={iconBtn}><Edit2 size={16} /></button>
+                                  <button onClick={() => handleDeleteContact(c.id)} style={{...iconBtn, color: '#EF4444'}}><Trash2 size={16} /></button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     <div style={{ height: 1, background: '#E5E7EB' }} />
@@ -683,6 +754,13 @@ export default function DSALenderContactsPage() {
         onSave={handleAddLender}
         platformLenders={platformLenders}
         initialData={lenderModal.initialData}
+      />
+      <ContactModal
+        isOpen={contactModal.open}
+        onClose={() => setContactModal({ open: false, lender: null, initialData: null })}
+        onSave={handleSaveContact}
+        lender={contactModal.lender}
+        initialData={contactModal.initialData}
       />
     </div>
   );

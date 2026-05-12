@@ -122,6 +122,13 @@ export const NAV_ITEMS = [
     icon: Activity,
     roles: ['DSA_ADMIN', 'DSA_MEMBER'],
   },
+  {
+    id: 'pdd-management',
+    label: 'PDD Management',
+    path: '/pdd-management',
+    icon: Activity,
+    roles: ['DSA_ADMIN', 'DSA_MEMBER'],
+  },
 
 
 

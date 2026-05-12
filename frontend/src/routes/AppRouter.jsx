@@ -21,6 +21,7 @@ const NotFoundPage = lazy(() => import('../pages/NotFoundPage'));
 const DSARegisterPage = lazy(() => import('../pages/DSARegisterPage'));
 const CustomersListPage = lazy(() => import('../pages/CustomersListPage'));
 const AddCustomerWizardPage = lazy(() => import('../pages/AddCustomerWizardPage'));
+const AddSalariedCustomerWizardPage = lazy(() => import('../pages/AddSalariedCustomerWizardPage'));
 const CustomerProfilePage = lazy(() => import('../pages/CustomerProfilePage'));
 const SuperadminPricingPage = lazy(() => import('../pages/SuperadminPricingPage'));
 const SuperadminWalletManager = lazy(() => import('../pages/SuperadminWalletManager'));
@@ -35,6 +36,7 @@ const ProposalPage = lazy(() => import('../pages/ProposalPage'));
 const DSALenderContactsPage = lazy(() => import('../pages/DSALenderContactsPage'));
 const CaseDetailPage = lazy(() => import('../pages/CaseDetailPage'));
 const PartDisbursementPage = lazy(() => import('../pages/PartDisbursementPage'));
+const PddManagementPage = lazy(() => import('../pages/PddManagementPage'));
 
 const PageLoader = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -123,6 +125,14 @@ const AppRouter = () => (
               }
             />
             <Route
+              path="/customers/salaried/add"
+              element={
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER']}>
+                  <AddSalariedCustomerWizardPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/customers/:customer_id"
               element={
                 <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN']}>
@@ -185,6 +195,14 @@ const AppRouter = () => (
               element={
                 <ProtectedRoute allowedRoles={['DSA_ADMIN']}>
                   <DSALenderContactsPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/pdd-management"
+              element={
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER']}>
+                  <PddManagementPage />
                 </ProtectedRoute>
               }
             />

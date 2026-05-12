@@ -352,32 +352,44 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
     console.log(`======================================================\n`);
 
     // 3. Fetch Active Lenders (Two-Layer Architecture)
-    // Step 3a: Fetch tenant's ESR-enabled lenders with platform link
-    const tenantEsrLenders = await prisma.tenantLender.findMany({
-        where: {
-            tenant_id,                         // strict tenant isolation
-            is_active: true,
-            is_esr_enabled: true,
-            platform_lender_id: { not: null }  // must have platform link
-        },
-        select: {
-            id: true,                          // tenant_lender_id for output rows
-            lender_name: true,
-            platform_lender_id: true
-        }
+    // Step 3a: Fetch all active platform lenders
+    const platformLenders = await prisma.lender.findMany({
+        where: { status: 'ACTIVE' },
+        select: { id: true }
     });
 
-    if (tenantEsrLenders.length === 0) {
-        throw new Error('No ESR-enabled lenders configured. Please link and enable at least one lender in Lender Directory before generating ESR.');
+    if (platformLenders.length === 0) {
+        throw new Error('No platform lenders are active.');
     }
 
-    // Step 3b: Collect platform lender IDs from tenant selection
-    const platformLenderIds = tenantEsrLenders.map(tl => tl.platform_lender_id);
+    // Step 3b: Fetch tenant overrides
+    const tenantLenders = await prisma.tenantLender.findMany({
+        where: { tenant_id, is_active: true }
+    });
 
-    // Step 3c: Fetch platform lender matrix for only those IDs
+    const activePlatformLenderIds = [];
+    const tenantLenderIdMap = {};
+
+    for (const pl of platformLenders) {
+        const override = tenantLenders.find(t => t.platform_lender_id === pl.id);
+        if (override) {
+            if (override.is_esr_enabled) {
+                activePlatformLenderIds.push(pl.id);
+                tenantLenderIdMap[pl.id] = override.id;
+            }
+        } else {
+            activePlatformLenderIds.push(pl.id);
+        }
+    }
+
+    if (activePlatformLenderIds.length === 0) {
+        throw new Error('All platform lenders have been disabled for ESR in your configuration.');
+    }
+
+    // Step 3c: Fetch platform lender matrix for included IDs
     const lenders = await prisma.lender.findMany({
         where: {
-            id: { in: platformLenderIds },
+            id: { in: activePlatformLenderIds },
             status: 'ACTIVE'
         },
         include: {
@@ -396,12 +408,6 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
             }
         }
     });
-
-    // Step 3d: Build lookup map: platform_lender_id → tenant_lender_id (resolved, no more name fuzzing)
-    const tenantLenderIdMap = {};
-    for (const tl of tenantEsrLenders) {
-        tenantLenderIdMap[tl.platform_lender_id] = tl.id;
-    }
 
     const lenderResults = [];
 

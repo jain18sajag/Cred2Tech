@@ -74,6 +74,7 @@ model Tenant {
   sanctions             CaseSanction[]
   disbursements        Disbursement[]
   pdd_tasks             PDDTask[]
+  salary_ocr_results    SalarySlipOcrResult[]
 
   @@map("tenants")
 }
@@ -119,9 +120,15 @@ model User {
 
 // --- Onboarding Flow Models ---
 
+enum CustomerCategory {
+  MSME
+  SALARIED
+}
+
 model Customer {
   id                 Int       @id @default(autoincrement())
   tenant_id          Int
+  category           CustomerCategory @default(MSME)
   business_pan       String
   business_name      String?
   business_mobile    String?
@@ -147,6 +154,7 @@ model Customer {
   bank_statements BankStatementAnalysisRequest[]
   itr_analytics   ItrAnalyticsRequest[]
   documents       Document[]
+  salary_ocr_results SalarySlipOcrResult[]
 
   @@unique([tenant_id, business_pan])
   @@map("customers")
@@ -245,9 +253,22 @@ model Case {
 
   created_by_user_id Int
 
+  // Lender-Specific Child Case Fields
+  parent_case_id     Int?
+  platform_lender_id Int?
+  tenant_lender_id   Int?
+  contact_id         Int?
+  dsa_code           String?
+  contact_name       String?
+  contact_email      String?
+  contact_mobile     String?
+  is_cloned_snapshot Boolean   @default(false)
+
   tenant           Tenant                        @relation(fields: [tenant_id], references: [id])
   customer         Customer                      @relation(fields: [customer_id], references: [id])
   created_by       User                          @relation("CaseCreator", fields: [created_by_user_id], references: [id])
+  parent_case      Case?                         @relation("ParentChildCase", fields: [parent_case_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  child_cases      Case[]                        @relation("ParentChildCase")
   applicants       Applicant[]
   api_logs         ApiUsageLog[]
   activity_logs    ActivityLog[]
@@ -271,6 +292,7 @@ model Case {
   sanction         CaseSanction?
   disbursements    Disbursement[]
   pdd_tasks        PDDTask[]
+  salary_ocr_results SalarySlipOcrResult[]
 
   @@index([tenant_id, stage])
   @@index([tenant_id, lender_name])
@@ -283,10 +305,17 @@ enum ApplicantType {
   CO_APPLICANT
 }
 
+enum EmploymentType {
+  SALARIED
+  SELF_EMPLOYED
+  NA
+}
+
 model Applicant {
   id             Int           @id @default(autoincrement())
   case_id        Int
   type           ApplicantType
+  employment_type EmploymentType @default(NA)
   name           String?       // Phase 1: display name for bureau/income pages
   pan_number     String?
   mobile         String?
@@ -298,12 +327,15 @@ model Applicant {
   bureau_fetched Boolean       @default(false)
   created_at     DateTime      @default(now())
   updated_at     DateTime      @updatedAt
-
+  source_applicant_id Int?     // To map parent applicant to child applicant
+  
   case            Case                         @relation(fields: [case_id], references: [id], onDelete: Cascade)
   bank_statements BankStatementAnalysisRequest[]
   itr_analytics   ItrAnalyticsRequest[]
+  gstr_analytics  GstrAnalyticsRequest[]
   bureau_checks   BureauVerification[]
   documents       Document[]
+  salary_ocr_results SalarySlipOcrResult[]
   // Phase 1 relations
   income_entries  CaseIncomeEntry[]
   obligations     CaseCreditObligation[]
@@ -583,6 +615,7 @@ model GstrAnalyticsRequest {
   tenant_id          Int
   customer_id        Int
   case_id            Int?
+  applicant_id       Int?     // NEW: Allow applicant-scoped GST
   mode               GstrRequestMode
   auth_type          GstrAuthType?
   gstin              String
@@ -620,9 +653,10 @@ model GstrAnalyticsRequest {
   updated_at         DateTime @updatedAt
   created_by_user_id Int
 
-  tenant         Tenant   @relation(fields: [tenant_id], references: [id])
-  customer       Customer @relation(fields: [customer_id], references: [id])
-  case_entity    Case?    @relation(fields: [case_id], references: [id])
+  tenant         Tenant     @relation(fields: [tenant_id], references: [id])
+  customer       Customer   @relation(fields: [customer_id], references: [id])
+  case_entity    Case?      @relation(fields: [case_id], references: [id])
+  applicant      Applicant? @relation(fields: [applicant_id], references: [id], onDelete: Cascade)
 
   @@index([tenant_id])
   @@index([provider_request_id])
@@ -895,6 +929,7 @@ enum DocumentType {
   BANK_STATEMENT
   PROPERTY_DOCUMENT
   SALE_DEED
+  SALARY_SLIP
   OTHER
 }
 
@@ -952,6 +987,7 @@ model Document {
   case_entity Case?     @relation(fields: [case_id], references: [id])
   applicant   Applicant? @relation(fields: [applicant_id], references: [id])
   proposal_docs ProposalDocument[]
+  salary_slip_ocr_result SalarySlipOcrResult?
 
   @@index([tenant_id])
   @@index([customer_id])
@@ -1299,6 +1335,7 @@ model TenantLenderContact {
   contact_name       String
   contact_email      String
   contact_mobile     String?
+  dsa_code           String?
   is_primary         Boolean  @default(false)
   created_by_user_id Int?
   created_at         DateTime @default(now())
@@ -1452,6 +1489,10 @@ model PDDTask {
   status               PDDTaskStatus @default(PENDING)
   source_type          PDDTaskSource @default(MANUAL)
   
+  collection_date      DateTime?
+  collected_by         String?
+  waiver_reason        String?
+  
   remarks              String?
   created_by_user_id   Int
   created_at           DateTime      @default(now())
@@ -1462,4 +1503,50 @@ model PDDTask {
   disbursement         Disbursement? @relation(fields: [disbursement_id], references: [id])
 
   @@map("pdd_tasks")
+}
+
+// ─── Salary Slip OCR System ───────────────────────────────────────────────────
+
+enum OcrStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model SalarySlipOcrResult {
+  id               Int       @id @default(autoincrement())
+  tenant_id        Int
+  customer_id      Int
+  case_id          Int
+  applicant_id     Int
+  document_id      Int?      @unique
+
+  month            String    // e.g. "February" or "02"
+  year             String    // e.g. "2026"
+  ocr_status       OcrStatus @default(PENDING)
+  
+  gross_salary     Float?
+  net_salary       Float?
+  deductions       Float?
+  employer_name    String?
+  employee_name    String?
+
+  vendor_name      String?
+  vendor_job_id    String?
+  raw_ocr_response Json?
+  extracted_json   Json?
+  error_message    String?
+
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
+
+  tenant           Tenant    @relation(fields: [tenant_id], references: [id])
+  customer         Customer  @relation(fields: [customer_id], references: [id])
+  case_entity      Case      @relation(fields: [case_id], references: [id])
+  applicant        Applicant @relation(fields: [applicant_id], references: [id], onDelete: Cascade)
+  document         Document? @relation(fields: [document_id], references: [id])
+
+  @@unique([case_id, applicant_id, month, year])
+  @@map("salary_slip_ocr_results")
 }

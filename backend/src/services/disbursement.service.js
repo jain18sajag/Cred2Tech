@@ -88,7 +88,7 @@ async function recordDisbursement(caseId, tenantId, payload, userId, idempotency
 
         // 5. Create PDD Tasks if provided
         if (pdd_tasks && pdd_tasks.length > 0) {
-            await tx.pddTask.createMany({
+            await tx.pDDTask.createMany({
                 data: pdd_tasks.map(task => ({
                     tenant_id: tenantId,
                     case_id: caseId,
@@ -146,6 +146,7 @@ async function getCaseDisbursementSummary(caseId, tenantId) {
         include: {
             sanction: true,
             disbursements: {
+                where: { status: 'RECORDED' },
                 orderBy: { tranche_number: 'asc' },
                 include: { pdd_tasks: true }
             },
@@ -190,6 +191,7 @@ async function listPartialDisbursements(tenantId) {
         include: {
             sanction: true,
             disbursements: {
+                where: { status: 'RECORDED' },
                 orderBy: { tranche_number: 'desc' },
                 take: 1
             }
@@ -212,6 +214,7 @@ async function listPartialDisbursements(tenantId) {
     const monthlyDisbursements = await prisma.disbursement.findMany({
         where: {
             tenant_id: tenantId,
+            status: 'RECORDED',
             disbursement_date: {
                 gte: firstDayOfMonth,
                 lte: lastDayOfMonth

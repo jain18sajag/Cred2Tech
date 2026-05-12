@@ -6,25 +6,61 @@ const prisma = require('../../config/db');
 
 // ── List tenant's configured lenders (with their contacts) ───────────────────
 async function listTenantLenders(tenantId) {
-  const lenders = await prisma.$queryRawUnsafe(`
+  // 1. Fetch all active platform lenders
+  const platformLenders = await prisma.$queryRawUnsafe(`
+    SELECT id as platform_lender_id, name as lender_name, code
+    FROM lenders
+    WHERE status = 'ACTIVE'
+  `);
+
+  // 2. Fetch all tenant lenders (overrides and custom)
+  const tenantLenders = await prisma.$queryRawUnsafe(`
     SELECT * FROM tenant_lenders
     WHERE tenant_id = $1
-    ORDER BY lender_name ASC
   `, tenantId);
 
-  if (lenders.length === 0) return [];
-
-  const lenderIds = lenders.map(l => l.id);
+  // 3. Fetch all contacts for the tenant
   const contacts = await prisma.$queryRawUnsafe(`
     SELECT * FROM tenant_lender_contacts
     WHERE tenant_id = $1
     ORDER BY product_type ASC, is_primary DESC, created_at ASC
   `, tenantId);
 
-  return lenders.map(l => ({
-    ...l,
-    contacts: contacts.filter(c => c.tenant_lender_id === l.id),
-  }));
+  const result = [];
+
+  // Map platform lenders to overrides
+  for (const pl of platformLenders) {
+    const override = tenantLenders.find(t => t.platform_lender_id === pl.platform_lender_id);
+    result.push({
+      id: override ? override.id : `global_${pl.platform_lender_id}`,
+      tenant_lender_id: override ? override.id : null,
+      platform_lender_id: pl.platform_lender_id,
+      lender_name: pl.lender_name,
+      code: pl.code,
+      source: override ? 'OVERRIDE' : 'GLOBAL',
+      is_active: override ? override.is_active : true,
+      is_esr_enabled: override ? override.is_esr_enabled : false,
+      contacts: override ? contacts.filter(c => c.tenant_lender_id === override.id) : [],
+    });
+  }
+
+  // Add custom lenders (no platform_lender_id)
+  for (const tl of tenantLenders.filter(t => !t.platform_lender_id)) {
+    result.push({
+      id: tl.id,
+      tenant_lender_id: tl.id,
+      platform_lender_id: null,
+      lender_name: tl.lender_name,
+      code: null,
+      source: 'CUSTOM',
+      is_active: tl.is_active,
+      is_esr_enabled: tl.is_esr_enabled,
+      contacts: contacts.filter(c => c.tenant_lender_id === tl.id),
+    });
+  }
+
+  result.sort((a, b) => a.lender_name.localeCompare(b.lender_name));
+  return result;
 }
 
 // ── Create a tenant lender ────────────────────────────────────────────────────
@@ -44,7 +80,7 @@ async function updateTenantLender(id, tenantId, { lenderName, isActive, platform
   let idx = 1;
 
   if (lenderName !== undefined) { sets.push(`lender_name = $${idx++}`); vals.push(lenderName.trim()); }
-  if (isActive   !== undefined) { sets.push(`is_active = $${idx++}`);   vals.push(isActive); }
+  if (isActive !== undefined) { sets.push(`is_active = $${idx++}`); vals.push(isActive); }
   if (platformLenderId !== undefined) { sets.push(`platform_lender_id = $${idx++}`); vals.push(platformLenderId); }
   if (isEsrEnabled !== undefined) { sets.push(`is_esr_enabled = $${idx++}`); vals.push(isEsrEnabled); }
 
@@ -83,23 +119,66 @@ async function listTenantLenderContacts(tenantLenderId, tenantId) {
 
 // ── Create a contact ──────────────────────────────────────────────────────────
 async function createTenantLenderContact({
-  tenantLenderId, tenantId, productType, contactName, contactEmail, contactMobile, isPrimary, userId
+  tenantLenderId, platformLenderId, tenantId, productType, contactName, contactEmail, contactMobile, dsaCode, isPrimary, userId
 }) {
+  let actualTenantLenderId = tenantLenderId;
+
+  // Auto-create override if global lender and no tenantLenderId
+  if (!actualTenantLenderId && platformLenderId) {
+    const plRows = await prisma.$queryRawUnsafe(`SELECT name FROM lenders WHERE id = $1 AND status = 'ACTIVE'`, platformLenderId);
+    if (!plRows[0]) throw new Error('Platform lender not found or inactive');
+
+    const existingOverride = await prisma.$queryRawUnsafe(`
+      SELECT id FROM tenant_lenders WHERE tenant_id = $1 AND platform_lender_id = $2
+    `, tenantId, platformLenderId);
+
+    if (existingOverride[0]) {
+      actualTenantLenderId = existingOverride[0].id;
+    } else {
+      const newOverride = await prisma.$queryRawUnsafe(`
+        INSERT INTO tenant_lenders (tenant_id, lender_name, is_active, platform_lender_id, is_esr_enabled, created_by_user_id, updated_at)
+        VALUES ($1, $2, true, $3, false, $4, NOW())
+        RETURNING id
+      `, tenantId, plRows[0].name, platformLenderId, userId);
+      actualTenantLenderId = newOverride[0].id;
+    }
+  }
+
+  if (!actualTenantLenderId) throw new Error('tenantLenderId or platformLenderId is required');
+
   // Verify lender belongs to this tenant
   const lenderRows = await prisma.$queryRawUnsafe(
     `SELECT id FROM tenant_lenders WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
-    tenantLenderId, tenantId
+    actualTenantLenderId, tenantId
   );
   if (!lenderRows[0]) throw new Error('Lender not found or unauthorized');
 
+  productType = productType.toUpperCase();
+  contactEmail = contactEmail.trim().toLowerCase();
+
+  // Duplicate Check
+  const dupeCheck = await prisma.$queryRawUnsafe(`
+    SELECT id FROM tenant_lender_contacts
+    WHERE tenant_id = $1 AND tenant_lender_id = $2 AND product_type = $3 AND contact_email = $4
+  `, tenantId, actualTenantLenderId, productType, contactEmail);
+  if (dupeCheck.length > 0) throw new Error('Contact already exists for this lender and product.');
+
+  // Primary Check
+  if (isPrimary !== false) {
+    await prisma.$queryRawUnsafe(`
+      UPDATE tenant_lender_contacts SET is_primary = false
+      WHERE tenant_id = $1 AND tenant_lender_id = $2 AND product_type = $3
+    `, tenantId, actualTenantLenderId, productType);
+  }
+
   const rows = await prisma.$queryRawUnsafe(`
     INSERT INTO tenant_lender_contacts
-      (tenant_lender_id, tenant_id, product_type, contact_name, contact_email, contact_mobile, is_primary, created_by_user_id, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+      (tenant_lender_id, tenant_id, product_type, contact_name, contact_email, contact_mobile, dsa_code, is_primary, created_by_user_id, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
     RETURNING *
   `,
-    tenantLenderId, tenantId, productType.toUpperCase(), contactName.trim(),
-    contactEmail.trim().toLowerCase(), contactMobile || null,
+    actualTenantLenderId, tenantId, productType, contactName.trim(),
+    contactEmail, contactMobile || null, dsaCode || null,
     isPrimary !== false, userId
   );
   return rows[0];
@@ -107,7 +186,27 @@ async function createTenantLenderContact({
 
 // ── Update a contact ──────────────────────────────────────────────────────────
 async function updateTenantLenderContact(id, tenantId, fields) {
-  const allowed = ['product_type', 'contact_name', 'contact_email', 'contact_mobile', 'is_primary'];
+  const allowed = ['product_type', 'contact_name', 'contact_email', 'contact_mobile', 'dsa_code', 'is_primary'];
+  
+  // First fetch the existing contact to know its tenant_lender_id and product_type
+  const existing = await prisma.$queryRawUnsafe(`
+    SELECT tenant_lender_id, product_type, contact_email FROM tenant_lender_contacts WHERE id = $1 AND tenant_id = $2
+  `, id, tenantId);
+  if (!existing[0]) throw new Error('Contact not found or unauthorized');
+  
+  const tenantLenderId = existing[0].tenant_lender_id;
+  const newProductType = fields.product_type ? fields.product_type.toUpperCase() : existing[0].product_type;
+  const newEmail = fields.contact_email ? fields.contact_email.trim().toLowerCase() : existing[0].contact_email;
+
+  // Duplicate Check if email or product_type changed
+  if (newProductType !== existing[0].product_type || newEmail !== existing[0].contact_email) {
+    const dupeCheck = await prisma.$queryRawUnsafe(`
+      SELECT id FROM tenant_lender_contacts
+      WHERE tenant_id = $1 AND tenant_lender_id = $2 AND product_type = $3 AND contact_email = $4 AND id != $5
+    `, tenantId, tenantLenderId, newProductType, newEmail, id);
+    if (dupeCheck.length > 0) throw new Error('Contact already exists for this lender and product.');
+  }
+
   const sets = [];
   const vals = [];
   let idx = 1;
@@ -127,11 +226,18 @@ async function updateTenantLenderContact(id, tenantId, fields) {
   sets.push(`updated_at = NOW()`);
   vals.push(id, tenantId);
 
+  // If is_primary is set to true, unset others for the SAME product type
+  if (fields.is_primary === true) {
+    await prisma.$queryRawUnsafe(`
+      UPDATE tenant_lender_contacts SET is_primary = false
+      WHERE tenant_id = $1 AND tenant_lender_id = $2 AND product_type = $3 AND id != $4
+    `, tenantId, tenantLenderId, newProductType, id);
+  }
+
   const rows = await prisma.$queryRawUnsafe(
     `UPDATE tenant_lender_contacts SET ${sets.join(', ')} WHERE id = $${idx} AND tenant_id = $${idx + 1} RETURNING *`,
     ...vals
   );
-  if (!rows[0]) throw new Error('Contact not found or unauthorized');
   return rows[0];
 }
 
@@ -145,10 +251,12 @@ async function deleteTenantLenderContact(id, tenantId) {
 }
 
 // ── Resolve contact for a specific lender + product ──────────────────────────
-// Used by the send-to-lender controller. Tries to match by lender_name (case-insensitive).
 async function resolveContactForLender({ tenantId, lenderName, productType }) {
-  const rows = await prisma.$queryRawUnsafe(`
-    SELECT tlc.*
+  productType = productType || 'ALL';
+
+  // 1. Try exact match
+  let rows = await prisma.$queryRawUnsafe(`
+    SELECT tlc.*, tl.lender_name
     FROM tenant_lender_contacts tlc
     JOIN tenant_lenders tl ON tl.id = tlc.tenant_lender_id
     WHERE tlc.tenant_id = $1
@@ -159,7 +267,26 @@ async function resolveContactForLender({ tenantId, lenderName, productType }) {
     LIMIT 1
   `, tenantId, lenderName, productType);
 
-  return rows[0] || null;
+  if (rows.length > 0) return rows[0];
+
+  // 2. Try 'ALL' match as fallback
+  if (productType.toUpperCase() !== 'ALL') {
+    rows = await prisma.$queryRawUnsafe(`
+      SELECT tlc.*, tl.lender_name
+      FROM tenant_lender_contacts tlc
+      JOIN tenant_lenders tl ON tl.id = tlc.tenant_lender_id
+      WHERE tlc.tenant_id = $1
+        AND LOWER(tl.lender_name) = LOWER($2)
+        AND tlc.product_type = 'ALL'
+        AND tl.is_active = true
+      ORDER BY tlc.is_primary DESC, tlc.created_at ASC
+      LIMIT 1
+    `, tenantId, lenderName);
+    if (rows.length > 0) return rows[0];
+  }
+
+  // 3. None found
+  return null;
 }
 
 // ── Resolve contact by contact ID (for "send to other lender" flow) ───────────

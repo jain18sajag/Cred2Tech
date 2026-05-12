@@ -15,6 +15,7 @@ import {
   Download
 } from 'lucide-react';
 import { formatDistanceToNow, parseISO } from 'date-fns';
+import { useAuth } from '../context/AuthContext';
 
 const STAGE_COLORS = {
   'LEAD_CREATED': { bg: '#F3F4F6', text: '#374151' },
@@ -71,6 +72,10 @@ export default function CaseDetailPage() {
   const [showStageModal, setShowStageModal] = useState(false);
   const [selectedStage, setSelectedStage] = useState('');
   const [disbursementSummary, setDisbursementSummary] = useState(null);
+  
+  const { hasRole } = useAuth();
+  const [rollbackReason, setRollbackReason] = useState('');
+  const [rollbackConfirmation, setRollbackConfirmation] = useState(false);
   
   // Sanction Form State
   const [sanctionForm, setSanctionForm] = useState({
@@ -155,9 +160,32 @@ export default function CaseDetailPage() {
   const handleUpdateStage = async () => {
     if (!selectedStage) return toast.error('Please select a stage');
 
+    const STAGE_ORDER = {
+      'DRAFT': 1, 'LEAD_CREATED': 2, 'DATA_COLLECTION': 3, 'INCOME_REVIEWED': 4,
+      'ESR_GENERATED': 5, 'LEAD_SENT_TO_LENDER': 6, 'IN_REVIEW': 7,
+      'APPROVED': 8, 'PARTLY_DISBURSED': 9, 'DISBURSED': 10, 'CLOSED': 11, 'REJECTED': 11
+    };
+
+    const isBackward = STAGE_ORDER[selectedStage] < STAGE_ORDER[caseData.stage];
+
     try {
+      // 0. Handle Rollback
+      if (isBackward) {
+        if (!hasRole('DSA_ADMIN')) {
+          return toast.error('Only DSA Admin can rollback financial stages.');
+        }
+        if (!rollbackReason) return toast.error('Rollback reason is required.');
+        if (!rollbackConfirmation) return toast.error('Please confirm the rollback action.');
+
+        await caseService.rollbackCaseStage(id, {
+          target_stage: selectedStage,
+          reason: rollbackReason,
+          confirmation: rollbackConfirmation
+        });
+        toast.success(`Stage rolled back to ${STAGE_LABELS[selectedStage]}`);
+      }
       // 1. Handle Sanctioning (APPROVED)
-      if (selectedStage === 'APPROVED') {
+      else if (selectedStage === 'APPROVED') {
         await caseService.sanctionCase(id, sanctionForm);
         toast.success('Case sanctioned successfully');
       } 
@@ -202,6 +230,14 @@ export default function CaseDetailPage() {
   const coBorrowers = caseData.applicants?.filter(a => !a.is_primary) || [];
   const stageConfig = STAGE_COLORS[caseData.stage] || STAGE_COLORS['DRAFT'];
 
+  const STAGE_ORDER = {
+    'DRAFT': 1, 'LEAD_CREATED': 2, 'DATA_COLLECTION': 3, 'INCOME_REVIEWED': 4,
+    'ESR_GENERATED': 5, 'LEAD_SENT_TO_LENDER': 6, 'IN_REVIEW': 7,
+    'APPROVED': 8, 'PARTLY_DISBURSED': 9, 'DISBURSED': 10, 'CLOSED': 11, 'REJECTED': 11
+  };
+  const isBackward = selectedStage && STAGE_ORDER[selectedStage] < STAGE_ORDER[caseData.stage];
+  const isFinancialRollback = isBackward && STAGE_ORDER[caseData.stage] >= STAGE_ORDER['APPROVED'];
+
   // Stage progress calculation
   const currentStepIndex = STAGE_STEPS.findIndex(s => s.id === caseData.stage);
 
@@ -232,6 +268,23 @@ export default function CaseDetailPage() {
           <button className="btn btn-grad" style={btnGradStyle} onClick={() => setShowStageModal(true)}>📋 Update Stage</button>
         </div>
       </div>
+
+      {caseData.parent_case_id && (
+        <div style={{
+          padding: '12px 16px', background: '#F0F9FF', border: '1px solid #BAE6FD',
+          borderRadius: 8, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 10
+        }}>
+          <span style={{ fontSize: 18 }}>📋</span>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#0369A1' }}>
+              Lender Specific Case
+            </div>
+            <div style={{ fontSize: 12, color: '#0284C7', marginTop: 2 }}>
+              This is a cloned snapshot for <strong>{caseData.lender_name}</strong>. The original source case is <a href={`/cases/${caseData.parent_case_id}`} style={{ fontWeight: 600, color: '#0369A1', textDecoration: 'underline' }}>CASE-{caseData.parent_case_id}</a>.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 4. DATA PULL STATUS (Reports pulled card) */}
       <div style={{ 
@@ -589,8 +642,50 @@ export default function CaseDetailPage() {
                 </select>
               </div>
 
+              {/* Rollback Warning Modal Section */}
+              {isBackward && (
+                <div style={{ marginBottom: 24, padding: 20, background: '#FEF2F2', borderRadius: 12, border: '1px solid #FCA5A5' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                    <AlertCircle color="#DC2626" size={20} />
+                    <h4 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#991B1B' }}>Backward Stage Rollback</h4>
+                  </div>
+                  {!hasRole('DSA_ADMIN') ? (
+                    <div style={{ fontSize: 13, color: '#B91C1C', fontWeight: 600 }}>
+                      Only DSA Admin can perform a backward stage rollback. Please contact your administrator.
+                    </div>
+                  ) : (
+                    <>
+                      <p style={{ fontSize: 12, color: '#991B1B', margin: '0 0 16px 0', lineHeight: 1.5 }}>
+                        You are moving the case backwards. This is a sensitive operation. 
+                        {isFinancialRollback && ' Depending on the target stage, active disbursements and PDD tasks will be CANCELLED, and the Case Sanction may be archived and removed.'}
+                      </p>
+                      <div style={{ marginBottom: 16 }}>
+                        <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#991B1B', marginBottom: 6 }}>Rollback Reason *</label>
+                        <textarea 
+                          value={rollbackReason}
+                          onChange={(e) => setRollbackReason(e.target.value)}
+                          placeholder="Explain why this case is being rolled back..."
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #FCA5A5', fontSize: 13, outline: 'none', minHeight: 60 }}
+                        />
+                      </div>
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+                        <input 
+                          type="checkbox" 
+                          checked={rollbackConfirmation}
+                          onChange={(e) => setRollbackConfirmation(e.target.checked)}
+                          style={{ marginTop: 2 }}
+                        />
+                        <span style={{ fontSize: 12, color: '#991B1B', fontWeight: 600 }}>
+                          I confirm that I understand the financial and audit implications of rolling back this case.
+                        </span>
+                      </label>
+                    </>
+                  )}
+                </div>
+              )}
+
               {/* Sanction Details Form (Shown for APPROVED, PARTLY_DISBURSED, DISBURSED if not already locked) */}
-              {['APPROVED', 'PARTLY_DISBURSED', 'DISBURSED'].includes(selectedStage) && (
+              {!isBackward && ['APPROVED', 'PARTLY_DISBURSED', 'DISBURSED'].includes(selectedStage) && (
                 <div style={{ marginBottom: 24, padding: 20, background: '#F8FAFC', borderRadius: 12, border: '1px solid #E2E8F0' }}>
                   <h4 style={{ margin: '0 0 16px 0', fontSize: 13, fontWeight: 700, color: '#475569' }}>Loan Sanction Details</h4>
                   
@@ -671,7 +766,7 @@ export default function CaseDetailPage() {
               )}
 
               {/* Disbursement Details Form (Shown for PARTLY_DISBURSED, DISBURSED) */}
-              {['PARTLY_DISBURSED', 'DISBURSED'].includes(selectedStage) && (
+              {!isBackward && ['PARTLY_DISBURSED', 'DISBURSED'].includes(selectedStage) && (
                 <div style={{ marginBottom: 24, padding: '24px 20px', background: '#fff', borderRadius: 16, border: '1px solid #FFEDD5', boxShadow: '0 4px 12px rgba(251, 146, 60, 0.08)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
                      <span style={{ fontSize: 20 }}>🏗️</span>
@@ -813,13 +908,12 @@ export default function CaseDetailPage() {
               )}
             </div>
             
-            <div style={{ padding: '16px 24px', borderTop: '1px solid rgba(60,66,87,.12)', display: 'flex', justifyContent: 'flex-end', gap: 10, position: 'sticky', bottom: 0, background: '#fff' }}>
-              <button className="btn btn-outline" style={btnOutlineStyle} onClick={() => setShowStageModal(false)}>Cancel</button>
+            <div style={{ padding: '16px 24px', borderTop: '1px solid rgba(60,66,87,.12)', display: 'flex', justifyContent: 'flex-end', gap: 12, background: '#F6F9FC', position: 'sticky', bottom: 0 }}>
+              <button className="btn btn-ghost" onClick={() => setShowStageModal(false)}>Cancel</button>
               <button 
-                className="btn btn-grad" 
-                style={btnGradStyle} 
+                className="btn btn-primary" 
                 onClick={handleUpdateStage}
-                disabled={!selectedStage}
+                disabled={!selectedStage || (isBackward && (!hasRole('DSA_ADMIN') || !rollbackConfirmation || !rollbackReason))}
               >
                 Confirm Update
               </button>

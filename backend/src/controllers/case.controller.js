@@ -27,7 +27,7 @@ async function createCase(req, res) {
 async function addApplicant(req, res) {
   try {
     const caseId = parseInt(req.params.id, 10);
-    const { id, type, pan_number, mobile, email } = req.body;
+    const { id, type, pan_number, mobile, email, employment_type } = req.body;
     
     if (!type || !['PRIMARY', 'CO_APPLICANT'].includes(type)) {
       return res.status(400).json({ error: 'Invalid applicant type.' });
@@ -35,7 +35,7 @@ async function addApplicant(req, res) {
 
     const tenant_id = req.user.tenant_id;
 
-    const applicant = await caseService.addApplicant(caseId, { id, type, pan_number, mobile, email }, tenant_id);
+    const applicant = await caseService.addApplicant(caseId, { id, type, pan_number, mobile, email, employment_type }, tenant_id);
     res.status(201).json(applicant);
   } catch (error) {
     if (error.message === 'Case not found or unauthorized.') {
@@ -246,16 +246,111 @@ async function updateStage(req, res) {
   }
 }
 
+async function createFromExisting(req, res) {
+  try {
+    const { customer_id, product_type } = req.body;
+    if (!customer_id) return res.status(400).json({ error: 'customer_id is required.' });
+
+    const tenant_id = req.user.tenant_id;
+    const user_id = req.user.id;
+
+    const newCase = await caseService.createCaseFromExisting(parseInt(customer_id, 10), tenant_id, user_id, product_type);
+    res.status(201).json(newCase);
+  } catch (error) {
+    if (error.message === 'Customer not found or unauthorized.') return res.status(403).json({ error: error.message });
+    console.error(error);
+    res.status(500).json({ error: 'Internal server error while creating case from existing customer.' });
+  }
+}
+
+async function reuseApplicant(req, res) {
+  try {
+    const caseId = parseInt(req.params.id, 10);
+    const { source_applicant_id } = req.body;
+
+    if (!source_applicant_id) {
+      return res.status(400).json({ error: 'source_applicant_id is required.' });
+    }
+
+    const tenant_id = req.user.tenant_id;
+    const user_id = req.user.id;
+
+    const newApp = await caseService.reuseApplicant(caseId, source_applicant_id, tenant_id, user_id);
+    res.status(201).json(newApp);
+  } catch (error) {
+    if (error.message.includes('not found') || error.message.includes('unauthorized') || error.message.includes('different')) {
+      return res.status(403).json({ error: error.message });
+    }
+    if (error.message.includes('locked') || error.message.includes('already added') || error.message.includes('Only CO_APPLICANT')) {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error('[reuseApplicant] Error:', error);
+    res.status(500).json({ error: 'Internal server error while reusing applicant.' });
+  }
+}
+
+async function removeApplicant(req, res) {
+  try {
+    const caseId = parseInt(req.params.id, 10);
+    const applicantId = parseInt(req.params.applicantId, 10);
+    const tenant_id = req.user.tenant_id;
+
+    await caseService.removeApplicant(caseId, applicantId, tenant_id);
+    res.json({ message: 'Applicant removed successfully' });
+  } catch (error) {
+    if (error.message.includes('unauthorized') || error.message.includes('Primary')) {
+      return res.status(403).json({ error: error.message });
+    }
+    console.error(error);
+    res.status(500).json({ error: 'Failed to remove applicant.' });
+  }
+}
+
+async function rollbackStage(req, res) {
+  try {
+    const caseId = parseInt(req.params.id, 10);
+    const { target_stage, reason, confirmation } = req.body;
+    const userId = req.user.id;
+    const tenantId = req.user.tenant_id;
+    const userRole = req.user?.role?.name || req.user?.role || req.user?.role_name;
+
+    if (userRole !== 'DSA_ADMIN') {
+      return res.status(403).json({ error: 'Only DSA Admin can rollback stages.' });
+    }
+
+    if (!target_stage || !reason) {
+      return res.status(400).json({ error: 'target_stage and reason are required.' });
+    }
+
+    if (confirmation !== true) {
+      return res.status(400).json({ error: 'Rollback confirmation is required.' });
+    }
+
+    const updatedCase = await caseService.rollbackStage(caseId, target_stage, reason, userId, tenantId, userRole);
+    res.json(updatedCase);
+  } catch (error) {
+    console.error(error);
+    if (error.message.includes('earlier') || error.message.includes('Invalid') || error.message.includes('Only DSA_ADMIN')) {
+       return res.status(400).json({ error: error.message });
+    }
+    res.status(500).json({ error: 'Failed to rollback stage.' });
+  }
+}
+
 module.exports = {
   createCase,
+  createFromExisting,
   addApplicant,
+  reuseApplicant,
   updateProduct,
   updateProductProperty,
   getCases,
   getCaseById,
   getSummary,
   getCoBorrowers,
-  getActivityLog,
   getPipeline,
-  updateStage
+  updateStage,
+  getActivityLog,
+  removeApplicant,
+  rollbackStage
 };

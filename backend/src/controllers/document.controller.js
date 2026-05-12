@@ -126,18 +126,36 @@ async function downloadDocument(req, res) {
 async function uploadDocument(req, res) {
     try {
         if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-        const { case_id, document_type } = req.body;
+        
+        // Extract from body, or fallback to params (for the semantic routes)
+        const case_id = req.body.case_id || req.params.caseId;
+        const applicant_id = req.body.applicant_id || req.params.applicantId;
+        const document_type = req.body.document_type || (req.params.applicantId ? 'SALARY_SLIP' : 'OTHER');
+
         if (!case_id) return res.status(400).json({ error: 'case_id is required' });
 
         const tenantId = req.user.tenant_id;
         const userId = req.user.id;
 
         // Verify case belongs to this tenant
-        const caseRows = await prisma.$queryRawUnsafe(
-            `SELECT id FROM cases WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
-            parseInt(case_id), tenantId
-        );
-        if (!caseRows[0]) return res.status(404).json({ error: 'Case not found' });
+        const caseRecord = await prisma.case.findFirst({
+            where: { id: parseInt(case_id), tenant_id: tenantId },
+            select: { id: true, customer_id: true }
+        });
+        if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
+
+        // If applicant_id is provided, verify it belongs to this case
+        if (applicant_id) {
+            const applicantRecord = await prisma.applicant.findFirst({
+                where: { id: parseInt(applicant_id), case_id: parseInt(case_id) }
+            });
+            if (!applicantRecord) return res.status(404).json({ error: 'Applicant not found or does not belong to this case' });
+        }
+
+        const docType = (document_type || 'OTHER').toUpperCase();
+        if (docType === 'SALARY_SLIP' && !applicant_id) {
+            return res.status(400).json({ error: 'applicant_id is required for SALARY_SLIP documents' });
+        }
 
         const UPLOADS_ROOT = path.resolve(process.env.UPLOADS_ROOT || './uploads');
         // Store relative key (not absolute) — same as LocalStorageProvider
@@ -145,12 +163,13 @@ async function uploadDocument(req, res) {
 
         const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '') || 'bin';
         const mimeType = req.file.mimetype || 'application/octet-stream';
-        const docType = (document_type || 'OTHER').toUpperCase();
 
         const doc = await prisma.document.create({
             data: {
                 tenant_id: tenantId,
                 case_id: parseInt(case_id),
+                customer_id: caseRecord.customer_id,
+                applicant_id: applicant_id ? parseInt(applicant_id) : null,
                 document_type: docType,
                 source_type: 'DIRECT_UPLOAD',
                 storage_provider: 'LOCAL',
@@ -166,11 +185,11 @@ async function uploadDocument(req, res) {
             select: {
                 id: true, document_type: true, original_file_name: true,
                 file_name: true, mime_type: true, extension: true,
-                file_size_bytes: true, status: true, case_id: true, created_at: true,
+                file_size_bytes: true, status: true, case_id: true, applicant_id: true, created_at: true,
             }
         });
 
-        console.log(`[document.controller] Upload: doc #${doc.id} (${docType}) for case=${case_id}, path=${storagePath}`);
+        console.log(`[document.controller] Upload: doc #${doc.id} (${docType}) for case=${case_id}, applicant=${applicant_id || 'none'}, path=${storagePath}`);
         res.status(201).json({ success: true, data: doc });
     } catch (error) {
         console.error('[document.controller] uploadDocument error:', error);

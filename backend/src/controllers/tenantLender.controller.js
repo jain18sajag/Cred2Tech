@@ -69,22 +69,24 @@ async function remove(req, res) {
 async function createContact(req, res) {
   try {
     const {
-      tenant_lender_id, product_type, contact_name,
-      contact_email, contact_mobile, is_primary
+      tenant_lender_id, platform_lender_id, product_type, contact_name,
+      contact_email, contact_mobile, dsa_code, is_primary
     } = req.body;
 
-    if (!tenant_lender_id) return res.status(400).json({ error: 'tenant_lender_id required' });
+    if (!tenant_lender_id && !platform_lender_id) return res.status(400).json({ error: 'tenant_lender_id or platform_lender_id required' });
     if (!product_type)     return res.status(400).json({ error: 'product_type required' });
     if (!contact_name)     return res.status(400).json({ error: 'contact_name required' });
     if (!contact_email)    return res.status(400).json({ error: 'contact_email required' });
 
     const data = await svc.createTenantLenderContact({
-      tenantLenderId: parseInt(tenant_lender_id),
+      tenantLenderId: tenant_lender_id ? parseInt(tenant_lender_id) : null,
+      platformLenderId: platform_lender_id,
       tenantId:       req.user.tenant_id,
       productType:    product_type,
       contactName:    contact_name,
       contactEmail:   contact_email,
       contactMobile:  contact_mobile,
+      dsaCode:        dsa_code,
       isPrimary:      is_primary,
       userId:         req.user.id,
     });

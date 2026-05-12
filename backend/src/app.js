@@ -47,6 +47,7 @@ const platformLenderRoutes = require('./routes/platformLender.routes');
 const vendorRoutes = require('./routes/vendor.routes');
 const commissionRoutes = require('./routes/lenderCommission.routes');
 const disbursementRoutes = require('./routes/disbursement.routes');
+const pddRoutes = require('./routes/pdd.routes');
 
 const apiRouter = express.Router();
 
@@ -76,6 +77,7 @@ apiRouter.use('/tenant/lenders', tenantLenderRoutes);
 apiRouter.use('/tenant/lender-contacts', tenantLenderContactRoutes);
 apiRouter.use('/platform-lenders', platformLenderRoutes);
 apiRouter.use('/disbursements', disbursementRoutes);
+apiRouter.use('/pdd-tasks', pddRoutes);
 
 app.use('/api', apiRouter);
 

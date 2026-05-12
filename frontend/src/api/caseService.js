@@ -21,6 +21,16 @@ export const caseService = {
     return response.data;
   },
 
+  reuseApplicant: async (caseId, source_applicant_id) => {
+    const response = await axiosInstance.post(`/cases/${caseId}/applicants/reuse`, { source_applicant_id });
+    return response.data;
+  },
+
+  removeApplicant: async (caseId, applicantId) => {
+    const response = await axiosInstance.delete(`/cases/${caseId}/applicants/${applicantId}`);
+    return response.data;
+  },
+
   updateProduct: async (caseId, product_type) => {
     const response = await axiosInstance.patch(`/cases/${caseId}/product`, { product_type });
     return response.data;
@@ -135,6 +145,11 @@ export const caseService = {
 
   updateCaseStage: async (id, stage) => {
     const response = await axiosInstance.patch(`/cases/${id}/stage`, { stage });
+    return response.data;
+  },
+
+  rollbackCaseStage: async (id, payload) => {
+    const response = await axiosInstance.post(`/cases/${id}/stage-rollback`, payload);
     return response.data;
   },
 

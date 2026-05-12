@@ -5,6 +5,8 @@ import { toast } from 'react-hot-toast';
 import { Search, ChevronDown, AlertTriangle, Plus, MoreHorizontal } from 'lucide-react';
 import { formatDistanceToNow, parseISO } from 'date-fns';
 
+import CustomerTypeModal from '../components/customers/CustomerTypeModal';
+
 const STAGE_MAPPING = {
   'All': 'All',
   'Lead Created': 'LEAD_CREATED',
@@ -69,6 +71,9 @@ export default function CustomersListPage() {
   const [lender, setLender] = useState('All Lenders');
   const [alertFilter, setAlertFilter] = useState('All Alerts');
   const [sortIndex, setSortIndex] = useState(0);
+
+  // Modal state
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   // Pagination state
   const [page, setPage] = useState(1);
@@ -166,7 +171,7 @@ export default function CustomersListPage() {
             </div>
           </div>
           <button 
-            onClick={() => navigate('/customers/add')}
+            onClick={() => setIsModalOpen(true)}
             style={{
               background: '#6366F1', color: 'white', border: 'none', borderRadius: 20,
               padding: '8px 16px', fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6,
@@ -279,6 +284,11 @@ export default function CustomersListPage() {
                   <tr key={c.id} style={{ borderBottom: '1px solid #E5E7EB' }}>
                     <td style={{ padding: '16px 24px', fontWeight: 600, color: '#111827' }}>
                       CASE-{c.id}
+                      {c.parent_case_id && (
+                        <div style={{ fontSize: 11, color: '#6B7280', marginTop: 2, fontWeight: 400, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span style={{ fontSize: 12 }}>↳</span> From CASE-{c.parent_case_id}
+                        </div>
+                      )}
                     </td>
                     <td style={{ padding: '16px 12px' }}>
                       <div style={{ fontWeight: 600, color: '#6366F1', cursor: 'pointer', textDecoration: 'underline' }}
@@ -327,7 +337,10 @@ export default function CustomersListPage() {
                     <td style={{ padding: '16px 24px', textAlign: 'right' }}>
                       {c.stage === 'DRAFT' ? (
                         <button 
-                          onClick={() => navigate(`/customers/add?caseId=${c.id}`)}
+                          onClick={() => {
+                             const path = c.customer?.category === 'SALARIED' ? '/customers/salaried/add' : '/customers/add';
+                             navigate(`${path}?caseId=${c.id}`);
+                          }}
                           style={{ ...actionBtn, background: '#6366F1' }}
                         >
                           Resume
@@ -368,6 +381,7 @@ export default function CustomersListPage() {
           </div>
         )}
       </div>
+      <CustomerTypeModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} />
     </div>
   );
 }

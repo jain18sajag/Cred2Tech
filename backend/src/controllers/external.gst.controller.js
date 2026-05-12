@@ -71,6 +71,7 @@ async function createGstRequest(req, res) {
         const {
             customer_id,
             case_id,
+            applicant_id,
             mode,
             auth_type,
             gstin,
@@ -176,6 +177,7 @@ async function createGstRequest(req, res) {
                         tenant_id: tenantId,
                         customer_id: parseInt(customer_id, 10),
                         case_id: case_id ? parseInt(case_id, 10) : null,
+                        applicant_id: applicant_id ? parseInt(applicant_id, 10) : null,
                         mode,
                         auth_type: auth_type || null,
                         gstin,
@@ -482,11 +484,18 @@ async function handleSignzyCallback(req, res) {
 
 async function getRequestDetails(req, res) {
     try {
-        const { case_id } = req.query;
+        const { case_id, applicant_id } = req.query;
         if (!case_id) return res.status(400).json({ error: "case_id required" });
 
+        let whereClause = { case_id: parseInt(case_id, 10), tenant_id: req.user.tenant_id };
+        if (applicant_id === 'null') {
+            whereClause.applicant_id = null;
+        } else if (applicant_id) {
+            whereClause.applicant_id = parseInt(applicant_id, 10);
+        }
+
         const requests = await prisma.gstrAnalyticsRequest.findMany({
-            where: { case_id: parseInt(case_id, 10), tenant_id: req.user.tenant_id },
+            where: whereClause,
             orderBy: { created_at: 'desc' }
         });
 

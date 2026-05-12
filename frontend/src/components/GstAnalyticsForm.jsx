@@ -5,7 +5,7 @@ import FormField from './ui/FormField';
 import api from '../api/axiosInstance';
 import { downloadDocument } from '../api/documentHelper';
 
-const GstAnalyticsForm = ({ caseId, customerId, onComplete }) => {
+const GstAnalyticsForm = ({ caseId, customerId, applicantId = null, onComplete }) => {
     const [mode, setMode] = useState('IN_SYSTEM');
     const [authType, setAuthType] = useState('OTP');
     
@@ -31,7 +31,11 @@ const GstAnalyticsForm = ({ caseId, customerId, onComplete }) => {
 
     const fetchRequests = async () => {
         try {
-            const res = await api.get(`/external/gst/requests?case_id=${caseId}`);
+            let url = `/external/gst/requests?case_id=${caseId}`;
+            if (applicantId !== null) {
+                url += `&applicant_id=${applicantId}`;
+            }
+            const res = await api.get(url);
             if (res.data.success) {
                 setActiveRequests(res.data.data);
                 if (res.data.data.some(r => r.status === 'REPORT_READY' || r.status === 'COMPLETED')) {
@@ -59,6 +63,7 @@ const GstAnalyticsForm = ({ caseId, customerId, onComplete }) => {
             const payload = {
                 customer_id: customerId,
                 case_id: caseId,
+                applicant_id: applicantId,
                 mode: mode,
                 auth_type: mode === 'IN_SYSTEM' ? authType : null,
                 gstin: formData.gstin,

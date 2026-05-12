@@ -1,31 +1,73 @@
 const customerService = require('../services/customer.service');
+const caseService = require('../services/case.service');
 const prisma = require('../../config/db');
 
 async function checkCustomer(req, res) {
   try {
     const { pan } = req.query;
+
+    // This endpoint is strictly PAN-only for the "Continue as New Case" reuse flow
     if (!pan) {
-      return res.status(400).json({ error: 'PAN is required' });
+      return res.status(400).json({
+        existingCustomerFound: false,
+        error: 'pan query parameter is required'
+      });
+    }
+
+    const normalizedPan = pan.trim().toUpperCase();
+
+    // Validate PAN format (10 alphanumeric characters)
+    if (!/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(normalizedPan)) {
+      return res.status(400).json({
+        existingCustomerFound: false,
+        error: 'Invalid PAN format'
+      });
     }
 
     const tenant_id = req.user.tenant_id;
-    const customer = await customerService.checkCustomerByPan(pan, tenant_id);
+
+    // Strict PAN-only lookup within tenant
+    const customer = await customerService.checkCustomerByPan(normalizedPan, tenant_id);
 
     if (!customer) {
-      return res.status(404).json({ message: 'Customer not found in your tenant.' });
+      return res.status(404).json({
+        existingCustomerFound: false,
+        message: 'No existing customer found in your tenant'
+      });
     }
 
-    res.json(customer);
+    // Fetch reusable data summary
+    const reusableSummary = await customerService.getReusableSummary(customer.id, tenant_id);
+
+    return res.json({
+      existingCustomerFound: true,
+      matchType: 'PAN',
+      customer: {
+        id: customer.id,
+        business_pan: customer.business_pan,
+        business_name: customer.business_name,
+        business_mobile: customer.business_mobile,
+        business_email: customer.business_email,
+        category: customer.category,
+        entity_type: customer.entity_type
+      },
+      reusable_summary: reusableSummary
+    });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Internal server error while checking customer.' });
+    console.error('[checkCustomer]', error);
+    res.status(500).json({
+      existingCustomerFound: false,
+      error: 'Internal server error while checking customer.'
+    });
   }
 }
 
 async function createOrAttach(req, res) {
   try {
-    const { business_pan, business_mobile, business_email, business_name, customer_id } = req.body;
+    let { business_pan, business_mobile, business_email, business_name, customer_id } = req.body;
     
+    business_pan = business_pan?.trim().toUpperCase();
+
     if (!business_pan && !customer_id) {
       return res.status(400).json({ error: 'business_pan or customer_id is required.' });
     }
@@ -45,6 +87,34 @@ async function createOrAttach(req, res) {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Internal server error while creating or attaching customer.' });
+  }
+}
+
+async function createSalariedCustomer(req, res) {
+  try {
+    let { business_pan, business_name, business_mobile, business_email, product_type } = req.body;
+    
+    business_pan = business_pan?.trim().toUpperCase();
+
+    if (!business_pan || !business_name || !business_mobile) {
+      return res.status(400).json({ error: 'business_pan, business_name, and business_mobile are required.' });
+    }
+
+    const tenant_id = req.user.tenant_id;
+    const user_id = req.user.id;
+
+    const newCase = await caseService.createSalariedCase({
+      business_pan,
+      business_name,
+      business_mobile,
+      business_email,
+      product_type
+    }, tenant_id, user_id);
+
+    res.status(201).json({ success: true, data: newCase });
+  } catch (error) {
+    console.error('[customer.controller] createSalariedCustomer error:', error);
+    res.status(500).json({ error: error.message });
   }
 }
 
@@ -279,6 +349,7 @@ async function getApiAvailability(req, res) {
 module.exports = {
   checkCustomer,
   createOrAttach,
+  createSalariedCustomer,
   getProfile,
   getApiAvailability
 };

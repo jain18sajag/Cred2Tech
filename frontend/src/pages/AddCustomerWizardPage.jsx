@@ -10,6 +10,8 @@ import { Search, CheckCircle2, ChevronRight, Check, AlertCircle } from 'lucide-r
 import GstAnalyticsForm from '../components/GstAnalyticsForm';
 import ItrAnalyticsForm from '../components/ItrAnalyticsForm';
 import BankStatementUpload from '../components/BankStatementUpload';
+import SalarySlipUploader from '../components/onboarding/SalarySlipUploader';
+import DataPullProgress from '../components/onboarding/DataPullProgress';
 import api from '../api/axiosInstance';
 
 const AddCustomerWizardPage = () => {
@@ -60,6 +62,8 @@ const AddCustomerWizardPage = () => {
 
   const [panVerifying, setPanVerifying] = useState(false);
   const [existingCustomer, setExistingCustomer] = useState(null);
+  const [duplicateWarning, setDuplicateWarning] = useState(null);
+  const [suggestedCoApplicants, setSuggestedCoApplicants] = useState([]);
 
   // OTP Modal State
   const [otpModal, setOtpModal] = useState({
@@ -74,30 +78,30 @@ const AddCustomerWizardPage = () => {
 
   useEffect(() => {
     restoreSession();
-  }, []);
+  }, [urlCaseId]);
 
   const restoreSession = async () => {
     try {
       setLoading(true);
-      // If the URL has a caseId, use it to restore. If not, the user clicked "Add New Customer" so start fresh.
-      const targetCaseId = urlCaseId;
-      
-      if (!targetCaseId) {
-        localStorage.removeItem('draftCaseId');
+      if (!urlCaseId) {
         setLoading(false);
         return; 
       }
 
-      const caseData = await caseService.getCaseById(targetCaseId);
+      const caseData = await caseService.getCaseById(urlCaseId);
       
       if (caseData.stage === 'LEAD_CREATED') {
         toast.success("This case is already active.");
-        localStorage.removeItem('draftCaseId');
         navigate('/customers', { replace: true });
         return;
       }
 
       setCaseId(caseData.id);
+      setSuggestedCoApplicants(caseData.suggested_co_applicants || []);
+      
+      // Identify Primary from applicants list
+      const primaryApp = caseData.applicants?.find(a => a.type === 'PRIMARY');
+      
       setFormData({
         customer_id: caseData.customer?.id,
         business_pan: caseData.customer?.business_pan || '',
@@ -111,23 +115,72 @@ const AddCustomerWizardPage = () => {
         occupancy_status: caseData.property?.occupancy_status || 'Self Occupied',
         ownership_type: caseData.property?.ownership_type || 'Sole Owner',
         market_value: caseData.property?.market_value || '',
-        gst_completed: caseData.data_pull_status?.gst_status === 'COMPLETE',
-        gst_profile: caseData.customer?.gst_profiles?.[0]?.raw_response || null,
-        itr_completed: caseData.data_pull_status?.itr_status === 'COMPLETE',
-        customer_itr_profile: caseData.customer?.itr_analytics?.[0] || null,
-        customer_bank_profile: caseData.customer?.bank_statements?.[0] || null
+        // Recover pull statuses from backend state or reused customer state
+        // Recover pull statuses from business financials or Primary applicant
+        gst_completed: (caseData.data_pull_status?.gst_status === 'COMPLETE') || !!caseData.business_financials?.gst_profile || !!caseData.business_financials?.gst_request,
+        gst_profile: caseData.business_financials?.gst_profile?.raw_response || null,
+        itr_completed: (caseData.data_pull_status?.itr_status === 'COMPLETE') || !!caseData.business_financials?.itr_analytics,
+        business_itr_profile: caseData.business_financials?.itr_analytics || null,
+        business_bank_profile: caseData.business_financials?.bank_statements || null
       });
 
-      if (caseData.applicants && caseData.applicants.length > 0) {
+      // Navigate to step 2 if primary details and mobile are verified
+      if (caseData.customer?.mobile_verified && caseData.applicants?.length > 0) {
         setCurrentStep(2);
       } else {
         setCurrentStep(1);
       }
 
     } catch (error) {
+      console.error(error);
       toast.error('Failed to restore case draft.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const checkPanDuplicate = async (pan) => {
+    if (!pan || pan.length !== 10) return; // Only check complete 10-char PAN
+    try {
+      const res = await api.get('/customers/check-existing-by-pan', { params: { pan } });
+      if (res.data?.existingCustomerFound && res.data.customer?.id) {
+        setDuplicateWarning({
+          id: res.data.customer.id,
+          name: res.data.customer.business_name,
+          pan: res.data.customer.business_pan,
+          mobile: res.data.customer.business_mobile,
+          category: res.data.customer.category,
+          summary: res.data.reusable_summary
+        });
+      } else {
+        setDuplicateWarning(null);
+      }
+    } catch (err) {
+      // 404 means no duplicate found — this is the normal path
+      if (err.response?.status === 404) {
+        setDuplicateWarning(null);
+      } else {
+        console.error('[PAN duplicate check]', err);
+      }
+    }
+  };
+
+  const handleContinueAsNewCase = async () => {
+    if (!duplicateWarning) return;
+    try {
+      setSaving(true);
+      const res = await api.post('/cases/create-from-existing', {
+        customer_id: duplicateWarning.id
+      });
+      const newCaseId = res.data.id;
+      toast.success('New case created with existing customer data!');
+      setDuplicateWarning(null);
+      navigate(`/customers/add?caseId=${newCaseId}`);
+    } catch (error) {
+      console.error('[handleContinueAsNewCase]', error);
+      toast.error(error.response?.data?.error || 'Failed to create new case from existing customer.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -157,10 +210,9 @@ const AddCustomerWizardPage = () => {
       setFormData(prev => ({
         ...prev, 
         customer_id: targetCustomerId,
-        applicants: newCase.applicants || [] // Sync the newly created PRIMARY applicant
+        applicants: newCase.applicants || []
       }));
       navigate(`?caseId=${targetCaseId}`, { replace: true });
-      localStorage.setItem('draftCaseId', targetCaseId);
     }
     
     return { targetCaseId, targetCustomerId };
@@ -308,7 +360,7 @@ const AddCustomerWizardPage = () => {
   const addCoApplicantRow = () => {
     setFormData(prev => ({
       ...prev,
-      applicants: [...prev.applicants, { type: 'CO_APPLICANT', pan_number: '', mobile: '', email: '', otp_verified: false }]
+      applicants: [...prev.applicants, { type: 'CO_APPLICANT', employment_type: 'SELF_EMPLOYED', pan_number: '', mobile: '', email: '', otp_verified: false }]
     }));
   };
 
@@ -318,11 +370,38 @@ const AddCustomerWizardPage = () => {
     setFormData(prev => ({...prev, applicants: list}));
   };
 
-  const removeApplicant = (index) => {
-    // Note: If they have ID, they are in the DB. Removing from UI won't delete unless backend is hit. Placeholder for now.
-    const arr = [...formData.applicants];
-    arr.splice(index, 1);
-    setFormData(prev => ({ ...prev, applicants: arr }));
+  const handleReuseApplicant = async (sourceAppId) => {
+    try {
+      setSaving(true);
+      await caseService.reuseApplicant(caseId, sourceAppId);
+      toast.success("Applicant added from past case successfully!");
+      await restoreSession(); // Refresh to pull them into current applicants
+    } catch (error) {
+      toast.error(error.response?.data?.error || "Failed to reuse applicant");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeApplicant = async (index) => {
+    const app = formData.applicants[index];
+    if (app.id) {
+      if (!window.confirm('Are you sure you want to remove this applicant from the current case?')) return;
+      try {
+        setSaving(true);
+        await caseService.removeApplicant(caseId, app.id);
+        toast.success("Applicant removed from case.");
+        await restoreSession();
+      } catch (err) {
+        toast.error(err.response?.data?.error || "Failed to remove applicant");
+      } finally {
+        setSaving(false);
+      }
+    } else {
+      const arr = [...formData.applicants];
+      arr.splice(index, 1);
+      setFormData(prev => ({ ...prev, applicants: arr }));
+    }
   };
 
   const handleStep1Submit = async (e) => {
@@ -425,7 +504,17 @@ const AddCustomerWizardPage = () => {
     }
   };
 
-  const handleStep2Submit = async (e) => { e.preventDefault(); setCurrentStep(3); };
+  const handleStep2Submit = async (e) => { 
+    e.preventDefault(); 
+    // ESR Guard: Allow if any reused or freshly-pulled income source exists
+    const hasReusedIncomeEntries = formData.applicants?.some(a => a.income_entries?.length > 0);
+    const hasBankData = !!formData.customer_bank_profile;
+    const hasIncome = formData.gst_completed || formData.itr_completed || hasBankData || hasReusedIncomeEntries;
+    if (!hasIncome) {
+      return toast.error("At least one financial source (GST, ITR, Bank, or Income Entry) must be completed before product selection.");
+    }
+    setCurrentStep(3); 
+  };
 
   const PROPERTY_REQUIRED = ['LAP', 'HL'];
 
@@ -495,12 +584,39 @@ const AddCustomerWizardPage = () => {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
         {currentStep === 1 && (
           <form onSubmit={handleStep1Submit} style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-            {existingCustomer && !formData.mobile_verified && (
-              <div className="notice" style={{ background: '#FFF3E0', borderColor: '#FFB74D', color: '#E65100', padding: '16px 20px', alignItems: 'center' }}>
-                <Search size={22} color="#F57C00" style={{ marginRight: 8 }} />
-                <div style={{ flex: 1 }}>
-                  <h4 style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>Existing customer found: {existingCustomer.business_name || 'N/A'}</h4>
-                  <p style={{ opacity: 0.85, fontSize: 13 }}>PAN {existingCustomer.business_pan} exists. Please verify Mobile OTP to proceed and attach new case.</p>
+            {duplicateWarning && !caseId && (
+              <div className="notice" style={{ background: '#FFF3E0', border: '1px solid #FFB74D', borderRadius: '12px', padding: '20px', marginBottom: '10px' }}>
+                <div style={{ display: 'flex', gap: 16 }}>
+                  <div style={{ width: 44, height: 44, borderRadius: '50%', background: '#FFE0B2', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <Search size={22} color="#F57C00" />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div>
+                        <h4 style={{ fontWeight: 700, fontSize: 16, color: '#E65100', marginBottom: 4 }}>Existing customer found: {duplicateWarning.name || 'N/A'}</h4>
+                        <p style={{ fontSize: 13, color: '#BF360C', marginBottom: 12 }}>PAN {duplicateWarning.pan} is already registered in your tenant. You can reuse the existing data for a new case.</p>
+                      </div>
+                      <button type="button" onClick={() => navigate(`/customers/${duplicateWarning.id}`)} style={{ background: 'white', border: '1px solid #FFB74D', padding: '6px 12px', borderRadius: '6px', fontSize: 12, fontWeight: 600, color: '#E65100', cursor: 'pointer' }}>View Existing Profile</button>
+                    </div>
+
+                    <div style={{ background: 'rgba(255,255,255,0.5)', borderRadius: '8px', padding: '12px', marginBottom: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10 }}>
+                       <div style={{ fontSize: 11, color: '#A04000', fontWeight: 600, textTransform: 'uppercase', gridColumn: '1/-1', marginBottom: -4 }}>Reusable Data Available:</div>
+                       {duplicateWarning.summary?.gst?.available && <div style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, color: '#5D4037' }}><Check size={14} color="#388E3C" /> GST Data</div>}
+                       {duplicateWarning.summary?.itr?.available && <div style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, color: '#5D4037' }}><Check size={14} color="#388E3C" /> ITR Analytics</div>}
+                       {duplicateWarning.summary?.bank?.available && <div style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, color: '#5D4037' }}><Check size={14} color="#388E3C" /> Bank Statement</div>}
+                       {duplicateWarning.summary?.bureau?.available && <div style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, color: '#5D4037' }}><Check size={14} color="#388E3C" /> Bureau Score</div>}
+                       {duplicateWarning.summary?.salary_ocr?.available && <div style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, color: '#5D4037' }}><Check size={14} color="#388E3C" /> Salary OCR</div>}
+                    </div>
+
+                    <button 
+                      type="button" 
+                      onClick={handleContinueAsNewCase}
+                      disabled={saving}
+                      style={{ background: '#E65100', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '8px', fontWeight: 700, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
+                    >
+                      {saving ? 'Creating...' : 'Continue as New Case →'}
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -516,10 +632,19 @@ const AddCustomerWizardPage = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
                   <FormField label="PAN NUMBER" name="business_pan" required disabled={!!caseId || formData.mobile_verified}>
                     <div style={{ display: 'flex', gap: 10 }}>
-                      <input type="text" value={formData.business_pan} onChange={e => setFormData({...formData, business_pan: e.target.value.toUpperCase()})} className="form-control" placeholder="E.G. AABCE1234F" disabled={!!caseId || formData.mobile_verified} style={{ textTransform: 'uppercase' }} />
+                      <input 
+                        type="text" 
+                        value={formData.business_pan} 
+                        onChange={e => setFormData({...formData, business_pan: e.target.value.toUpperCase()})} 
+                        onBlur={() => checkPanDuplicate(formData.business_pan)}
+                        className="form-control" 
+                        placeholder="E.G. AABCE1234F" 
+                        disabled={!!caseId || formData.mobile_verified} 
+                        style={{ textTransform: 'uppercase' }} 
+                      />
                       {formData.mobile_verified && (
-                        <button type="button" onClick={handleVerifyPan} disabled={panVerifying || !formData.business_pan || formData.pan_profile?.status === 'SUCCESS'} className="btn btn-secondary">
-                          {panVerifying ? 'Wait...' : (formData.pan_profile?.status === 'SUCCESS' ? 'Verified' : 'Verify pan')}
+                        <button type="button" onClick={handleVerifyPan} disabled={panVerifying || !formData.business_pan || formData.pan_profile?.status === 'SUCCESS' || !!caseId} className="btn btn-secondary">
+                          {panVerifying ? 'Wait...' : (formData.pan_profile?.status === 'SUCCESS' || !!caseId ? 'Verified' : 'Verify pan')}
                         </button>
                       )}
                     </div>
@@ -527,7 +652,14 @@ const AddCustomerWizardPage = () => {
                   
                   <FormField label="MOBILE NUMBER" name="business_mobile" required disabled={formData.mobile_verified}>
                     <div style={{ display: 'flex', gap: 10 }}>
-                      <input type="tel" value={formData.business_mobile} onChange={e => setFormData({...formData, business_mobile: e.target.value})} className="form-control" placeholder="9820012345" disabled={formData.mobile_verified} />
+                      <input 
+                        type="tel" 
+                        value={formData.business_mobile} 
+                        onChange={e => setFormData({...formData, business_mobile: e.target.value})} 
+                        className="form-control" 
+                        placeholder="9820012345" 
+                        disabled={formData.mobile_verified} 
+                      />
                       {!formData.mobile_verified ? (
                         <button type="button" onClick={handleSendPrimaryOtp} disabled={saving || !formData.business_mobile || !formData.business_pan} className="btn btn-primary" style={{ padding: '0 20px' }}>Send OTP</button>
                       ) : (
@@ -541,7 +673,13 @@ const AddCustomerWizardPage = () => {
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
                   <FormField label="EMAIL ADDRESS" name="business_email" required>
-                    <input type="email" value={formData.business_email} onChange={e => setFormData({...formData, business_email: e.target.value})} className="form-control" placeholder="admin@company.in" />
+                    <input 
+                      type="email" 
+                      value={formData.business_email} 
+                      onChange={e => setFormData({...formData, business_email: e.target.value})} 
+                      className="form-control" 
+                      placeholder="admin@company.in" 
+                    />
                   </FormField>
                 </div>
 
@@ -562,40 +700,85 @@ const AddCustomerWizardPage = () => {
               </div>
               
               <div style={{ padding: 24 }}>
+                {/* SUGGESTED CO-APPLICANTS */}
+                {suggestedCoApplicants && suggestedCoApplicants.length > 0 && (
+                  <div style={{ marginBottom: 30 }}>
+                    <h4 style={{ fontSize: 14, fontWeight: 700, color: 'var(--primary-dark)', marginBottom: 12 }}>Suggested Co-Applicants from Past Cases</h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      {suggestedCoApplicants.map((suggestion, idx) => (
+                        <div key={idx} style={{ background: '#F8F9FA', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{suggestion.name || 'Unnamed Co-Applicant'}</div>
+                            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 8 }}>
+                              PAN: {suggestion.pan_number ? `${suggestion.pan_number.substring(0,2)}******${suggestion.pan_number.substring(8)}` : 'N/A'} • Mobile: {suggestion.mobile}
+                              {suggestion.relationship_to_primary && ` • ${suggestion.relationship_to_primary}`}
+                            </div>
+                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                              {suggestion.bureau_available && <span style={{ fontSize: 11, background: '#E3F2FD', color: '#1565C0', padding: '2px 8px', borderRadius: 12 }}>Bureau Available</span>}
+                              {suggestion.documents_available && <span style={{ fontSize: 11, background: '#E3F2FD', color: '#1565C0', padding: '2px 8px', borderRadius: 12 }}>Documents</span>}
+                              {suggestion.income_available && <span style={{ fontSize: 11, background: '#E3F2FD', color: '#1565C0', padding: '2px 8px', borderRadius: 12 }}>Income</span>}
+                              {suggestion.salary_ocr_available && <span style={{ fontSize: 11, background: '#E3F2FD', color: '#1565C0', padding: '2px 8px', borderRadius: 12 }}>Salary OCR</span>}
+                              {suggestion.obligations_available && <span style={{ fontSize: 11, background: '#E3F2FD', color: '#1565C0', padding: '2px 8px', borderRadius: 12 }}>Obligations</span>}
+                            </div>
+                          </div>
+                          <button 
+                            type="button" 
+                            onClick={() => handleReuseApplicant(suggestion.source_applicant_id)}
+                            disabled={saving}
+                            className="btn btn-secondary btn-sm" 
+                            style={{ fontWeight: 600, color: 'var(--primary)', borderColor: 'var(--primary)' }}>
+                            Use in this case
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {formData.applicants.filter(a => a.type === 'CO_APPLICANT').length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '30px', border: '1px dashed var(--border-strong)', borderRadius: 'var(--radius)', color: 'var(--text-tertiary)' }}>
                     No Co-Applicants appended to this profile yet.
                   </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                    {formData.applicants.filter(a => a.type === 'CO_APPLICANT').map((app, idx) => (
-                      <div key={idx} style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border)', padding: 24, borderRadius: 'var(--radius)', position: 'relative' }}>
-                        <div style={{ position: 'absolute', top: 18, right: 24, display: 'flex', gap: 12 }}>
-                           <button type="button" onClick={() => removeApplicant(idx)} style={{ color: 'var(--error)', fontSize: 13, fontWeight: 600, border: 'none', background: 'none' }}>Remove ×</button>
-                        </div>
-                        <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: 'var(--text-secondary)' }}>Applicant #{idx + 1}</h4>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr 1fr', gap: 16, alignItems: 'end' }}>
-                          <FormField label="PAN NUMBER" name={`copan_${idx}`}>
-                            <input type="text" value={app.pan_number || ''} onChange={e => updateApplicantRow(idx, 'pan_number', e.target.value)} className="form-control" style={{ textTransform: 'uppercase' }} disabled={app.otp_verified} />
-                          </FormField>
-                          <FormField label="MOBILE NUMBER" name={`comob_${idx}`}>
-                            <div style={{ display: 'flex', gap: 8 }}>
-                              <input type="tel" value={app.mobile || ''} onChange={e => updateApplicantRow(idx, 'mobile', e.target.value)} className="form-control" disabled={app.otp_verified} />
-                              {!app.otp_verified ? (
-                                <button type="button" className="btn btn-primary" onClick={() => handleSendCoapplicantOtp(idx)} style={{ padding: '0 16px', whiteSpace: 'nowrap' }} disabled={saving}>Send OTP</button>
-                              ) : (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--success)', fontWeight: 600, padding: '0 8px', whiteSpace: 'nowrap', fontSize: 12 }}>
-                                  <CheckCircle2 size={16} /> Verified
-                                </div>
-                              )}
-                            </div>
-                          </FormField>
-                          <FormField label="EMAIL" name={`coemail_${idx}`}>
-                            <input type="email" value={app.email || ''} onChange={e => updateApplicantRow(idx, 'email', e.target.value)} className="form-control" />
+                    {formData.applicants.map((app, realIdx) => {
+                      if (app.type !== 'CO_APPLICANT') return null;
+                      const coApplicantIdx = formData.applicants.filter((a, i) => a.type === 'CO_APPLICANT' && i < realIdx).length;
+                      return (
+                        <div key={realIdx} style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border)', padding: 24, borderRadius: 'var(--radius)', position: 'relative' }}>
+                          <div style={{ position: 'absolute', top: 18, right: 24, display: 'flex', gap: 12 }}>
+                             <button type="button" onClick={() => removeApplicant(realIdx)} style={{ color: 'var(--error)', fontSize: 13, fontWeight: 600, border: 'none', background: 'none' }}>Remove ×</button>
+                          </div>
+                          <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: 'var(--text-secondary)' }}>Applicant #{coApplicantIdx + 1}</h4>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1fr', gap: 16, alignItems: 'end' }}>
+                            <FormField label="EMPLOYMENT TYPE" name={`coemp_${realIdx}`}>
+                              <select className="form-control" value={app.employment_type || 'SELF_EMPLOYED'} onChange={e => updateApplicantRow(realIdx, 'employment_type', e.target.value)}>
+                                 <option value="SELF_EMPLOYED">Self Employed</option>
+                                 <option value="SALARIED">Salaried</option>
+                              </select>
+                            </FormField>
+                            <FormField label="PAN NUMBER" name={`copan_${realIdx}`}>
+                              <input type="text" value={app.pan_number || ''} onChange={e => updateApplicantRow(realIdx, 'pan_number', e.target.value)} className="form-control" style={{ textTransform: 'uppercase' }} disabled={app.otp_verified} />
+                            </FormField>
+                            <FormField label="MOBILE NUMBER" name={`comob_${realIdx}`}>
+                              <div style={{ display: 'flex', gap: 8 }}>
+                                <input type="tel" value={app.mobile || ''} onChange={e => updateApplicantRow(realIdx, 'mobile', e.target.value)} className="form-control" disabled={app.otp_verified} />
+                                {!app.otp_verified ? (
+                                  <button type="button" className="btn btn-primary" onClick={() => handleSendCoapplicantOtp(realIdx)} style={{ padding: '0 16px', whiteSpace: 'nowrap' }} disabled={saving}>Send OTP</button>
+                                ) : (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--success)', fontWeight: 600, padding: '0 8px', whiteSpace: 'nowrap', fontSize: 12 }}>
+                                    <CheckCircle2 size={16} /> Verified
+                                  </div>
+                                )}
+                              </div>
+                            </FormField>
+                          <FormField label="EMAIL" name={`coemail_${realIdx}`}>
+                            <input type="email" value={app.email || ''} onChange={e => updateApplicantRow(realIdx, 'email', e.target.value)} className="form-control" />
                           </FormField>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -612,142 +795,154 @@ const AddCustomerWizardPage = () => {
         {currentStep === 2 && ( 
           <form onSubmit={handleStep2Submit} style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
             {/* Bureau Section - NEW */}
-            <div className="card">
-               <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                 <div>
-                   <h3 style={{ fontSize: 16, fontWeight: 700 }}>Bureau Verification</h3>
-                   <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 4 }}>Verify credit scores before analysis</p>
+            {/* Business Financials - Only if Business PAN is provided */}
+            {formData.business_pan && (
+              <div className="card">
+                 <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
+                   <h3 style={{ fontSize: 16, fontWeight: 700 }}>Business Financials</h3>
+                   <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 4 }}>Extrapolated from Business PAN: {formData.business_pan}</p>
                  </div>
-                 <div style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>Check OTP status in Step 1 if disabled</div>
-               </div>
-               <div style={{ padding: 24 }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {formData.applicants.sort((a,b) => a.type === 'PRIMARY' ? -1 : 1).map((app, idx) => (
-                      <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--bg-base)', borderRadius: 8, border: '1px solid var(--border)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                           <div style={{ width: 8, height: 8, borderRadius: '50%', background: app.bureau_fetched ? 'var(--success)' : 'var(--warning)' }} />
-                           <div>
-                             <p style={{ fontSize: 14, fontWeight: 600 }}>{app.type === 'PRIMARY' ? 'Primary Borrower' : `Co-Applicant #${formData.applicants.filter(x => x.type === 'CO_APPLICANT').indexOf(app) + 1}`}</p>
-                             <p style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{app.pan_number || 'PAN Pending'} • {app.type}</p>
-                           </div>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                           {app.cibil_score && <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--primary)' }}>CIBIL: {app.cibil_score}</span>}
-                           <button 
-                             type="button"
-                             className={`btn btn-sm ${app.bureau_fetched ? 'btn-secondary' : 'btn-primary'}`}
-                             onClick={() => handleRunBureau(app.id)}
-                             disabled={saving || !app.otp_verified || app.bureau_fetched}
-                           >
-                             {app.bureau_fetched ? 'Verified' : 'Run Bureau'}
-                           </button>
-                        </div>
+                  <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 24 }}>
+                    <GstAnalyticsForm 
+                       caseId={caseId} 
+                       customerId={formData.customer_id} 
+                       onComplete={() => setFormData(prev => ({...prev, gst_completed: true}))} 
+                    />
+                    <ItrAnalyticsForm
+                        caseId={caseId}
+                        customerId={formData.customer_id}
+                        applicantId={null}
+                        applicantType="PRIMARY"
+                        applicantName={formData.business_name || formData.business_pan || 'Primary Business'}
+                        prefillPan={formData.business_pan}
+                        walletBalance={walletBalance}
+                        itrCost={costs.ITR_ANALYTICS}
+                        existingRecord={formData.business_itr_profile}
+                        onComplete={(data) => setFormData(prev => ({...prev, itr_completed: true, business_itr_profile: data}))}
+                    />
+                    <BankStatementUpload 
+                        caseId={caseId}
+                        customerId={formData.customer_id}
+                        applicantId={null} 
+                        applicantType="PRIMARY"
+                        applicantName={formData.business_name || formData.business_pan || 'Primary Business'}
+                        walletBalance={walletBalance}
+                        analyzeCost={costs.BANK_ANALYSIS}
+                        existingStatus={formData.business_bank_profile}
+                        onComplete={(status, payload) => console.log('Primary bank complete')}
+                    />
+                  </div>
+              </div>
+            )}
+
+            {/* Applicant Financials */}
+            {formData.applicants.sort((a,b) => a.type === 'PRIMARY' ? -1 : 1).map((app, idx) => (
+              <div key={app.id || idx} className="card">
+                 <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
+                   <h3 style={{ fontSize: 16, fontWeight: 700 }}>
+                     {app.type === 'PRIMARY' ? 'Primary Borrower' : `Co-Applicant #${formData.applicants.filter(x => x.type === 'CO_APPLICANT').indexOf(app) + 1}`}
+                   </h3>
+                   <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                     {app.pan_number || 'PAN Pending'} • {app.employment_type || 'Unknown Employment'}
+                   </p>
+                 </div>
+                 <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 24 }}>
+                    
+                    {/* Bureau Verification */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--bg-base)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                         <div style={{ width: 8, height: 8, borderRadius: '50%', background: app.bureau_fetched ? 'var(--success)' : 'var(--warning)' }} />
+                         <div>
+                           <p style={{ fontSize: 14, fontWeight: 600 }}>Bureau Verification</p>
+                         </div>
                       </div>
-                    ))}
-                  </div>
-               </div>
-            </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                         {app.cibil_score && <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--primary)' }}>CIBIL: {app.cibil_score}</span>}
+                         <button 
+                           type="button"
+                           className={`btn btn-sm ${app.bureau_fetched ? 'btn-secondary' : 'btn-primary'}`}
+                           onClick={() => handleRunBureau(app.id)}
+                           disabled={saving || !app.otp_verified || app.bureau_fetched}
+                         >
+                           {app.bureau_fetched ? 'Verified' : 'Run Bureau'}
+                         </button>
+                      </div>
+                    </div>
 
-            <div className="card">
-               <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
-                 <h3 style={{ fontSize: 16, fontWeight: 700 }}>GST Profile</h3>
-                 <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 4 }}>Extrapolated from Business PAN: {formData.business_pan}</p>
-               </div>
-                <div style={{ padding: 0 }}>
-                  <GstAnalyticsForm 
-                     caseId={caseId} 
-                     customerId={formData.customer_id} 
-                     onComplete={() => setFormData(prev => ({...prev, gst_completed: true}))} 
-                  />
-                </div>
-            </div>
+                    {/* SELF EMPLOYED Financials */}
+                    {app.employment_type === 'SELF_EMPLOYED' && (
+                       <>
+                         <div style={{ borderTop: '1px dashed var(--border)', paddingTop: 16 }}>
+                           <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Applicant GST Profile</h4>
+                           <GstAnalyticsForm 
+                              caseId={caseId} 
+                              customerId={formData.customer_id} 
+                              applicantId={app.id}
+                              onComplete={() => console.log(`Applicant ${app.id} GST complete`)} 
+                           />
+                         </div>
+                         <div style={{ borderTop: '1px dashed var(--border)', paddingTop: 16 }}>
+                           <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Applicant ITR Analytics</h4>
+                           <ItrAnalyticsForm
+                              caseId={caseId}
+                              customerId={formData.customer_id}
+                              applicantId={app.id}
+                              applicantType={app.type}
+                              applicantName={app.pan_number || `Applicant ${idx + 1}`}
+                              prefillPan={app.pan_number || ''}
+                              walletBalance={walletBalance}
+                              itrCost={costs.ITR_ANALYTICS}
+                              existingRecord={app.itr_analytics?.[0] || null}
+                              onComplete={(data) => console.log(`Applicant ${idx} ITR complete`)}
+                           />
+                         </div>
+                         <div style={{ borderTop: '1px dashed var(--border)', paddingTop: 16 }}>
+                           <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Applicant Bank Statements</h4>
+                           <BankStatementUpload 
+                              caseId={caseId}
+                              customerId={formData.customer_id}
+                              applicantId={app.id} 
+                              applicantType={app.type}
+                              applicantName={app.pan_number || `Applicant ${idx+1}`}
+                              walletBalance={walletBalance}
+                              analyzeCost={costs.BANK_ANALYSIS}
+                              existingStatus={app.bank_statements?.[0] || null}
+                              onComplete={(status, payload) => console.log(`Applicant ${idx} bank complete`)}
+                           />
+                         </div>
+                       </>
+                    )}
 
-            <div className="card">
-               <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                 <div>
-                   <h3 style={{ fontSize: 16, fontWeight: 700 }}>ITR Analytics</h3>
-                   <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 4 }}>Structured financial analytics via ITR portal credentials</p>
+                    {/* SALARIED Financials */}
+                    {app.employment_type === 'SALARIED' && (
+                       <>
+                         <div style={{ borderTop: '1px dashed var(--border)', paddingTop: 16 }}>
+                           <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Applicant Bank Statements</h4>
+                           <BankStatementUpload 
+                              caseId={caseId}
+                              customerId={formData.customer_id}
+                              applicantId={app.id} 
+                              applicantType={app.type}
+                              applicantName={app.pan_number || `Applicant ${idx+1}`}
+                              walletBalance={walletBalance}
+                              analyzeCost={costs.BANK_ANALYSIS}
+                              existingStatus={app.bank_statements?.[0] || null}
+                              onComplete={(status, payload) => console.log(`Applicant ${idx} bank complete`)}
+                           />
+                         </div>
+                         <div style={{ borderTop: '1px dashed var(--border)', paddingTop: 16 }}>
+                           <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Salary Slip OCR</h4>
+                           <SalarySlipUploader 
+                              caseId={caseId} 
+                              applicantId={app.id} 
+                              applicantName={app.pan_number}
+                           />
+                         </div>
+                       </>
+                    )}
                  </div>
-                 <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>One fetch per applicant — PAN + portal password</p>
-               </div>
-               <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
-                  <ItrAnalyticsForm
-                      caseId={caseId}
-                      customerId={formData.customer_id}
-                      applicantId={null}
-                      applicantType="PRIMARY"
-                      applicantName={formData.business_name || formData.business_pan || 'Primary Business'}
-                      prefillPan={formData.business_pan}
-                      walletBalance={walletBalance}
-                      itrCost={costs.ITR_ANALYTICS}
-                      existingRecord={formData.customer_itr_profile}
-                      onComplete={(data) => setFormData(prev => ({...prev, itr_completed: true, itr_analytics: data}))}
-                  />
-
-                  {formData.applicants && formData.applicants.map((coApp, idx) => (
-                      <ItrAnalyticsForm
-                          key={idx}
-                          caseId={caseId}
-                          customerId={formData.customer_id}
-                          applicantId={coApp.id}
-                          applicantType="CO_APPLICANT"
-                          applicantName={coApp.pan_number || `Co-Applicant ${idx + 1}`}
-                          prefillPan={coApp.pan_number || ''}
-                          walletBalance={walletBalance}
-                          itrCost={costs.ITR_ANALYTICS}
-                          existingRecord={coApp.itr_analytics?.[0] || null}
-                          onComplete={(data) => console.log(`Co-App ${idx} ITR complete`)}
-                      />
-                  ))}
-
-                  <div style={{ padding: '14px 16px', background: 'var(--primary-subtle)', borderRadius: 'var(--radius)', border: '1px solid #d0ccff', color: 'var(--primary-dark)', fontSize: 13 }}>
-                    ITR Analytics includes P&L, Balance Sheet, Ratio Analysis, and an Excel report downloadable per applicant.
-                  </div>
-               </div>
-            </div>
-
-            {/* Bank Statement Section */}
-            <div className="card">
-               <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                   <div style={{ fontSize: 20 }}>🏢</div> 
-                   <h3 style={{ fontSize: 16, fontWeight: 700 }}>Bank Statement Upload</h3>
-                 </div>
-                 <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>Upload 12-month bank statement for each applicant — PDF or Excel</p>
-               </div>
-               <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
-                  <BankStatementUpload 
-                      caseId={caseId}
-                      customerId={formData.customer_id}
-                      applicantId={null} 
-                      applicantType="PRIMARY"
-                      applicantName={formData.business_name || formData.business_pan || 'Primary Business'}
-                      walletBalance={walletBalance}
-                      analyzeCost={costs.BANK_ANALYSIS}
-                      existingStatus={formData.customer_bank_profile}
-                      onComplete={(status, payload) => console.log('Primary bank complete')}
-                  />
-                  
-                  {formData.applicants && formData.applicants.map((coApp, idx) => (
-                      <BankStatementUpload 
-                          key={idx}
-                          caseId={caseId}
-                          customerId={formData.customer_id}
-                          applicantId={coApp.id} 
-                          applicantType="CO_APPLICANT"
-                          applicantName={coApp.pan_number || `Co-Applicant ${idx+1}`}
-                          walletBalance={walletBalance}
-                          analyzeCost={costs.BANK_ANALYSIS}
-                          existingStatus={coApp.bank_statements?.[0] || null}
-                          onComplete={(status, payload) => console.log(`Co-App ${idx} bank complete`)}
-                      />
-                  ))}
-                  
-                  <div style={{ padding: '16px', background: 'var(--primary-subtle)', borderRadius: 'var(--radius)', border: '1px solid #d0ccff', color: 'var(--primary-dark)', fontSize: 13, marginTop: 8 }}>
-                    Bank statement analysis (average monthly balance, credits, debits) will appear in the next step's income summary.
-                  </div>
-               </div>
-            </div>
+              </div>
+            ))}
 
             <div style={{ display: 'flex', gap: 16, justifyContent: 'flex-end', marginTop: 10 }}>
               <button className="btn btn-ghost" type="button" onClick={() => setCurrentStep(1)}>← Back</button>
@@ -797,20 +992,23 @@ const AddCustomerWizardPage = () => {
                   <h3 style={{ fontSize: 16, fontWeight: 700 }}>📡 Data Pull Status</h3>
                 </div>
                 <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {[
-                    { label: 'Bureau Pull',     done: formData.applicants.every(a => a.bureau_fetched), sub: `${formData.applicants.filter(a => a.bureau_fetched).length} of ${formData.applicants.length} fetched` },
-                    { label: 'GST Report',      done: formData.gst_completed,  sub: formData.gst_completed ? 'Generated' : 'Not yet generated' },
-                    { label: 'ITR Report',      done: formData.itr_completed,  sub: formData.itr_completed ? 'Generated' : 'Not yet generated' },
-                    { label: 'Bank Statement',  done: !!formData.customer_bank_profile, sub: formData.customer_bank_profile ? 'Uploaded' : 'Not yet uploaded' }
-                  ].map(({ label, done, sub }) => (
-                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: done ? '#F0FFF4' : '#FFFBF0', borderRadius: 8, border: `1px solid ${done ? '#9AE6B4' : '#F6E05E'}` }}>
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: 13 }}>{label}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>{sub}</div>
-                      </div>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: done ? 'var(--success)' : 'var(--warning)' }}>{done ? '✅ Done' : '⏳ Pending'}</span>
-                    </div>
-                  ))}
+                   <DataPullProgress 
+                      label="Bureau Pull"
+                      status={formData.applicants.every(a => a.bureau_fetched) ? 'COMPLETE' : 'PENDING'}
+                      description={`${formData.applicants.filter(a => a.bureau_fetched).length} of ${formData.applicants.length} fetched`}
+                   />
+                   <DataPullProgress 
+                      label="GST Report"
+                      status={formData.gst_completed ? 'COMPLETE' : 'NOT_STARTED'}
+                   />
+                   <DataPullProgress 
+                      label="ITR Analytics"
+                      status={formData.itr_completed ? 'COMPLETE' : 'NOT_STARTED'}
+                   />
+                   <DataPullProgress 
+                      label="Bank Analysis"
+                      status={formData.customer_bank_profile ? 'COMPLETE' : 'NOT_STARTED'}
+                   />
                 </div>
               </div>
             </div>

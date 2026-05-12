@@ -41,16 +41,16 @@ The project is a monorepo consisting of a decoupled backend and frontend.
 | :--- | :--- | :--- | :--- |
 | **Dashboard** | `/` | **Implemented** | Role-specific overview. |
 | **Customers / Pipeline** | `/customers` | **Implemented** | Main CRM list for DSA users. |
-| **Case Detail** | `/customers/:id` | **Implemented** | Profile drill-down with data pull status. |
+| **Case Detail** | `/customers/:id` | **Implemented** | Profile drill-down with financial tracking & sanctioning. |
 | **Eligibility Report** | `/cases/:id/esr` | **Implemented** | ESR generation and viewing. |
 | **Lender Config** | `/admin/lenders` | **Implemented** | Platform-level lender matrix management. |
-| **Wallet Management** | `/admin/wallets` | **Implemented** | Superadmin view of all DSA balances. |
+| **Wallet Management** | `/admin/wallets** | **Implemented** | Superadmin view of all DSA balances. |
 | **Reports & MIS** | — | **Missing** | No dedicated reporting module in current code. |
 | **Commission Tracking**| — | **Missing** | No logic or UI for commissions. |
 | **Sub-DSA Payout** | — | **Missing** | No payout logic or UI. |
 | **Sales Incentive** | — | **Missing** | No incentive logic or UI. |
-| **Part Disbursement** | — | **Missing** | No disbursement management logic. |
-| **PDD Management** | — | **Missing** | No Post-Disbursement Document logic. |
+| **Part Disbursement** | `/disbursements/partial` | **Implemented** | Dashboard for managing loan tranches & pending payouts. |
+| **PDD Management** | `/cases/:id` | **Implemented** | Post-Disbursement Document tracking & checklists. |
 
 ---
 
@@ -74,8 +74,8 @@ This section highlights mismatches between the repository code and the intended/
 | **Tenant Isolation** | **Partial** | Enforced in list views via `tenant_id` filters, but explicitly bypassed for `SUPER_ADMIN` in detail/drill-down controllers. |
 | **Commission Modules** | **Not Implemented** | No database models, routes, or controllers exist for lender commissions, sub-DSA payouts, or sales incentives. |
 | **Invoice Management** | **Not Implemented** | Missing from both backend (Prisma schema) and frontend. |
-| **Disbursement Flow** | **UI Label Only** | Mentioned in documentation and some UI labels/enums, but no functional logic or tranche management exists. |
-| **Financial Tracking** | **Limited** | Backend currently only tracks **API usage credits (Wallets)**. No tracking of actual loan amounts, interest, or payouts. |
+| **Disbursement Flow** | **Implemented** | Full backend transaction logic for partial payouts (tranches), stage transitions, and financial precision using `Decimal`. |
+| **Financial Tracking** | **Implemented** | Tracking of sanctioned amounts, disbursed totals, and real-time remaining balances at both Case and Transaction levels. |
 
 ---
 
@@ -88,9 +88,11 @@ This section highlights mismatches between the repository code and the intended/
 | `DATA_COLLECTION` | Implemented | Active during API pulls. |
 | `INCOME_REVIEWED` | Implemented | Manual step in onboarding. |
 | `ESR_GENERATED` | Implemented | Final stage of the technology pull. |
-| `Sanctioned` | **Label Only** | Exists in enum/labels but lacks logic for sanction letter ingestion or validation. |
-| `Partly Disbursed` | **Missing** | Not in the core backend logic. |
-| `Closed` | **Label Only** | No logic for case closure or archiving. |
+| `SALARIED_FLOW` | **Hardened** | Unified onboarding for Salaried Individuals with stacked applicant document management. |
+| `APPROVED` | **Implemented** | Sanction details (LAN, ROI, Fee) are recorded. Snapshot created on Case record. |
+| `PARTLY_DISBURSED` | **Implemented** | Active after 1st tranche. Dashboard tracks aging tranches and due dates. |
+| `DISBURSED` | **Implemented** | Final stage after `remaining_balance` reaches zero. Triggers PDD finalization. |
+| `CLOSED` | **Label Only** | No logic for case closure or archiving. |
 
 ---
 
@@ -108,21 +110,57 @@ This section highlights mismatches between the repository code and the intended/
 
 ---
 
-## 7. Configuration Systems
+## 7. Financial & Disbursement Flow
 
-The following are the only functional configuration systems currently in the repository:
-1. **Lender Matrix:** Schemes, products, and parameters.
-2. **API Pricing:** Global and tenant-specific credit costs.
-3. **Lender Contacts:** Per-DSA mapping of lender recipients.
-4. **Vendors:** Platform-wide vendor slab management.
+The system now implements a robust post-sanction financial lifecycle designed for multi-tranche MSME loans.
+
+### 7.1. Three-Layer Data Model
+1. **CaseSanction:** Stores fixed terms (Sanctioned Amount, ROI, Processing Fee, Loan Account Number). Immutable once disbursement starts.
+2. **Disbursement (Tranches):** Records specific payouts. Includes `idempotency_key` to prevent duplicate payouts and `next_disbursement_due_date` for pipeline tracking.
+3. **PDD (Post-Disbursement Documentation):** Automatically generated tasks linked to tranches (e.g., "Original Sale Deed", "Insurance Policy") with tracking status.
+
+### 7.2. Transactional Integrity
+All financial updates occur within `Prisma.$transaction` to ensure that:
+- Case summary fields (`total_disbursed`, `remaining_balance`) are always in sync with the transaction ledger.
+- Stage transitions (`APPROVED` -> `PARTLY_DISBURSED` -> `DISBURSED`) are automatic based on balance calculations.
+- Financial snapshots (Lender Name, Product Type) are mirrored on the Case record for high-performance pipeline views.
 
 ---
 
-## 8. Architecture Summary (Honest View)
+## 8. Configuration Systems
 
-The current project is a **robust technology-pull and eligibility engine** for MSME loans, but it is **not yet a complete financial management or payout platform**.
+The following are the functional configuration systems currently in the repository:
+1. **Lender Matrix:** Platform-level schemes, products, and parameters.
+2. **Lender Directory (Two-Layer ESR):** 
+   - **Platform Lenders:** Global lenders (HDFC, ICICI, etc.) managed by Superadmin.
+   - **Tenant Lenders:** DSA-specific records that must be **linked** to Platform Lenders to enable ESR generation.
+3. **API Pricing:** Global and tenant-specific credit costs.
+4. **Lender Contacts:** Per-DSA mapping of lender recipients for proposal delivery.
+5. **Vendors:** Platform-wide vendor slab management for API integrations.
 
-- **System Structure:** Modular Express backend, Vite frontend.
-- **Module Dependencies:** Centralized around the `Case` and `Tenant` entities.
-- **Current Pipeline:** Strong focus on the "Pre-Sanction" phase (Data collection -> Eligibility).
-- **User-Role Boundaries:** Technically enforced for DSA users, but "God-mode" exists for SUPER_ADMIN.
+---
+
+## 9. Salary OCR & Salaried Onboarding (NEW)
+
+The platform now includes a hardened onboarding path for Salaried Individuals, focused on high-reliability income extraction.
+
+### 9.1. Parallel OCR Batch Pipeline
+- **Reliability:** To bypass vendor multipart limitations, the system uses a **Parallel Sync Pipeline**. It triggers separate, simultaneous API requests for each month's salary slip.
+- **Normalization Layer:** Robust parsing logic handles PascalCase keys and cleans currency formatting (stripping symbols and commas) before database insertion.
+- **Auto-Annualization:** The system automatically calculates `Average Net Monthly Salary` and updates the `CaseIncomeEntry` with an annualized amount for ESR calculation.
+
+### 9.2. Salaried Wizard (v2)
+- **Stacked UI Architecture:** Replaced tabbed views with a stacked layout for multi-applicant document management, providing better visibility and reducing navigation friction.
+- **Dynamic Resumption:** The CRM pipeline now detects the `customer.category` (SALARIED vs MSME) to automatically route users to the correct wizard flow during case resumption.
+- **State Protection:** Implemented non-mutating array operations for applicant management and Bureau verification to prevent UI state corruption during high-frequency updates.
+
+---
+
+## 10. Architecture Summary (Honest View)
+
+The project has evolved from a "technology-pull engine" into a **functional Loan Management and Payout platform**.
+
+- **Core Strengths:** Automated eligibility (ESR), robust multi-tranche disbursement tracking, and hardened salary OCR pipelines.
+- **Data Integrity:** Strict enforcement of multi-tenant isolation, state synchronization across complex wizards, and transactional financial consistency.
+- **Current Pipeline:** Full coverage from **Lead Creation -> Salaried/MSME Onboarding -> Data Pull -> Eligibility -> Sanction -> Disbursement -> PDD Tracking**.
+- **Next Horizons:** Commission calculation engine, automated invoicing, and sub-DSA payout settlements.

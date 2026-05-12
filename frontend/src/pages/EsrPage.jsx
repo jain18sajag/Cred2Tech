@@ -66,7 +66,7 @@ function SendConfirmationModal({ isOpen, onClose, result }) {
 }
 
 // ─── Send to Other Lender Modal ───────────────────────────────────────────────
-function SendToOtherLenderModal({ isOpen, onClose, caseId, onSuccess }) {
+function SendToOtherLenderModal({ isOpen, onClose, caseId, caseProductType, onSuccess }) {
   const [lenders, setLenders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedLender, setSelectedLender] = useState(null);
@@ -88,6 +88,13 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, onSuccess }) {
     setSending(true);
     try {
       const result = await sendCaseToOtherLender(caseId, { contact_id: selectedContact.id });
+      if (result.isDuplicate) {
+        if (window.confirm(`A lender case already exists for ${selectedLender.lender_name} (CASE-${result.childCaseId}). Do you want to open the existing case?`)) {
+          window.location.href = `/cases/${result.childCaseId}`; // using href since navigate is not in this component's scope easily unless passed
+        }
+      } else {
+        toast.success(`Proposal sent to ${selectedLender.lender_name}. Lender case CASE-${result.childCaseId} created.`);
+      }
       onSuccess(result);
       onClose();
     } catch (e) {
@@ -96,6 +103,9 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, onSuccess }) {
   };
 
   const contacts = selectedLender?.contacts || [];
+  const filteredContacts = contacts.filter(c => 
+    !caseProductType || c.product_type === caseProductType || c.product_type === 'ALL'
+  );
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' }}>
@@ -113,7 +123,7 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, onSuccess }) {
             <>
               <div style={{ marginBottom:16 }}>
                 <label style={{ fontSize:11, fontWeight:700, color:'var(--text-tertiary)', textTransform:'uppercase', letterSpacing:'0.5px', display:'block', marginBottom:8 }}>Select Lender</label>
-                <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                <div style={{ display:'flex', flexDirection:'column', gap:8, maxHeight: 180, overflowY: 'auto' }}>
                   {lenders.map(l => (
                     <button key={l.id} onClick={() => { setSelectedLender(l); setSelectedContact(null); }}
                       style={{ padding:'10px 14px', borderRadius:8, textAlign:'left', cursor:'pointer', fontSize:14, fontWeight:600,
@@ -124,20 +134,29 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, onSuccess }) {
                   ))}
                 </div>
               </div>
-              {selectedLender && contacts.length > 0 && (
+              {selectedLender && (
                 <div>
                   <label style={{ fontSize:11, fontWeight:700, color:'var(--text-tertiary)', textTransform:'uppercase', letterSpacing:'0.5px', display:'block', marginBottom:8 }}>Select Contact</label>
-                  <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-                    {contacts.map(c => (
-                      <button key={c.id} onClick={() => setSelectedContact(c)}
-                        style={{ padding:'10px 14px', borderRadius:8, textAlign:'left', cursor:'pointer', fontSize:13,
-                          border:`2px solid ${selectedContact?.id === c.id ? '#276749' : 'var(--border)'}`,
-                          background: selectedContact?.id === c.id ? '#F0FFF4' : 'var(--bg-elevated)', color:'var(--text-primary)' }}>
-                        <div style={{ fontWeight:600 }}>{c.contact_name} <span style={{ fontSize:11, color:'var(--text-tertiary)', fontWeight:400 }}>({c.product_type})</span></div>
-                        <div style={{ fontSize:11, color:'var(--text-tertiary)', marginTop:2 }}>{c.contact_email}{c.contact_mobile ? ` · ${c.contact_mobile}` : ''}</div>
-                      </button>
-                    ))}
-                  </div>
+                  {filteredContacts.length === 0 ? (
+                    <div style={{ padding: 12, fontSize: 13, color: 'var(--error)', background: '#FFF5F5', borderRadius: 8, border: '1px solid #FED7D7' }}>
+                      No contacts configured for product {caseProductType}. Configure one in Lender Contacts.
+                    </div>
+                  ) : (
+                    <div style={{ display:'flex', flexDirection:'column', gap:8, maxHeight: 160, overflowY: 'auto' }}>
+                      {filteredContacts.map(c => (
+                        <button key={c.id} onClick={() => setSelectedContact(c)}
+                          style={{ padding:'10px 14px', borderRadius:8, textAlign:'left', cursor:'pointer', fontSize:13,
+                            border:`2px solid ${selectedContact?.id === c.id ? '#276749' : 'var(--border)'}`,
+                            background: selectedContact?.id === c.id ? '#F0FFF4' : 'var(--bg-elevated)', color:'var(--text-primary)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ fontWeight:600 }}>{c.contact_name} <span style={{ fontSize:11, color:'var(--text-tertiary)', fontWeight:400 }}>({c.product_type})</span></div>
+                            {c.dsa_code && <div style={{ fontSize:10, fontWeight:700, color:'#4A5568', background:'#EDF2F7', padding:'2px 6px', borderRadius:6 }}>{c.dsa_code}</div>}
+                          </div>
+                          <div style={{ fontSize:11, color:'var(--text-tertiary)', marginTop:2 }}>{c.contact_email}{c.contact_mobile ? ` · ${c.contact_mobile}` : ''}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </>
@@ -350,9 +369,17 @@ function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToL
     setSending(true);
     try {
       const result = await sendCaseToLender(caseId, {
-        lender_name: lender.lender_name,
-        product_type: lender.product_type || 'LAP',
+        lender_name: lender.lender_name
       });
+      
+      if (result.isDuplicate) {
+        if (window.confirm(`A lender case already exists for ${lender.lender_name} (CASE-${result.childCaseId}). Do you want to open the existing case?`)) {
+          navigate(`/cases/${result.childCaseId}`);
+        }
+      } else {
+        toast.success(`Proposal sent to ${lender.lender_name}. Lender case CASE-${result.childCaseId} created.`);
+      }
+      
       onSendToLender(result);
     } catch (e) {
       const msg = e.response?.data?.error || 'Failed to send';
@@ -718,6 +745,7 @@ export default function EsrPage() {
         isOpen={showOtherLenderModal}
         onClose={() => setShowOtherLenderModal(false)}
         caseId={caseId}
+        caseProductType={esr?.input_snapshot?.product_type}
         onSuccess={r => { setShowOtherLenderModal(false); setSendConfirmResult(r); }}
       />
     </div>

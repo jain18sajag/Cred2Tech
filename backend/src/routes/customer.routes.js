@@ -14,6 +14,9 @@ router.get('/check-existing-by-pan', customerController.checkCustomer);
 // POST /customers/create-or-attach
 router.post('/create-or-attach', customerController.createOrAttach);
 
+// POST /customers/salaried/start
+router.post('/salaried/start', customerController.createSalariedCustomer);
+
 // Drilldowns
 router.get('/:customer_id/profile', customerController.getProfile);
 router.get('/:customer_id/api-availability', customerController.getApiAvailability);
