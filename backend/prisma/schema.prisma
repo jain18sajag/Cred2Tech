@@ -1077,22 +1077,27 @@ model CaseEsrFinancials {
   applicant_age         Int?
   existing_obligations  Float?
   icici_exposure        Float?
-  
+
   itr_pat               Float?
   itr_depreciation      Float?
   itr_finance_cost      Float?
   itr_gross_receipts    Float?
-  
+
   gst_avg_monthly_sales Float?
   gst_industry_type     String?
   gst_industry_margin   Float?
-  
+
   bank_avg_balance      Float?
   bank_monthly_income   Float?
-  
+
   net_profit_income     Float?
   gst_income            Float?
   banking_income        Float?
+
+  // --- Salaried Income Fields (Phase 2) ---
+  salaried_income       Float?   // avg net monthly salary derived from OCR + manual income entries
+  salaried_income_source String? // "OCR" | "MANUAL" | "MIXED"
+  salaried_slip_count   Int?     // number of OCR-completed salary slips used in derivation
 
   selected_income_method String?
   selected_monthly_income Float?
@@ -1100,7 +1105,12 @@ model CaseEsrFinancials {
   constitution_type     String?
   employment_type       String?
   business_vintage_months Int?
-  
+
+  // --- Extraction Lifecycle (Phase 2) ---
+  // Tracks whether the snapshot is fresh and safe to use for ESR generation
+  extraction_status     String   @default("PENDING") // "PENDING" | "COMPLETED" | "FAILED"
+  extracted_at          DateTime?  // timestamp of last successful extraction
+
   created_at            DateTime @default(now())
   updated_at            DateTime @updatedAt
 
@@ -1140,6 +1150,10 @@ model EligibilityReport {
   tenant                Tenant   @relation(fields: [tenant_id], references: [id])
 
   @@index([case_id, tenant_id, is_latest])
+  // UNIQUE constraint: guarantees one version_number per case+tenant combination.
+  // This is the database-level safety net for concurrent ESR generation.
+  // Even if the advisory lock is bypassed, the DB will reject the duplicate insert.
+  @@unique([case_id, tenant_id, version_number])
   @@map("eligibility_reports")
 }
 

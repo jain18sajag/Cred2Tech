@@ -86,9 +86,11 @@ async function syncObligationsFromBureau(case_id, tenant_id) {
     }
   }
 
-  // Extract ESR financials asynchronously
+  // Background snapshot refresh (safety net — ESR orchestrator also validates freshness on generation)
   const { extractEsrFinancials } = require('./esrFinancials.service');
-  extractEsrFinancials(case_id).catch(err => console.error(err));
+  extractEsrFinancials(case_id, tenant_id).catch(err =>
+    console.error(`[ESR Background] Snapshot refresh failed for case ${case_id}:`, err.message)
+  );
 
   return { created, skipped };
 }
@@ -169,9 +171,12 @@ async function addObligation(case_id, payload, tenant_id) {
     }
   });
 
-  // Extract ESR financials asynchronously
+  // Background snapshot refresh
   const { extractEsrFinancials } = require('./esrFinancials.service');
-  extractEsrFinancials(case_id).catch(err => console.error(err));
+  const caseForTenant = await prisma.case.findUnique({ where: { id: case_id }, select: { tenant_id: true } });
+  extractEsrFinancials(case_id, caseForTenant?.tenant_id || null).catch(err =>
+    console.error(`[ESR Background] Snapshot refresh failed for case ${case_id}:`, err.message)
+  );
 
   return result;
 }
@@ -201,9 +206,11 @@ async function updateObligation(obligation_id, case_id, payload, tenant_id) {
     }
   });
 
-  // Extract ESR financials asynchronously
+  // Background snapshot refresh
   const { extractEsrFinancials } = require('./esrFinancials.service');
-  extractEsrFinancials(case_id).catch(err => console.error(err));
+  extractEsrFinancials(case_id, caseRecord.tenant_id).catch(err =>
+    console.error(`[ESR Background] Snapshot refresh failed for case ${case_id}:`, err.message)
+  );
 
   return result;
 }

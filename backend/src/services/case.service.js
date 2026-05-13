@@ -256,9 +256,15 @@ async function updateProductProperty(case_id, payload, tenant_id) {
     include: { property: true, applicants: true, data_pull_status: true }
   });
 
-  // Extract ESR financials asynchronously
+  // Kick off ESR financial snapshot extraction in the background.
+  // This is intentionally NOT awaited here — the user stays unblocked.
+  // SAFETY: esr.service.js's generateESR() re-checks snapshot freshness and
+  // re-extracts synchronously before evaluation if the snapshot is stale/missing.
+  // This background trigger is just a warm-up optimisation.
   const { extractEsrFinancials } = require('./esrFinancials.service');
-  extractEsrFinancials(case_id).catch(err => console.error(err));
+  extractEsrFinancials(case_id, tenant_id).catch(err =>
+    console.error(`[ESR Background] Snapshot pre-extraction failed for case ${case_id}:`, err.message)
+  );
 
   return finalCase;
 }

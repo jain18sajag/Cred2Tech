@@ -1,176 +1,130 @@
+/**
+ * esr.service.js
+ *
+ * PURPOSE:
+ *   Orchestrate the ESR generation pipeline:
+ *     1. Validate case ownership
+ *     2. Ensure CaseEsrFinancials snapshot is FRESH (re-extract if stale/missing/failed)
+ *     3. Delegate to generateDynamicESR() which handles its own concurrency
+ *        via a case-row level lock inside a single DB transaction
+ *
+ * CONCURRENCY DESIGN:
+ *   Session-level advisory locks (pg_try_advisory_lock) are NOT safe with
+ *   Prisma connection pooling — the lock and unlock may land on different
+ *   DB connections, leaving the lock permanently stuck.
+ *
+ *   Instead, concurrency is handled in TWO layers:
+ *     Layer 1 (Application): This orchestrator always awaits extraction before
+ *                            calling the evaluation engine.
+ *     Layer 2 (Database):    generateDynamicESR() uses SELECT ... FOR UPDATE
+ *                            on the Case row inside its $transaction, which
+ *                            PostgreSQL serializes correctly within a single connection.
+ */
+
+'use strict';
+
 const prisma = require('../../config/db');
+const { extractEsrFinancials } = require('./esrFinancials.service');
 const { generateDynamicESR } = require('./esr/dynamicEligibility.service');
 
-const toNumber = (value) => {
-  if (value === undefined || value === null || value === '') return null;
-  const normalized = typeof value === 'string' ? value.replace(/,/g, '') : value;
-  const numeric = Number(normalized);
-  return Number.isFinite(numeric) ? numeric : null;
-};
+// Snapshot freshness threshold — re-extract if older than this many minutes
+const SNAPSHOT_STALE_MINUTES = 30;
 
-const parsePercentRatio = (value) => {
-  const numeric = toNumber(value);
-  if (numeric === null) return null;
-  return numeric > 1 ? numeric / 100 : numeric;
-};
-
-const latestByYear = (records = []) => {
-  if (!Array.isArray(records) || records.length === 0) return null;
-  return [...records]
-    .filter((record) => record && record.year !== undefined && record.year !== null)
-    .sort((a, b) => Number(b.year) - Number(a.year))[0] || null;
-};
-
-const getNetProfitFromItrPayload = (itrPayload) => {
-  if (!itrPayload) return 0;
-
-  const source = typeof itrPayload === 'string' ? JSON.parse(itrPayload) : itrPayload;
-  const root = source?.result || source;
-
-  const directNetProfit = toNumber(
-    root?.net_profit
-    ?? root?.netProfit
-    ?? root?.annual_net_profit
-    ?? root?.income_summary?.net_profit
-  );
-  if (directNetProfit !== null) return directNetProfit;
-
-  const itrNode = root?.iTR || root?.ITR;
-  const pnlCollection = itrNode?.profitAndLossStatement;
-  const pnlRows = Array.isArray(pnlCollection)
-    ? pnlCollection
-    : Array.isArray(pnlCollection?.profitAndLossStatement)
-      ? pnlCollection.profitAndLossStatement
-      : [];
-  const latestPnl = latestByYear(pnlRows);
-  const pnlNetProfit = toNumber(
-    latestPnl?.profitAfterTax
-    ?? latestPnl?.netProfit
-    ?? latestPnl?.profit_after_tax
-  );
-  if (pnlNetProfit !== null) return pnlNetProfit;
-
-  const taxCollection = itrNode?.taxCalculation?.taxCalculation;
-  const latestTaxCalc = latestByYear(Array.isArray(taxCollection) ? taxCollection : []);
-  const taxCalcNetProfit = toNumber(
-    latestTaxCalc?.profitsAndGainsFromBusinessAndProfession
-    ?? latestTaxCalc?.netProfit
-  );
-  if (taxCalcNetProfit !== null) return taxCalcNetProfit;
-
-  const legacyNetProfit = toNumber(itrNode?.ITR3?.PARTA_PL?.ProfitAfterTax);
-  return legacyNetProfit || 0;
-};
-
-const getParameterNumeric = (parameterValue, type = 'amount') => {
-  const rawValue = parameterValue?.value;
-  if (rawValue === null || rawValue === undefined) return null;
-  if (typeof rawValue === 'object' && rawValue !== null) {
-    if (rawValue[type] !== undefined) return toNumber(rawValue[type]);
-  }
-  return toNumber(rawValue);
-};
-
-const evaluateSchemeEligibility = ({ scheme, caseRecord, lowestCibilScore, foir, combinedAnnualIncome, propertyValue }) => {
-  let isEligible = true;
-  let failReason = null;
-
-  for (const parameterValue of scheme.parameter_values || []) {
-    const key = parameterValue.parameter?.parameter_key;
-    switch (key) {
-      case 'MIN_CIBIL': {
-        const minCibil = getParameterNumeric(parameterValue);
-        if (minCibil !== null && lowestCibilScore !== null && lowestCibilScore < minCibil) {
-          isEligible = false;
-          failReason = `CIBIL score ${lowestCibilScore} is below minimum required ${minCibil}`;
-        }
-        break;
-      }
-      case 'MAX_FOIR': {
-        const maxFoirRatio = parsePercentRatio(getParameterNumeric(parameterValue, 'percent'));
-        if (maxFoirRatio !== null && foir > maxFoirRatio) {
-          isEligible = false;
-          failReason = `FOIR ${(foir * 100).toFixed(1)}% exceeds maximum allowed ${(maxFoirRatio * 100).toFixed(1)}%`;
-        }
-        break;
-      }
-      case 'MIN_BUSINESS_VINTAGE_YEARS': {
-        const minVintage = getParameterNumeric(parameterValue, 'years');
-        const vintage = Number(caseRecord.customer?.business_vintage) || 0;
-        if (minVintage !== null && vintage < minVintage) {
-          isEligible = false;
-          failReason = `Business vintage ${vintage} years is below minimum ${minVintage} years`;
-        }
-        break;
-      }
-      case 'MIN_ANNUAL_INCOME': {
-        const minIncome = getParameterNumeric(parameterValue);
-        if (minIncome !== null && combinedAnnualIncome < minIncome) {
-          isEligible = false;
-          failReason = `Annual income ₹${combinedAnnualIncome.toLocaleString()} is below minimum ₹${minIncome.toLocaleString()}`;
-        }
-        break;
-      }
-      case 'MAX_LTV_PERCENT': {
-        if (propertyValue > 0 && caseRecord.loan_amount) {
-          const maxLtvRatio = parsePercentRatio(getParameterNumeric(parameterValue, 'percent'));
-          const ltv = Number(caseRecord.loan_amount) / propertyValue;
-          if (maxLtvRatio !== null && ltv > maxLtvRatio) {
-            isEligible = false;
-            failReason = `LTV ${(ltv * 100).toFixed(1)}% exceeds maximum ${(maxLtvRatio * 100).toFixed(1)}%`;
-          }
-        }
-        break;
-      }
-      case 'MAX_LOAN_AMOUNT': {
-        const maxLoan = getParameterNumeric(parameterValue);
-        if (maxLoan !== null && caseRecord.loan_amount && Number(caseRecord.loan_amount) > maxLoan) {
-          isEligible = false;
-          failReason = `Requested loan amount ₹${Number(caseRecord.loan_amount).toLocaleString()} exceeds maximum ₹${maxLoan.toLocaleString()}`;
-        }
-        break;
-      }
-      case 'MIN_LOAN_AMOUNT': {
-        const minLoan = getParameterNumeric(parameterValue);
-        if (minLoan !== null && caseRecord.loan_amount && Number(caseRecord.loan_amount) < minLoan) {
-          isEligible = false;
-          failReason = `Requested loan amount ₹${Number(caseRecord.loan_amount).toLocaleString()} is below minimum ₹${minLoan.toLocaleString()}`;
-        }
-        break;
-      }
-      default:
-        break;
+/**
+ * generateESR — full orchestrated pipeline.
+ *
+ * @param {number} case_id
+ * @param {number} user_id
+ * @param {number} tenant_id
+ * @returns {Promise<object>} ESR result
+ */
+async function generateESR(case_id, user_id, tenant_id) {
+    // ── Step 1: Validate case exists and belongs to tenant ──────────────────
+    const caseRecord = await prisma.case.findFirst({
+        where: { id: case_id, tenant_id },
+        select: { id: true, product_type: true }
+    });
+    if (!caseRecord) {
+        throw new Error('Case not found or unauthorized.');
     }
 
-    if (!isEligible) break;
-  }
+    // ── Step 2: Snapshot freshness check ────────────────────────────────────
+    // This runs BEFORE attempting ESR generation. If the snapshot is missing,
+    // failed, or stale, we synchronously re-extract and verify success before
+    // calling the evaluation engine.
+    const snapshot = await prisma.caseEsrFinancials.findUnique({
+        where: { case_id },
+        select: { extraction_status: true, extracted_at: true }
+    });
 
-  return {
-    isEligible,
-    failReason: failReason || 'Scheme parameters not satisfied'
-  };
-};
+    if (_snapshotNeedsRefresh(snapshot)) {
+        console.log(`[ESR] Snapshot for Case ${case_id} is ${snapshot ? snapshot.extraction_status + '/stale' : 'missing'} — re-extracting synchronously...`);
+        await extractEsrFinancials(case_id, tenant_id);
 
-async function generateESR(case_id, user_id, tenant_id) {
-  // Delegate entirely to the new Dynamic Engine
-  return await generateDynamicESR(case_id, user_id, tenant_id);
+        // Verify extraction succeeded before proceeding
+        const freshSnapshot = await prisma.caseEsrFinancials.findUnique({
+            where: { case_id },
+            select: { extraction_status: true, selected_monthly_income: true, selected_income_method: true }
+        });
+
+        if (!freshSnapshot || freshSnapshot.extraction_status !== 'COMPLETED') {
+            throw new Error(
+                'Financial data extraction failed or incomplete. ' +
+                'Please ensure vendor pulls (GST / ITR / Bank / Bureau / Salary) are completed before generating ESR.'
+            );
+        }
+
+        if (!freshSnapshot.selected_monthly_income || freshSnapshot.selected_monthly_income <= 0) {
+            throw new Error(
+                'No income data found for this case. ' +
+                'Please complete salary OCR, GST, ITR, or Bank analysis before generating ESR.'
+            );
+        }
+    }
+
+    // ── Step 3: ESR evaluation ───────────────────────────────────────────────
+    // generateDynamicESR() handles its own concurrency internally using
+    // a case-row level lock (SELECT FOR UPDATE) inside its DB transaction.
+    return await generateDynamicESR(case_id, user_id, tenant_id);
 }
 
 /**
  * getESR — fetches the latest ESR for a case.
+ * @param {number} case_id
+ * @param {number} tenant_id
+ * @returns {Promise<object>} EligibilityReport
  */
 async function getESR(case_id, tenant_id) {
-  const latestESR = await prisma.eligibilityReport.findFirst({
-    where: { case_id, tenant_id, is_latest: true },
-    include: { lenders: true },
-    orderBy: { version_number: 'desc' }
-  });
+    const latestESR = await prisma.eligibilityReport.findFirst({
+        where:   { case_id, tenant_id, is_latest: true },
+        include: { lenders: true },
+        orderBy: { version_number: 'desc' }
+    });
 
-  if (!latestESR) {
-    throw new Error('No ESR generated for this case yet.');
-  }
+    if (!latestESR) {
+        throw new Error('No ESR generated for this case yet.');
+    }
 
-  return latestESR;
+    return latestESR;
+}
+
+/**
+ * Determine if a snapshot needs to be re-extracted.
+ * @param {{ extraction_status: string, extracted_at: Date|null }|null} snapshot
+ * @returns {boolean}
+ */
+function _snapshotNeedsRefresh(snapshot) {
+    if (!snapshot)                                  return true;
+    if (snapshot.extraction_status !== 'COMPLETED') return true;
+    if (!snapshot.extracted_at)                     return true;
+
+    const ageMinutes = (Date.now() - new Date(snapshot.extracted_at).getTime()) / 60000;
+    if (ageMinutes > SNAPSHOT_STALE_MINUTES) {
+        console.log(`[ESR] Snapshot is ${ageMinutes.toFixed(1)}m old (threshold: ${SNAPSHOT_STALE_MINUTES}m) — will refresh.`);
+        return true;
+    }
+
+    return false;
 }
 
 module.exports = { generateESR, getESR };

@@ -411,60 +411,80 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
 
     const lenderResults = [];
 
-    // 3. Evaluate Config Matrix
+    // 3. Evaluate Config Matrix — iterate ALL products per lender, not just [0]
     for (const lender of lenders) {
         if (lender.products.length === 0) {
-            // Lender does not offer this product
+            // Lender does not offer this product type at all
             continue;
         }
 
-        const product = lender.products[0]; // Assuming one product record perfectly matches (matched by product_type)
-        const schemes = product.schemes || [];
-
-        const scheme_evaluations = [];
+        // FIXED: Evaluate EVERY active product the lender has for this product type.
+        // A lender may have multiple products for the same type (e.g. LAP-Salaried, LAP-MSME).
+        // We collect all scheme evaluations across all products and pick the best result.
+        let allSchemeEvaluations = [];
         let isLenderEligible = false;
         let lenderIneligibilityReason = null;
 
-        if (schemes.length === 0) {
-            isLenderEligible = false;
-            lenderIneligibilityReason = "No active scheme configured.";
-        } else {
-            // Pre-catch secured missing conditions natively before evaluation engines:
-            if ((pType === 'LAP' || pType === 'HL') && (!esr.property_value || esr.property_value <= 0)) {
-                isLenderEligible = false;
-                lenderIneligibilityReason = "Property value missing for secured loan eligibility.";
-            }
+        // Pre-check: secured loan property requirement applies regardless of product
+        const propertyMissing = (pType === 'LAP' || pType === 'HL') && (!esr.property_value || esr.property_value <= 0);
+        if (propertyMissing) {
+            lenderIneligibilityReason = "Property value missing for secured loan eligibility.";
+        }
+
+        for (const product of lender.products) {
+            const schemes = product.schemes || [];
+            if (schemes.length === 0) continue;
 
             for (const scheme of schemes) {
                 const evalOutput = evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest_cibil_score: lowest_cibil });
 
-                if (evalOutput.is_eligible && lenderIneligibilityReason === "Property value missing for secured loan eligibility.") {
+                if (propertyMissing && evalOutput.is_eligible) {
                     evalOutput.is_eligible = false;
                     evalOutput.failure_reasons.push(lenderIneligibilityReason);
                 }
 
-                scheme_evaluations.push(evalOutput);
-                if (evalOutput.is_eligible) isLenderEligible = true;
+                // Tag product metadata onto each evaluation result.
+                // This is the authoritative source for product info on the winning scheme.
+                // Do NOT rely on the outer `bestProduct` variable for display purposes.
+                evalOutput.product_type = product.product_type;
+                evalOutput.product_id   = product.id;
+                evalOutput.product_display_name = product.product_type === 'HL'
+                    ? 'Home Loan'
+                    : product.product_type === 'LAP'
+                    ? 'Loan Against Property'
+                    : product.product_type;
+
+                allSchemeEvaluations.push(evalOutput);
+
+                if (evalOutput.is_eligible) {
+                    isLenderEligible = true;
+                }
             }
         }
 
-        // 4. Output Logic per Lender
-        // Construct the output base
+        if (allSchemeEvaluations.length === 0) {
+            lenderIneligibilityReason = lenderIneligibilityReason || "No active scheme configured.";
+        }
+
+        // 4. Build lender result — display name is set tentatively here,
+        // then overridden after scheme sort to match the winning scheme's product.
         const lenderRes = {
             lender_id: lender.id,
             lender_name: lender.name,
             lender_code: lender.code,
             product_type: pType,
-            product_display_name: product.product_type === 'HL' ? 'Home Loan' : product.product_type === 'LAP' ? 'Loan Against Property' : product.product_type,
+            product_display_name: lender.products[0].product_type === 'HL' ? 'Home Loan' : lender.products[0].product_type === 'LAP' ? 'Loan Against Property' : lender.products[0].product_type,
             is_eligible: isLenderEligible,
             ineligibility_reason: lenderIneligibilityReason,
-            scheme_evaluations
+            scheme_evaluations: allSchemeEvaluations
         };
+
+        const scheme_evaluations = allSchemeEvaluations; // alias for the block below
 
         if (isLenderEligible) {
             const eligibleSchemes = scheme_evaluations.filter(s => s.is_eligible);
 
-            // Sort to find the best scheme
+            // Sort all eligible schemes (across all products) by: loan amount ↓, roi ↑, tenure ↑
             eligibleSchemes.sort((a, b) => {
                 const loanA = a.final_eligible_loan_amount || 0;
                 const loanB = b.final_eligible_loan_amount || 0;
@@ -480,18 +500,24 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
             });
 
             const best = eligibleSchemes[0];
-            lenderRes.best_scheme_name = best.scheme_name;
+
+            // FIX: Use the winning scheme's OWN product metadata.
+            // Do NOT use bestProduct — it may point to the last eligible product
+            // rather than the product that owns the winning scheme after sort.
+            lenderRes.best_scheme_name         = best.scheme_name;
+            lenderRes.product_display_name     = best.product_display_name; // override with correct product
+            lenderRes.product_type             = best.product_type;         // override with correct product
             lenderRes.final_eligible_loan_amount = best.final_eligible_loan_amount;
-            lenderRes.max_loan_by_ltv = best.max_loan_by_ltv;
-            lenderRes.applicable_ltv_percent = best.applicable_ltv_percent;
-            lenderRes.roi_min = best.roi_min;
-            lenderRes.roi_max = best.roi_max;
-            lenderRes.pf_min = best.pf_min;
-            lenderRes.pf_max = best.pf_max;
-            lenderRes.max_tenure_months = best.max_tenure_months;
-            lenderRes.foir_allowed_percent = best.foir_allowed_percent;
-            lenderRes.foir_actual_percent = best.foir_actual_percent;
-            lenderRes.max_eligible_emi = best.max_eligible_emi;
+            lenderRes.max_loan_by_ltv          = best.max_loan_by_ltv;
+            lenderRes.applicable_ltv_percent   = best.applicable_ltv_percent;
+            lenderRes.roi_min                  = best.roi_min;
+            lenderRes.roi_max                  = best.roi_max;
+            lenderRes.pf_min                   = best.pf_min;
+            lenderRes.pf_max                   = best.pf_max;
+            lenderRes.max_tenure_months        = best.max_tenure_months;
+            lenderRes.foir_allowed_percent     = best.foir_allowed_percent;
+            lenderRes.foir_actual_percent      = best.foir_actual_percent;
+            lenderRes.max_eligible_emi         = best.max_eligible_emi;
         } else if (!lenderIneligibilityReason) {
             // Aggregate all reasons
             lenderRes.ineligibility_reason = scheme_evaluations.filter(s => s.failure_reasons?.length).map(s => s.failure_reasons[0]).join(" | ") || "Failed evaluated scheme parameters.";
@@ -542,13 +568,9 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
 
     const combinedAnnualIncome = (esr.selected_monthly_income || 0) * 12;
 
-    // 6. Versioning and Snapshot Tracking
-    const latestESR = await prisma.eligibilityReport.findFirst({
-        where: { case_id, tenant_id, is_latest: true },
-        orderBy: { version_number: 'desc' }
-    });
-
-    const nextVersion = (latestESR?.version_number || 0) + 1;
+    // 6. Versioning — resolved inside the transaction for concurrency safety.
+    // nextVersion is computed here as a baseline, but the authoritative version
+    // is derived inside the transaction after acquiring the row-level lock.
 
     // 7. Build Comprehensive Input Snapshot for full audit traceability
     const inputSnapshot = {
@@ -576,30 +598,33 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         selected_monthly_income: esr.selected_monthly_income,
         combined_annual_income: combinedAnnualIncome,
 
-        // Income methods (all three computed)
-        net_profit_income: esr.net_profit_income,
-        gst_income: esr.gst_income,
-        banking_income: esr.banking_income,
+        // Income methods (all four computed)
+        net_profit_income:  esr.net_profit_income,
+        gst_income:         esr.gst_income,
+        banking_income:     esr.banking_income,
+        salaried_income:    esr.salaried_income,
+        salaried_income_source: esr.salaried_income_source,
+        salaried_slip_count:    esr.salaried_slip_count,
 
         // ITR
-        itr_pat: esr.itr_pat,
-        itr_depreciation: esr.itr_depreciation,
-        itr_finance_cost: esr.itr_finance_cost,
+        itr_pat:            esr.itr_pat,
+        itr_depreciation:   esr.itr_depreciation,
+        itr_finance_cost:   esr.itr_finance_cost,
         itr_gross_receipts: esr.itr_gross_receipts,
 
         // GST
         gst_avg_monthly_sales: esr.gst_avg_monthly_sales,
-        gst_industry_type: esr.gst_industry_type,
-        gst_industry_margin: esr.gst_industry_margin,
+        gst_industry_type:     esr.gst_industry_type,
+        gst_industry_margin:   esr.gst_industry_margin,
 
         // Bank
-        bank_avg_balance: esr.bank_avg_balance,
+        bank_avg_balance:    esr.bank_avg_balance,
         bank_monthly_income: esr.bank_monthly_income,
 
         // Obligations
         existing_obligations: esr.existing_obligations,
-        total_emi_per_month: esr.existing_obligations,  // alias for downstream clarity
-        icici_exposure: esr.icici_exposure,
+        total_emi_per_month:  esr.existing_obligations,  // alias for downstream clarity
+        icici_exposure:       esr.icici_exposure,
 
         // Bureau
         primary_cibil_score: primary_cibil,
@@ -615,14 +640,47 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
     // Already resolved in Step 3d using exact FK matching.
 
     // 9. Transaction Persistence
+    //
+    // CONCURRENCY DESIGN:
+    //   We use a case-row level lock (SELECT ... FOR UPDATE on the `cases` table)
+    //   as the serialization mechanism. This is safe with Prisma connection pooling
+    //   because the lock is TRANSACTION-level — it is held for the duration of
+    //   the $transaction and released automatically when the transaction commits
+    //   or rolls back, on the SAME connection Prisma assigns to the transaction.
+    //
+    //   Session-level advisory locks (pg_advisory_lock) are NOT safe with pooling
+    //   because lock + unlock may execute on different connections.
+    //
+    //   Two concurrent requests for the same case_id will serialize here:
+    //   the second request blocks on the FOR UPDATE until the first commits.
+    //
     await prisma.$transaction(async (tx) => {
-        // Mark old versions as not latest
+        // LAYER 1: Acquire case-row lock for this transaction.
+        // All subsequent reads/writes in this transaction are safe on this connection.
+        await tx.$queryRawUnsafe(
+            `SELECT id FROM cases WHERE id = $1 AND tenant_id = $2 FOR UPDATE`,
+            case_id, tenant_id
+        );
+
+        // LAYER 2: Resolve version number atomically while holding the case lock.
+        // The case lock serializes concurrent requests, so we read MAX(version_number)
+        // safely with no risk of two requests seeing the same value.
+        const rows = await tx.$queryRawUnsafe(
+            `SELECT COALESCE(MAX(version_number), 0) AS max_version FROM eligibility_reports WHERE case_id = $1 AND tenant_id = $2`,
+            case_id, tenant_id
+        );
+        const nextVersion = Number(rows[0].max_version) + 1;
+
+        // Mark all previous reports for this case as not-latest
         await tx.eligibilityReport.updateMany({
             where: { case_id, tenant_id, is_latest: true },
-            data: { is_latest: false }
+            data:  { is_latest: false }
         });
 
         // Create new EligibilityReport
+        // The DB-level constraints protect us as a last line of defence:
+        //   @@unique([case_id, tenant_id, version_number])   — no duplicate versions
+        //   PARTIAL UNIQUE INDEX on is_latest=true           — at most one latest per case
         const newESR = await tx.eligibilityReport.create({
             data: {
                 case_id,

@@ -719,28 +719,46 @@ const AddSalariedCustomerWizardPage = () => {
             </div>
 
             {PROPERTY_REQUIRED.includes(formData.product_type) && (
-              <div className="card" style={{ border: '2px solid var(--border-strong)' }}>
-                <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
-                  <h3 style={{ fontSize: 16, fontWeight: 700 }}>🏡 Property & Collateral Details</h3>
+              <div className="card">
+                <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h3 style={{ fontSize: 16, fontWeight: 700 }}>🏡 Property &amp; Collateral Details</h3>
+                  <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Required for {formData.product_type}</span>
                 </div>
-                <div style={{ padding: 24, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 24 }}>
-                  <FormField label="PROPERTY TYPE" name="property_type" required>
-                    <select className="form-control" value={formData.property_type} onChange={e => setFormData({ ...formData, property_type: e.target.value })} required>
-                      <option value="">Select...</option>
-                      <option value="Residential">Residential</option>
-                      <option value="Commercial">Commercial</option>
-                    </select>
-                  </FormField>
-                  <FormField label="MARKET VALUE (EST.)" name="market_value" required>
-                    <input type="number" value={formData.market_value} onChange={e => setFormData({ ...formData, market_value: e.target.value })} className="form-control" placeholder="15000000" required />
-                  </FormField>
-                  <FormField label="OCCUPANCY" name="occupancy_status" required>
-                    <select className="form-control" value={formData.occupancy_status} onChange={e => setFormData({ ...formData, occupancy_status: e.target.value })} required>
-                      <option value="Self Occupied">Self Occupied</option>
-                      <option value="Rented">Rented</option>
-                      <option value="Vacant">Vacant</option>
-                    </select>
-                  </FormField>
+                <div style={{ padding: 24 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20, marginBottom: 20 }}>
+                    <FormField label="PROPERTY TYPE" name="property_type" required>
+                      <select className="form-control" value={formData.property_type} onChange={e => setFormData({ ...formData, property_type: e.target.value })} required>
+                        <option value="">— Select —</option>
+                        <option value="Commercial — Office / Shop">Commercial — Office / Shop</option>
+                        <option value="Residential — House / Flat">Residential — House / Flat</option>
+                        <option value="Industrial — Factory / Warehouse">Industrial — Factory / Warehouse</option>
+                        <option value="Plot / Land">Plot / Land</option>
+                      </select>
+                    </FormField>
+                    <FormField label="OCCUPANCY STATUS" name="occupancy_status">
+                      <select className="form-control" value={formData.occupancy_status} onChange={e => setFormData({ ...formData, occupancy_status: e.target.value })}>
+                        <option value="Self Occupied">Self Occupied</option>
+                        <option value="Rented Out">Rented Out</option>
+                        <option value="Vacant">Vacant</option>
+                      </select>
+                    </FormField>
+                    <FormField label="OWNERSHIP" name="ownership_type">
+                      <select className="form-control" value={formData.ownership_type} onChange={e => setFormData({ ...formData, ownership_type: e.target.value })}>
+                        <option value="Sole Owner">Sole Owner</option>
+                        <option value="Joint Owner">Joint Owner</option>
+                        <option value="Company Owned">Company Owned</option>
+                      </select>
+                    </FormField>
+                  </div>
+                  <div style={{ maxWidth: 300 }}>
+                    <FormField label="MARKET VALUE (₹)" name="market_value" required>
+                      <input type="number" className="form-control" placeholder="e.g. 8500000" value={formData.market_value} onChange={e => setFormData({ ...formData, market_value: e.target.value })} required min="1" />
+                    </FormField>
+                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>DSA estimate — lender does independent valuation</div>
+                  </div>
+                  <div style={{ marginTop: 16, padding: '12px 14px', background: 'var(--primary-subtle)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--primary-dark)' }}>
+                    💡 Property location, title clearance, full address will be collected after the lender is identified.
+                  </div>
                 </div>
               </div>
             )}
