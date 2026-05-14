@@ -35,9 +35,10 @@ router.patch('/proposals/:pid',                   proposalCtrl.update);
 router.post('/proposals/:pid/documents',          proposalCtrl.attachDocs);
 router.delete('/proposals/:pid/documents/:docId', proposalCtrl.detachDoc);
 router.post('/proposals/:pid/submit',             proposalCtrl.submit);
+router.post('/proposals/:pid/send',               proposalCtrl.send); // Professional Email Dispatch
 router.post('/proposals/:pid/clone',              proposalCtrl.clone);
 
-// ── Send to Lender  (/api/cases/:id/send-to-lender) ──────────────────────────
+// ── Legacy Routes (Deprecated - use Proposals flow) ──────────────────────────
 router.post('/send-to-lender',       sendToLenderCtrl.sendToLender);
 router.post('/send-to-other-lender', sendToLenderCtrl.sendToOtherLender);
 

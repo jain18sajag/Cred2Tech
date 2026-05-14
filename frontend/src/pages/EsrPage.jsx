@@ -87,18 +87,18 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, caseProductType, onSu
     if (!selectedContact) { toast.error('Select a contact first'); return; }
     setSending(true);
     try {
-      const result = await sendCaseToOtherLender(caseId, { contact_id: selectedContact.id });
-      if (result.isDuplicate) {
-        if (window.confirm(`A lender case already exists for ${selectedLender.lender_name} (CASE-${result.childCaseId}). Do you want to open the existing case?`)) {
-          window.location.href = `/cases/${result.childCaseId}`; // using href since navigate is not in this component's scope easily unless passed
-        }
-      } else {
-        toast.success(`Proposal sent to ${selectedLender.lender_name}. Lender case CASE-${result.childCaseId} created.`);
-      }
-      onSuccess(result);
+      // For "Other Lender", we create a proposal draft first
+      const r = await caseService.createProposal(caseId, {
+        tenant_lender_id: selectedLender.id,
+        lender_id: selectedLender.platform_lender_id || null,
+        scheme_id: null,
+      });
+      const result = r.proposal;
+      toast.success(`Proposal draft created for ${selectedLender.lender_name}`);
+      window.location.href = `/cases/${caseId}/proposals/${result.id}`;
       onClose();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Failed to send');
+      toast.error(e.response?.data?.error || 'Failed to create proposal');
     } finally { setSending(false); }
   };
 
@@ -365,31 +365,6 @@ function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToL
     String(p.lender_id) !== String(lender.lender_id) && p.proposal_status === 'submitted'
   ) || proposals.find(p => String(p.lender_id) !== String(lender.lender_id));
 
-  const handleSendEmail = async () => {
-    setSending(true);
-    try {
-      const result = await sendCaseToLender(caseId, {
-        lender_name: lender.lender_name
-      });
-      
-      if (result.isDuplicate) {
-        if (window.confirm(`A lender case already exists for ${lender.lender_name} (CASE-${result.childCaseId}). Do you want to open the existing case?`)) {
-          navigate(`/cases/${result.childCaseId}`);
-        }
-      } else {
-        toast.success(`Proposal sent to ${lender.lender_name}. Lender case CASE-${result.childCaseId} created.`);
-      }
-      
-      onSendToLender(result);
-    } catch (e) {
-      const msg = e.response?.data?.error || 'Failed to send';
-      if (e.response?.data?.redirect_hint) {
-        toast.error(msg, { duration: 5000 });
-      } else {
-        toast.error(msg);
-      }
-    } finally { setSending(false); }
-  };
 
   const handlePrepare = async () => {
     // If there are proposals from other lenders, ask to clone
@@ -475,24 +450,13 @@ function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToL
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {latestProposal ? (
-          <>
-            <button
-              className="btn btn-primary"
-              style={{ flex: 1, padding: '9px', fontWeight: 700 }}
-              onClick={() => navigate(`/cases/${caseId}/proposals/${latestProposal.id}`)}
-            >
-              View Proposal →
-            </button>
-            <button
-              className="btn btn-secondary"
-              style={{ padding: '9px 14px', fontWeight: 600, fontSize: 12 }}
-              onClick={() => doCreate(latestProposal.id)}
-              disabled={creating}
-              title="Send to another lender"
-            >
-              + Resend
-            </button>
-          </>
+          <button
+            className="btn btn-primary"
+            style={{ flex: 1, padding: '10px', fontWeight: 700 }}
+            onClick={() => navigate(`/cases/${caseId}/proposals/${latestProposal.id}`)}
+          >
+            View Proposal →
+          </button>
         ) : (
           <button
             className="btn btn-primary"
@@ -505,18 +469,8 @@ function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToL
           </button>
         )}
         <button
-          onClick={handleSendEmail}
-          disabled={sending}
-          title="Send proposal email to this lender's configured contact"
-          style={{ padding: '9px 12px', fontWeight: 700, fontSize: 12, borderRadius: 8,
-                   background: sending ? '#718096' : '#276749', color: '#fff', border: 'none',
-                   cursor: sending ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
-        >
-          <Send size={13} /> {sending ? '...' : 'Send'}
-        </button>
-        <button
           onClick={onSendToOtherLender}
-          title="Send to a different lender contact from your directory"
+          title="Prepare proposal for a different lender contact"
           style={{ padding: '9px 12px', fontWeight: 700, fontSize: 11, borderRadius: 8,
                    background: 'transparent', color: '#553C9A', border: '1px solid #553C9A',
                    cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}

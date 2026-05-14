@@ -4,12 +4,17 @@ const proposalService = require('../services/proposal.service');
 async function create(req, res) {
     try {
         const case_id = parseInt(req.params.id, 10);
-        const { lender_id, scheme_id } = req.body;
-        if (!lender_id) return res.status(400).json({ error: 'lender_id is required' });
+        const { lender_id, tenant_lender_id, scheme_id } = req.body;
+        
+        // At least one must be provided
+        if (!lender_id && !tenant_lender_id) {
+            return res.status(400).json({ error: 'lender_id or tenant_lender_id is required' });
+        }
 
         const proposal = await proposalService.createProposalDraft({
             case_id,
             lender_id,
+            tenant_lender_id: tenant_lender_id ? parseInt(tenant_lender_id, 10) : null,
             scheme_id: scheme_id ? parseInt(scheme_id, 10) : null,
             user_id: req.user.id,
             tenant_id: req.user.tenant_id,
@@ -125,25 +130,59 @@ async function submit(req, res) {
     }
 }
 
-async function clone(req, res) {
+async function send(req, res) {
     try {
         const case_id = parseInt(req.params.id, 10);
         const proposal_id = parseInt(req.params.pid, 10);
-        const { new_lender_id, new_scheme_id } = req.body;
-        if (!new_lender_id) return res.status(400).json({ error: 'new_lender_id is required' });
+        
+        // dispatchProposalEmailByProposalId is the new orchestrator
+        const { dispatchProposalEmailByProposalId } = require('../services/proposal.email.service');
+        
+        const result = await dispatchProposalEmailByProposalId({
+            proposalId: proposal_id,
+            tenantId: req.user.tenant_id,
+            userId: req.user.id
+        });
+
+        // After successful dispatch, mark as submitted if not already
+        await proposalService.submitProposal({
+            proposal_id,
+            case_id,
+            user_id: req.user.id,
+            tenant_id: req.user.tenant_id,
+            snapshot: result // Save the snapshot of what was sent
+        });
+
+        res.json({ success: true, ...result });
+    } catch (err) {
+        console.error('[Proposal] send error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+}
+
+async function clone(req, res) {
+    console.log('[Proposal] Clone API Hit:', { params: req.params, body: req.body });
+    try {
+        const case_id = parseInt(req.params.id, 10);
+        const proposal_id = parseInt(req.params.pid, 10);
+        const { new_lender_id, new_tenant_lender_id } = req.body;
+        
+        if (!new_lender_id && !new_tenant_lender_id) {
+            return res.status(400).json({ error: 'new_lender_id or new_tenant_lender_id is required' });
+        }
 
         const cloned = await proposalService.cloneProposalForLender({
-            proposal_id,
+            source_id: proposal_id,
             new_lender_id,
-            new_scheme_id: new_scheme_id ? parseInt(new_scheme_id, 10) : null,
+            new_tenant_lender_id: new_tenant_lender_id ? parseInt(new_tenant_lender_id, 10) : null,
             user_id: req.user.id,
             tenant_id: req.user.tenant_id,
         });
         res.status(201).json({ success: true, proposal: cloned });
     } catch (err) {
-        console.error('[Proposal] clone error:', err.message);
+        console.error('[Proposal] clone error:', err);
         res.status(500).json({ error: err.message });
     }
 }
 
-module.exports = { create, listAll, getOne, update, attachDocs, detachDoc, submit, clone };
+module.exports = { create, listAll, getOne, update, attachDocs, detachDoc, submit, send, clone };

@@ -6,56 +6,91 @@ const prisma = require('../../config/db');
 // ──────────────────────────────────────────────────────────────────────────────
 
 function generateProposalNumber(caseId, lenderCode, seq) {
-    const code = (lenderCode || 'LENDER').toUpperCase().replace(/\s+/g, '').slice(0, 8);
+    const code = String(lenderCode || 'LENDER').toUpperCase().replace(/\s+/g, '').slice(0, 8);
     const s = String(seq).padStart(2, '0');
     return `PROP-${caseId}-${code}-${s}`;
 }
 
 /**
  * Get next sequence number for proposals on this case+lender
+ * Robustly avoids collisions by counting any proposal that might share the same lender code
  */
-async function getNextSeq(caseId, lenderId) {
-    const count = await prisma.proposal.count({
-        where: {
-            case_id: Number(caseId),
-            lender_id: String(lenderId)
-        }
-    });
+async function getNextSeq(caseId, lenderId, tenantLenderId) {
+    const where = {
+        case_id: Number(caseId),
+    };
+
+    if (lenderId && tenantLenderId) {
+        where.OR = [
+            { lender_id: String(lenderId) },
+            { tenant_lender_id: Number(tenantLenderId) }
+        ];
+    } else if (lenderId) {
+        where.lender_id = String(lenderId);
+    } else if (tenantLenderId) {
+        where.tenant_lender_id = Number(tenantLenderId);
+    }
+
+    const count = await prisma.proposal.count({ where });
     return count + 1;
 }
 
 /**
  * Resolve lender code from lenders table (text id)
  */
-async function getLenderCode(lenderId) {
+async function getLenderCode(lenderId, tenantLenderId) {
+    if (lenderId) {
+        const lender = await prisma.lender.findUnique({
+            where: { id: String(lenderId) },
+            select: { code: true }
+        });
+        if (lender?.code) return lender.code;
+    }
+    if (tenantLenderId) {
+        const tl = await prisma.tenantLender.findUnique({
+            where: { id: Number(tenantLenderId) },
+            select: { lender_name: true }
+        });
+        if (tl?.lender_name) return tl.lender_name.slice(0, 8);
+    }
+    return String(lenderId || 'LENDER');
+}
+/**
+ * Validates that the platform lender exists before attempting to link it.
+ * This prevents foreign key constraint violations.
+ */
+async function validatePlatformLender(lenderId) {
+    if (!lenderId) return null;
     const lender = await prisma.lender.findUnique({
-        where: { id: String(lenderId) },
-        select: { code: true }
+        where: { id: String(lenderId) }
     });
-    return lender?.code || lenderId;
+    return lender ? String(lenderId) : null;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // createProposalDraft
 // ──────────────────────────────────────────────────────────────────────────────
-async function createProposalDraft({ case_id, lender_id, scheme_id, user_id, tenant_id }) {
-    // Fetch ESR financial snapshot for this case
+async function createProposalDraft({ case_id, lender_id, tenant_lender_id, scheme_id, user_id, tenant_id }) {
+    // 1. Validate platform lender to prevent foreign key errors
+    const validLenderId = await validatePlatformLender(lender_id);
+
+    // 2. Fetch ESR financial snapshot for this case
     const esr = await prisma.caseEsrFinancials.findUnique({
         where: { case_id: Number(case_id) }
     });
 
-    // Fetch ESR eligibility report to find lender-specific output
+    // 3. Fetch ESR eligibility report to find lender-specific output
     const report = await prisma.eligibilityReport.findFirst({
         where: { case_id: Number(case_id), is_latest: true }
     });
 
     let lenderEligibility = null;
-    if (report?.input_snapshot) {
+    if (validLenderId && report?.input_snapshot) {
         // With versioned ESR, we have structured EligibilityReportLender rows
         const lenderRow = await prisma.eligibilityReportLender.findFirst({
             where: {
                 esr_id: report.id,
-                lender_id: String(lender_id)
+                lender_id: validLenderId
             }
         });
         if (lenderRow) {
@@ -68,8 +103,8 @@ async function createProposalDraft({ case_id, lender_id, scheme_id, user_id, ten
         }
     }
 
-    const lenderCode = await getLenderCode(lender_id);
-    const seq = await getNextSeq(case_id, lender_id);
+    const lenderCode = await getLenderCode(validLenderId, tenant_lender_id);
+    const seq = await getNextSeq(case_id, validLenderId, tenant_lender_id);
     const proposalNumber = generateProposalNumber(case_id, lenderCode, seq);
 
     // Derive prefilled values
@@ -79,25 +114,32 @@ async function createProposalDraft({ case_id, lender_id, scheme_id, user_id, ten
     const tenure_months = lenderEligibility?.max_tenure_months || null;
     const preferredSchemeId = scheme_id || null;
 
-    const proposal = await prisma.proposal.create({
-        data: {
-            tenant_id: Number(tenant_id),
-            case_id: Number(case_id),
-            lender_id: String(lender_id),
-            scheme_id: preferredSchemeId ? Number(preferredSchemeId) : null,
-            case_esr_financial_id: esr?.id || null,
-            proposal_number: proposalNumber,
-            proposal_status: 'draft',
-            lender_submission_status: 'draft',
-            requested_amount: esr?.requested_loan_amount || eligibleAmount,
-            eligible_amount: eligibleAmount,
-            roi_min: roi_min,
-            roi_max: roi_max,
-            tenure_months: tenure_months,
-            created_by_user_id: Number(user_id),
-            updated_by_user_id: Number(user_id)
-        }
-    });
+    let proposal;
+    try {
+        proposal = await prisma.proposal.create({
+            data: {
+                tenant_id: Number(tenant_id),
+                case_id: Number(case_id),
+                lender_id: validLenderId,
+                tenant_lender_id: tenant_lender_id ? Number(tenant_lender_id) : null,
+                scheme_id: preferredSchemeId ? Number(preferredSchemeId) : null,
+                case_esr_financial_id: esr?.id || null,
+                proposal_number: proposalNumber,
+                proposal_status: 'draft',
+                lender_submission_status: 'draft',
+                requested_amount: esr?.requested_loan_amount || eligibleAmount,
+                eligible_amount: eligibleAmount,
+                roi_min: roi_min,
+                roi_max: roi_max,
+                tenure_months: tenure_months,
+                created_by_user_id: Number(user_id),
+                updated_by_user_id: Number(user_id)
+            }
+        });
+    } catch (err) {
+        console.error('[Proposal] createProposalDraft Error:', err);
+        throw err;
+    }
 
     // Auto-attach all existing case documents to proposal
     const caseDocs = await prisma.document.findMany({
@@ -138,7 +180,8 @@ async function getProposalForPrep({ proposal_id, case_id, tenant_id }) {
                     documents: { where: { status: 'ACTIVE' } }
                 }
             },
-            lender: true
+            lender: true,
+            tenant_lender: true
         }
     });
 
@@ -149,7 +192,9 @@ async function getProposalForPrep({ proposal_id, case_id, tenant_id }) {
     const applicants = caseData.applicants;
     const esr = caseData.esr_financials || {};
     const property = caseData.property || {};
-    const lender = proposal.lender || {};
+
+    // Resolve lender info (platform or custom)
+    const lender = proposal.lender || (proposal.tenant_lender ? { name: proposal.tenant_lender.lender_name } : {});
 
     // 1. Lender Eligibility Snapshot (from versioned ESR)
     const report = await prisma.eligibilityReport.findFirst({
@@ -373,7 +418,7 @@ async function detachDocumentFromProposal({ proposal_id, document_id, tenant_id 
 // ──────────────────────────────────────────────────────────────────────────────
 // submitProposal
 // ──────────────────────────────────────────────────────────────────────────────
-async function submitProposal({ proposal_id, case_id, user_id, tenant_id }) {
+async function submitProposal({ proposal_id, case_id, user_id, tenant_id, snapshot }) {
     const proposal = await prisma.proposal.findFirst({
         where: {
             id: Number(proposal_id),
@@ -382,7 +427,8 @@ async function submitProposal({ proposal_id, case_id, user_id, tenant_id }) {
         }
     });
     if (!proposal) throw new Error('Proposal not found or unauthorized');
-    if (proposal.proposal_status === 'submitted') throw new Error('Proposal already submitted');
+    // We allow re-submission if snapshot is provided (to update auditing)
+    // if (proposal.proposal_status === 'submitted') throw new Error('Proposal already submitted');
 
     await prisma.proposal.update({
         where: { id: proposal.id },
@@ -390,6 +436,8 @@ async function submitProposal({ proposal_id, case_id, user_id, tenant_id }) {
             proposal_status: 'submitted',
             lender_submission_status: 'submitted',
             submitted_at: new Date(),
+            submitted_by_user_id: Number(user_id),
+            submitted_payload_snapshot: snapshot || null,
             updated_by_user_id: Number(user_id)
         }
     });
@@ -413,60 +461,64 @@ async function submitProposal({ proposal_id, case_id, user_id, tenant_id }) {
 // ──────────────────────────────────────────────────────────────────────────────
 // cloneProposalForLender
 // ──────────────────────────────────────────────────────────────────────────────
-async function cloneProposalForLender({ proposal_id, new_lender_id, new_scheme_id, user_id, tenant_id }) {
-    const src = await prisma.proposal.findFirst({
-        where: {
-            id: Number(proposal_id),
-            tenant_id: Number(tenant_id)
-        }
+async function cloneProposalForLender({ source_id, new_lender_id, new_tenant_lender_id, user_id, tenant_id }) {
+    const src = await prisma.proposal.findUnique({
+        where: { id: Number(source_id) }
     });
     if (!src) throw new Error('Source proposal not found');
 
-    const lenderCode = await getLenderCode(new_lender_id);
-    const seq = await getNextSeq(src.case_id, new_lender_id);
+    const validLenderId = await validatePlatformLender(new_lender_id);
+    const lenderCode = await getLenderCode(validLenderId, new_tenant_lender_id);
+    const seq = await getNextSeq(src.case_id, validLenderId, new_tenant_lender_id);
     const proposalNumber = generateProposalNumber(src.case_id, lenderCode, seq);
 
-    const cloned = await prisma.proposal.create({
-        data: {
-            tenant_id: src.tenant_id,
-            case_id: src.case_id,
-            lender_id: String(new_lender_id),
-            scheme_id: new_scheme_id ? Number(new_scheme_id) : src.scheme_id,
-            case_esr_financial_id: src.case_esr_financial_id,
-            proposal_source_id: src.id,
-            proposal_number: proposalNumber,
-            proposal_status: 'draft',
-            lender_submission_status: 'draft',
-            requested_amount: src.requested_amount,
-            eligible_amount: src.eligible_amount,
-            roi_min: src.roi_min,
-            roi_max: src.roi_max,
-            tenure_months: src.tenure_months,
-            loan_purpose: src.loan_purpose,
-            remarks: src.remarks,
-            additional_notes: src.additional_notes,
-            preferred_banking_program: src.preferred_banking_program,
-            created_by_user_id: Number(user_id),
-            updated_by_user_id: Number(user_id)
-        }
-    });
-
-    const srcDocs = await prisma.proposalDocument.findMany({
-        where: { proposal_id: src.id }
-    });
-
-    if (srcDocs.length > 0) {
-        await prisma.proposalDocument.createMany({
-            data: srcDocs.map(doc => ({
-                proposal_id: cloned.id,
-                document_id: doc.document_id,
-                document_type: doc.document_type
-            })),
-            skipDuplicates: true
+    try {
+        const cloned = await prisma.proposal.create({
+            data: {
+                tenant_id: Number(tenant_id),
+                case_id: src.case_id,
+                lender_id: validLenderId,
+                tenant_lender_id: new_tenant_lender_id ? Number(new_tenant_lender_id) : null,
+                scheme_id: src.scheme_id,
+                case_esr_financial_id: src.case_esr_financial_id,
+                proposal_source_id: src.id,
+                proposal_number: proposalNumber,
+                proposal_status: 'draft',
+                lender_submission_status: 'draft',
+                requested_amount: src.requested_amount,
+                eligible_amount: src.eligible_amount,
+                roi_min: src.roi_min,
+                roi_max: src.roi_max,
+                tenure_months: src.tenure_months,
+                loan_purpose: src.loan_purpose,
+                remarks: src.remarks,
+                additional_notes: src.additional_notes,
+                preferred_banking_program: src.preferred_banking_program,
+                created_by_user_id: Number(user_id),
+                updated_by_user_id: Number(user_id)
+            }
         });
-    }
 
-    return cloned;
+        const srcDocs = await prisma.proposalDocument.findMany({
+            where: { proposal_id: src.id }
+        });
+
+        if (srcDocs.length > 0) {
+            await prisma.proposalDocument.createMany({
+                data: srcDocs.map(doc => ({
+                    proposal_id: cloned.id,
+                    document_id: doc.document_id,
+                    document_type: doc.document_type
+                })),
+                skipDuplicates: true
+            });
+        }
+
+        return cloned;
+    } catch (err) {
+        console.error('[Proposal] cloneProposalForLender Error:', err);
+        throw err;
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -484,6 +536,11 @@ async function listProposalsForCase({ case_id, tenant_id }) {
                     name: true,
                     code: true
                 }
+            },
+            tenant_lender: {
+                select: {
+                    lender_name: true
+                }
             }
         },
         orderBy: {
@@ -494,7 +551,7 @@ async function listProposalsForCase({ case_id, tenant_id }) {
     // Map to the expected format (lender_name, lender_code)
     return list.map(p => ({
         ...p,
-        lender_name: p.lender?.name || null,
+        lender_name: p.lender?.name || p.tenant_lender?.lender_name || null,
         lender_code: p.lender?.code || null
     }));
 }

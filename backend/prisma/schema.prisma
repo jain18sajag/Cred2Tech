@@ -1337,7 +1337,7 @@ model TenantLender {
   platform_lender    Lender?              @relation(fields: [platform_lender_id], references: [id])
   contacts           TenantLenderContact[]
   commission_rules   LenderCommissionRule[]
-
+  proposals          Proposal[]
   @@map("tenant_lenders")
 }
 
@@ -1365,9 +1365,11 @@ model Proposal {
   tenant_id                 Int
   case_id                   Int
   lender_id                 String?
+  tenant_lender_id          Int?
   scheme_id                 Int?
   case_esr_financial_id     Int?
   proposal_source_id        Int?
+  child_case_id             Int?
 
   proposal_number           String   @unique
   proposal_status           String   @default("draft")
@@ -1378,6 +1380,7 @@ model Proposal {
   roi_min                   Float?
   roi_max                   Float?
   tenure_months             Int?
+  processing_fee            Float?
   
   loan_purpose              String?
   remarks                   String?
@@ -1385,6 +1388,9 @@ model Proposal {
   preferred_banking_program String?
 
   submitted_at              DateTime?
+  submitted_by_user_id      Int?
+  submitted_payload_snapshot Json?
+
   created_at                DateTime @default(now())
   updated_at                DateTime @updatedAt
 
@@ -1392,11 +1398,13 @@ model Proposal {
   updated_by_user_id        Int
 
   // Relations
-  tenant                    Tenant   @relation(fields: [tenant_id], references: [id])
-  case                      Case     @relation(fields: [case_id], references: [id])
-  lender                    Lender?  @relation(fields: [lender_id], references: [id])
+  tenant                    Tenant        @relation(fields: [tenant_id], references: [id])
+  case                      Case          @relation(fields: [case_id], references: [id])
+  lender                    Lender?       @relation(fields: [lender_id], references: [id])
+  tenant_lender             TenantLender? @relation(fields: [tenant_lender_id], references: [id])
   documents                 ProposalDocument[]
 
+  @@index([tenant_lender_id])
   @@map("proposals")
 }
 

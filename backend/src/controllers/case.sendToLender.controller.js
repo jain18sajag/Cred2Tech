@@ -4,7 +4,7 @@
 
 const prisma = require('../../config/db');
 const { resolveContactForLender, resolveContactById } = require('../services/tenantLender.service');
-const { dispatchProposalEmail }                       = require('../services/proposal.email.service');
+const { dispatchProposalEmail } = require('../services/proposal.email.service');
 
 const { cloneCaseForLender } = require('../services/case.clone.service');
 
@@ -57,96 +57,17 @@ async function performSend({ caseId, tenantId, userId, contact, lenderName, loan
 }
 
 // ── POST /api/cases/:id/send-to-lender ────────────────────────────────────────
-// Resolves contact automatically from tenant config using lender_name + product_type.
 async function sendToLender(req, res) {
-  try {
-    const caseId    = parseInt(req.params.id);
-    const tenantId  = req.user.tenant_id;
-    const userId    = req.user.id;
-    const { lender_name, product_type, loan_amount } = req.body;
-
-    if (!lender_name)  return res.status(400).json({ error: 'lender_name is required' });
-
-    // Verify case belongs to tenant
-    const caseEntity = await prisma.case.findFirst({
-      where: {
-        id: Number(caseId),
-        tenant_id: Number(tenantId)
-      },
-      select: { id: true, loan_amount: true, product_type: true }
-    });
-    if (!caseEntity) return res.status(404).json({ error: 'Case not found' });
-    if (!caseEntity.product_type) return res.status(400).json({ error: 'Case does not have a product type' });
-
-    // Resolve contact using CASE product type
-    const contact = await resolveContactForLender({ tenantId, lenderName: lender_name, productType: caseEntity.product_type });
-    if (!contact) {
-      return res.status(404).json({
-        error: `No contact configured for this lender/product. Please configure contact in Lender Contacts.`,
-        redirect_hint: '/settings/lender-contacts',
-      });
-    }
-
-    const result = await performSend({
-      caseId,
-      tenantId,
-      userId,
-      contact,
-      lenderName: lender_name,
-      loanAmount: loan_amount || caseEntity.loan_amount,
-      productType: caseEntity.product_type
-    });
-
-    res.json({ success: true, ...result });
-  } catch (e) {
-    console.error('[sendToLender] error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  res.status(400).json({
+    error: 'Direct send is deprecated. Please use the "Prepare Proposal" workflow for professional email submission.'
+  });
 }
 
-// ── POST /api/cases/:id/send-to-other-lender ─────────────────────────────────
-// User manually selects from tenant's configured lenders in the modal.
+// ── POST /api/cases/:id/send-to-other-lender ──────────────────────────────────
 async function sendToOtherLender(req, res) {
-  try {
-    const caseId   = parseInt(req.params.id);
-    const tenantId = req.user.tenant_id;
-    const userId   = req.user.id;
-    const { contact_id, loan_amount } = req.body;
-
-    if (!contact_id) return res.status(400).json({ error: 'contact_id is required' });
-
-    // Verify case
-    const caseEntity = await prisma.case.findFirst({
-      where: {
-        id: Number(caseId),
-        tenant_id: Number(tenantId)
-      },
-      select: { id: true, loan_amount: true, product_type: true }
-    });
-    if (!caseEntity) return res.status(404).json({ error: 'Case not found' });
-    if (!caseEntity.product_type) return res.status(400).json({ error: 'Case does not have a product type' });
-
-    // Resolve contact (tenant-scoped)
-    const contact = await resolveContactById(parseInt(contact_id), tenantId);
-    if (!contact) {
-      return res.status(404).json({ error: 'Contact not found or not accessible' });
-    }
-
-    const result = await performSend({
-      caseId,
-      tenantId,
-      userId,
-      contact,
-      lenderName: contact.lender_name,
-      loanAmount: loan_amount || caseEntity.loan_amount,
-      productType: caseEntity.product_type
-    });
-
-    res.json({ success: true, ...result });
-  } catch (e) {
-    console.error('[sendToOtherLender] error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  res.status(400).json({
+    error: 'Direct send is deprecated. Please use the "Prepare Proposal" workflow for professional email submission.'
+  });
 }
 
 module.exports = { sendToLender, sendToOtherLender };

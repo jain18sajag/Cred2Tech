@@ -707,15 +707,22 @@ export default function ProposalPage() {
   };
 
   const handleSubmit = async () => {
-    if (!window.confirm(`Submit this proposal (${data?.proposal?.proposal_number}) to ${data?.lender?.name}?\n\nThis will record the lead as sent to lender.`)) return;
+    if (!window.confirm(`Submit this proposal (${data?.proposal?.proposal_number}) to ${data?.lender?.name || 'Lender'}?\n\nThis will send a professional proposal email with all attached documents.`)) return;
     try {
       setSubmitting(true);
+      // 1. Mandatory Auto-save
       await handleSave(true);
-      await caseService.submitProposal(caseId, proposalId);
-      toast.success('✅ Proposal submitted! Lead sent to lender.');
+      
+      // 2. Dispatch using the new professional route
+      const result = await caseService.sendProposal(caseId, proposalId);
+      
+      // 3. Show professional confirmation
+      setSendConfirmResult(result);
+      
+      // 4. Refresh status
       await load();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Failed to submit');
+      toast.error(e.response?.data?.error || 'Failed to submit proposal');
     } finally {
       setSubmitting(false);
     }
@@ -1081,11 +1088,20 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, onSuccess }) {
     if (!selectedContact) { toast.error('Select a contact first'); return; }
     setSending(true);
     try {
-      const result = await sendCaseToOtherLender(caseId, { contact_id: selectedContact.id });
-      toast.success(`Proposal sent to ${selectedContact.contact_name}!`);
-      onSuccess(result);
+      console.log('[Clone] Triggering clone for:', { caseId, proposalId, selectedLender });
+      // Instead of sending directly, we CLONE the current proposal for this new lender
+      const r = await caseService.cloneProposal(caseId, proposalId, {
+        new_lender_id: selectedLender.platform_lender_id || null,
+        new_tenant_lender_id: selectedLender.id,
+      });
+      const result = r.proposal;
+      console.log('[Clone] Success:', result);
+      toast.success(`Proposal cloned for ${selectedLender.lender_name}`);
+      window.location.href = `/cases/${caseId}/proposals/${result.id}`;
+      onClose();
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Failed to send');
+      console.error('[Clone] Error caught:', e);
+      toast.error(e.response?.data?.error || 'Failed to clone proposal');
     } finally { setSending(false); }
   };
 

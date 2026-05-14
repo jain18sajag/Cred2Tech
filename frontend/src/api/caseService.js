@@ -132,6 +132,10 @@ export const caseService = {
     const response = await axiosInstance.post(`/cases/${caseId}/proposals/${proposalId}/submit`);
     return response.data;
   },
+  sendProposal: async (caseId, proposalId) => {
+    const response = await axiosInstance.post(`/cases/${caseId}/proposals/${proposalId}/send`);
+    return response.data;
+  },
   cloneProposal: async (caseId, proposalId, payload) => {
     const response = await axiosInstance.post(`/cases/${caseId}/proposals/${proposalId}/clone`, payload);
     return response.data;
