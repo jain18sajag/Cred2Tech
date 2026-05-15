@@ -296,8 +296,8 @@ async function getCaseById(case_id, tenant_id) {
           gst_profiles: { take: 1, orderBy: { created_at: 'desc' } },
           pan_profiles: { take: 1, orderBy: { created_at: 'desc' } },
           gst_requests: { take: 1, orderBy: { updated_at: 'desc' }, where: { applicant_id: null, status: { in: ['COMPLETED', 'REPORT_READY', 'CALLBACK_RECEIVED'] } } },
-          itr_analytics: { take: 1, orderBy: { updated_at: 'desc' }, where: { applicant_id: null, status: 'COMPLETED' } },
-          bank_statements: { take: 1, orderBy: { updated_at: 'desc' }, where: { applicant_id: null, status: 'COMPLETED' } }
+          itr_analytics: { take: 1, orderBy: { updated_at: 'desc' }, where: { applicant_id: null } },
+          bank_statements: { take: 1, orderBy: { updated_at: 'desc' }, where: { applicant_id: null } }
         }
       },
       applicants: {
