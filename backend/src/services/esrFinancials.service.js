@@ -23,6 +23,7 @@
 'use strict';
 
 const prisma = require('../../config/db');
+const { _parseBankFromRaw, extractBankFySnapshot } = require('./bankParser.service');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UTILITIES
@@ -191,12 +192,32 @@ async function extractEsrFinancials(case_id, tenant_id = null) {
 
         const bankReq = pickBestRecord(caseRecord.bank_statements);
 
+        // Priority: raw_retrieve_response > raw_download_response
+        const rawBankPayload =
+            bankReq?.raw_retrieve_response ||
+            bankReq?.raw_download_response;
+
         if (bankReq?.avg_bank_balance_latest_year != null) {
             // PRIMARY: structured snapshot column
-            bank_avg_balance = toNum(bankReq.avg_bank_balance_latest_year);
-        } else if (bankReq?.raw_retrieve_response) {
-            // FALLBACK: parse raw vendor payload
-            bank_avg_balance = _parseBankFromRaw(bankReq.raw_retrieve_response);
+            bank_avg_balance = Number(bankReq.avg_bank_balance_latest_year);
+        } else if (rawBankPayload) {
+            // FALLBACK: parse raw vendor payload and update request record snapshot fields
+            const fySnapshot = extractBankFySnapshot(rawBankPayload);
+            bank_avg_balance = fySnapshot.latest;
+
+            // Optional: Persist derived fields back to bankReq if they were missing
+            if (bank_avg_balance && bankReq.id) {
+                prisma.bankStatementAnalysisRequest.update({
+                    where: { id: bankReq.id },
+                    data: {
+                        avg_bank_balance_latest_year: bank_avg_balance,
+                        financial_year_latest: fySnapshot.fy_latest,
+                        avg_bank_balance_previous_year: fySnapshot.previous,
+                        financial_year_previous: fySnapshot.fy_previous,
+                        raw_retrieve_response: bankReq.raw_retrieve_response || (typeof rawBankPayload === 'object' ? rawBankPayload : undefined)
+                    }
+                }).catch(e => console.error('[ESR Bank Update] Failed:', e.message));
+            }
         }
 
         // ── 5. BUREAU (for bureau_score + applicant_age fallback) ───────────────
@@ -478,21 +499,7 @@ function _parseItrFromRaw(analytics_payload) {
     return result;
 }
 
-function _parseBankFromRaw(raw_retrieve_response) {
-    try {
-        const rawBank = typeof raw_retrieve_response === 'string' ? JSON.parse(raw_retrieve_response) : raw_retrieve_response;
-        const overview = rawBank?.overview ?? rawBank?.result?.[0]?.overview ?? rawBank?.[0]?.overview;
-        const balances = overview?.monthlyAverageDailyBalance;
-        if (Array.isArray(balances) && balances.length > 0) {
-            const vals = balances.map(x => toNum(x.averageDailyBalance)).filter(v => v !== null && v > 0);
-            if (vals.length > 0) return vals.reduce((a, b) => a + b, 0) / vals.length;
-        }
-        return toNum(overview?.averageDailyBalance) ?? toNum(rawBank?.summary?.avgEodBalance) ?? null;
-    } catch (e) {
-        console.warn('[ESR Extraction] Bank raw parse failed:', e.message);
-        return null;
-    }
-}
+// Handled by bankParser.service.js
 
 function _parseBureauFromRaw(raw_response) {
     const result = { score: null, age: null };

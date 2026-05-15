@@ -27,7 +27,7 @@ async function createCase(req, res) {
 async function addApplicant(req, res) {
   try {
     const caseId = parseInt(req.params.id, 10);
-    const { id, type, pan_number, mobile, email, employment_type } = req.body;
+    const { id, type, name, pan_number, mobile, email, employment_type } = req.body;
     
     if (!type || !['PRIMARY', 'CO_APPLICANT'].includes(type)) {
       return res.status(400).json({ error: 'Invalid applicant type.' });

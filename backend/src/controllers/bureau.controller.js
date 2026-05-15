@@ -37,8 +37,9 @@ async function runBureauVerification(req, res) {
       let successCount = 0;
 
       for (const applicant of applicantsToVerify) {
-         let firstName = applicant.type === 'PRIMARY' ? caseRecord.customer.business_name?.split(' ')[0] || 'Unknown' : 'CoApplicant';
-         let lastName = applicant.type === 'PRIMARY' ? caseRecord.customer.business_name?.split(' ').slice(1).join(' ') || 'User' : 'User';
+         const fullName = applicant.name || (applicant.type === 'PRIMARY' ? caseRecord.customer.business_name : '');
+         let firstName = fullName?.split(' ')[0] || (applicant.type === 'PRIMARY' ? 'Unknown' : 'CoApplicant');
+         let lastName = fullName?.split(' ').slice(1).join(' ') || 'User';
          const mobile = applicant.mobile || caseRecord.customer.business_mobile || '9999999999';
          const panNumber = applicant.pan_number || caseRecord.customer.business_pan || '';
 

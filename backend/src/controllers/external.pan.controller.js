@@ -135,23 +135,50 @@ exports.fetchPanIntelligence = async (req, res) => {
                     }
                 });
                 
-                let gstRecords = [];
+                // --- Robust GSTIN Extraction & Storage ---
+                let gstRecordsMap = {};
+
+                // 1. Process gstnRecords (basic list)
                 if (apiResponse.gstnRecords && Array.isArray(apiResponse.gstnRecords)) {
-                    // clear previously nested ones if re-running
-                    await prisma.customerPanGstinRecord.deleteMany({ where: { pan_profile_id: profile.id } });
-                    const recordInserts = apiResponse.gstnRecords.map(r => ({
-                        pan_profile_id: profile.id,
-                        gstin: r.gstin,
-                        registration_name: r.registrationName,
-                        status: r.applicationStatus
-                    }));
-                    if (recordInserts.length > 0) {
-                        await prisma.customerPanGstinRecord.createMany({
-                           data: recordInserts 
-                        });
-                        gstRecords = recordInserts;
+                    for (const r of apiResponse.gstnRecords) {
+                        if (!r.gstin) continue;
+                        gstRecordsMap[r.gstin] = {
+                            gstin: r.gstin,
+                            registration_name: r.registrationName || null,
+                            status: r.applicationStatus || null
+                        };
                     }
                 }
+
+                // 2. Process gstnDetailed (rich list) and merge/enrich
+                if (apiResponse.gstnDetailed && Array.isArray(apiResponse.gstnDetailed)) {
+                    for (const d of apiResponse.gstnDetailed) {
+                        if (!d.gstin) continue;
+                        const existing = gstRecordsMap[d.gstin] || {};
+                        gstRecordsMap[d.gstin] = {
+                            gstin: d.gstin,
+                            registration_name: d.legalNameOfBusiness || existing.registration_name || null,
+                            status: d.gstinStatus || existing.status || null
+                        };
+                    }
+                }
+
+                const recordInserts = Object.values(gstRecordsMap).map(r => ({
+                    pan_profile_id: profile.id,
+                    gstin: r.gstin,
+                    registration_name: r.registration_name,
+                    status: r.status
+                }));
+
+                // Clear previously nested ones if re-running
+                await prisma.customerPanGstinRecord.deleteMany({ where: { pan_profile_id: profile.id } });
+                
+                if (recordInserts.length > 0) {
+                    await prisma.customerPanGstinRecord.createMany({
+                        data: recordInserts
+                    });
+                }
+                let gstRecords = recordInserts;
                 
                 // Update Customer profile with fresh data from PAN intelligence
                 await prisma.customer.update({

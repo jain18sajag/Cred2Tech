@@ -3,70 +3,7 @@ const bankService = require('../services/externalApis/bank.service');
 const { executePaidApi } = require('../services/wallet.service');
 const documentService = require('../services/document.service');
 
-// Helper: extract latest & previous FY Average Bank Balance from bank JSON report
-function extractBankFySnapshot(rawRetrieveData) {
-    const result = { latest: null, previous: null, fy_latest: null, fy_previous: null };
-    if (!rawRetrieveData) return result;
-
-    const toNum = v => {
-        if (v === undefined || v === null) return null;
-        const n = Number(String(v).replace(/,/g, ''));
-        return Number.isFinite(n) ? n : null;
-    };
-
-    // Support both rawBank.overview and rawBank.result[0].overview
-    const overview = rawRetrieveData?.overview
-        ?? rawRetrieveData?.result?.[0]?.overview
-        ?? rawRetrieveData?.[0]?.overview;
-
-    const balances = overview?.monthlyAverageDailyBalance;
-
-    if (Array.isArray(balances) && balances.length > 0) {
-        // Group by financial year
-        const fyTotals = {};
-        const fyCounts = {};
-
-        for (const entry of balances) {
-            // entry may have month/year fields or just averageDailyBalance
-            const dateStr = entry.month || entry.date || '';
-            const avgBal = toNum(entry.averageDailyBalance);
-            if (avgBal === null) continue;
-
-            // Try to determine financial year from date string
-            let fyKey = 'FY (aggregated)';
-            if (dateStr) {
-                // dateStr may be "2023-04" or "Apr-2023" etc.
-                const match = dateStr.match(/(\d{4})[\-\/](\d{1,2})/) || dateStr.match(/(\w{3})[\-\/](\d{4})/);
-                if (match) {
-                    let year, month;
-                    if (!isNaN(match[1])) {
-                        year = parseInt(match[1]); month = parseInt(match[2]);
-                    } else {
-                        const monthMap = { Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12 };
-                        month = monthMap[match[1]] || 1; year = parseInt(match[2]);
-                    }
-                    const fyStart = month >= 4 ? year : year - 1;
-                    fyKey = `FY ${fyStart}-${String(fyStart + 1).slice(2)}`;
-                }
-            }
-
-            fyTotals[fyKey] = (fyTotals[fyKey] || 0) + avgBal;
-            fyCounts[fyKey] = (fyCounts[fyKey] || 0) + 1;
-        }
-
-        const sortedFYs = Object.keys(fyTotals).sort().reverse();
-        if (sortedFYs.length > 0) {
-            result.fy_latest = sortedFYs[0];
-            result.latest = fyTotals[sortedFYs[0]] / fyCounts[sortedFYs[0]]; // Monthly average
-        }
-        if (sortedFYs.length > 1) {
-            result.fy_previous = sortedFYs[1];
-            result.previous = fyTotals[sortedFYs[1]] / fyCounts[sortedFYs[1]];
-        }
-    }
-
-    return result;
-}
+const { extractBankFySnapshot } = require('../services/bankParser.service');
 
 // Note: Pre-analysis is optional and can be skipped. We will directly analyze here.
 async function analyze(req, res) {
@@ -235,7 +172,7 @@ async function syncStatus(req, res) {
         if (mappedStatus === 'COMPLETED') {
             try {
                 bankFySnapshot = extractBankFySnapshot(rawRetrieveData);
-                console.log('[Bank FY Snapshot]', bankFySnapshot);
+                console.log('[Bank JSON] latest ABB:', bankFySnapshot.latest);
             } catch (fyErr) {
                 console.error('[Bank FY Snapshot] Extraction error:', fyErr.message);
             }
@@ -269,7 +206,7 @@ async function syncStatus(req, res) {
                 if (mappedStatus === 'COMPLETED') {
                     // Extract ESR financials asynchronously
                     const { extractEsrFinancials } = require('../services/esrFinancials.service');
-                    extractEsrFinancials(existingRequest.case_id).catch(err => console.error(err));
+                    extractEsrFinancials(existingRequest.case_id, existingRequest.tenant_id).catch(err => console.error(err));
                 }
             }
         }
@@ -317,6 +254,30 @@ async function downloadData(req, res) {
                 error: "Download links are missing from vendor response.",
                 response: resultPayload
             });
+        }
+
+        // Buffer raw JSON natively into DB if available
+        let rawRetrieveData = null;
+        if (jsonUrl) {
+            try {
+                const axios = require('axios');
+                const jsonRes = await axios.get(jsonUrl, { timeout: 30000 });
+                rawRetrieveData = jsonRes.data;
+            } catch (e) {
+                console.error("[Bank Download] Failed to buffer json payload into string:", e.message);
+            }
+        }
+
+        // Re-extract FY snapshot from downloaded JSON if we have it
+        let bankFySnapshot = { latest: null, previous: null, fy_latest: null, fy_previous: null };
+        if (rawRetrieveData) {
+            try {
+                bankFySnapshot = extractBankFySnapshot(rawRetrieveData);
+                console.log('[Bank JSON] downloaded:', !!rawRetrieveData);
+                console.log('[Bank JSON] latest ABB:', bankFySnapshot.latest);
+            } catch (fyErr) {
+                console.error('[Bank JSON] FY Extraction error:', fyErr.message);
+            }
         }
 
         // Ingest vendor URLs into our own storage (runs in parallel for speed)
@@ -372,9 +333,12 @@ async function downloadData(req, res) {
             data: {
                 report_excel_url: excelUrl,        // Audit/source — NOT used for serving
                 report_json_url: jsonUrl,          // Audit/source — NOT used for serving
+                raw_retrieve_response: rawRetrieveData || existingRequest.raw_retrieve_response,
                 raw_download_response: providerRes,
                 bank_excel_document_id: excelDocId || undefined,
                 bank_json_document_id: jsonDocId || undefined,
+                avg_bank_balance_latest_year: bankFySnapshot.latest || existingRequest.avg_bank_balance_latest_year,
+                financial_year_latest: bankFySnapshot.fy_latest || existingRequest.financial_year_latest,
             }
         });
 
@@ -425,9 +389,13 @@ async function handleSignzyCallback(req, res) {
             return res.status(200).json({ received: true, note: 'Unknown report_id, ignored' });
         }
 
-        if (existingRequest.status === 'COMPLETED') {
+        if (
+            existingRequest.status === 'COMPLETED' &&
+            existingRequest.raw_retrieve_response &&
+            existingRequest.avg_bank_balance_latest_year
+        ) {
             console.log(`[Bank Webhook] Duplicate callback ignored for report_id: ${reportId}`);
-            return res.status(200).json({ received: true, note: 'Already completed' });
+            return res.status(200).json({ received: true, note: 'Already completed with raw JSON stored' });
         }
 
         // Extract file URLs — Signzy bank webhook format:
@@ -462,7 +430,7 @@ async function handleSignzyCallback(req, res) {
         if (rawRetrieveData) {
             try {
                 bankFySnapshot = extractBankFySnapshot(rawRetrieveData);
-                console.log('[Bank Webhook][FY Snapshot]', bankFySnapshot);
+                console.log('[Bank JSON] latest ABB:', bankFySnapshot.latest);
             } catch (fyErr) {
                 console.error('[Bank Webhook][FY Snapshot] Extraction error:', fyErr.message);
             }
@@ -535,7 +503,7 @@ async function handleSignzyCallback(req, res) {
             // Trigger ESR financials extraction
             try {
                 const { extractEsrFinancials } = require('../services/esrFinancials.service');
-                await extractEsrFinancials(existingRequest.case_id);
+                await extractEsrFinancials(existingRequest.case_id, existingRequest.tenant_id);
                 console.log(`[Bank Webhook] ESR extraction triggered for case ${existingRequest.case_id}`);
             } catch (esrErr) {
                 console.error('[Bank Webhook] ESR extraction error:', esrErr.message);

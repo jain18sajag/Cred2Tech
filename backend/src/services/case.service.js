@@ -127,6 +127,7 @@ async function addApplicant(case_id, applicantData, tenant_id) {
     return await prisma.applicant.update({
       where: { id: parseInt(applicantData.id, 10) },
       data: {
+        name: applicantData.name,
         pan_number: applicantData.pan_number,
         mobile: applicantData.mobile,
         email: applicantData.email,
@@ -145,6 +146,7 @@ async function addApplicant(case_id, applicantData, tenant_id) {
       return await prisma.applicant.update({
         where: { id: existingPrimary.id },
         data: {
+          name: applicantData.name,
           pan_number: applicantData.pan_number,
           mobile: applicantData.mobile,
           email: applicantData.email,
@@ -160,6 +162,7 @@ async function addApplicant(case_id, applicantData, tenant_id) {
       case_id: existingCase.id,
       type: applicantData.type,
       is_primary: applicantData.type === 'PRIMARY',
+      name: applicantData.name,
       pan_number: applicantData.pan_number,
       mobile: applicantData.mobile,
       email: applicantData.email,
@@ -171,7 +174,7 @@ async function addApplicant(case_id, applicantData, tenant_id) {
 }
 
 async function updateProduct(case_id, product_type, tenant_id) {
-  const existingCase = await prisma.case.findFirst({ 
+  const existingCase = await prisma.case.findFirst({
     where: { id: case_id, tenant_id },
     include: { customer: true }
   });
@@ -183,8 +186,8 @@ async function updateProduct(case_id, product_type, tenant_id) {
 
   const updated = await prisma.case.update({
     where: { id: existingCase.id },
-    data: { 
-      product_type, 
+    data: {
+      product_type,
       stage: 'LEAD_CREATED',
       customer_name: existingCase.customer.business_name,
       entity_type: existingCase.customer.entity_type
@@ -206,7 +209,7 @@ async function updateProduct(case_id, product_type, tenant_id) {
 
 async function updateProductProperty(case_id, payload, tenant_id) {
   const { product_type, property } = payload;
-  const existingCase = await prisma.case.findFirst({ 
+  const existingCase = await prisma.case.findFirst({
     where: { id: case_id, tenant_id },
     include: { customer: true }
   });
@@ -225,8 +228,8 @@ async function updateProductProperty(case_id, payload, tenant_id) {
   const [updatedCase] = await prisma.$transaction([
     prisma.case.update({
       where: { id: case_id },
-      data: { 
-        product_type, 
+      data: {
+        product_type,
         stage: 'LEAD_CREATED',
         customer_name: existingCase.customer.business_name,
         entity_type: existingCase.customer.entity_type
@@ -289,22 +292,23 @@ async function getCaseById(case_id, tenant_id) {
     },
     include: {
       customer: {
-         include: {
-            gst_profiles: { take: 1, orderBy: { created_at: 'desc' } },
-            gst_requests: { take: 1, orderBy: { updated_at: 'desc' }, where: { applicant_id: null, status: { in: ['COMPLETED', 'REPORT_READY', 'CALLBACK_RECEIVED'] } } },
-            itr_analytics: { take: 1, orderBy: { updated_at: 'desc' }, where: { applicant_id: null, status: 'COMPLETED' } },
-            bank_statements: { take: 1, orderBy: { updated_at: 'desc' }, where: { applicant_id: null, status: 'COMPLETED' } }
-         }
+        include: {
+          gst_profiles: { take: 1, orderBy: { created_at: 'desc' } },
+          pan_profiles: { take: 1, orderBy: { created_at: 'desc' } },
+          gst_requests: { take: 1, orderBy: { updated_at: 'desc' }, where: { applicant_id: null, status: { in: ['COMPLETED', 'REPORT_READY', 'CALLBACK_RECEIVED'] } } },
+          itr_analytics: { take: 1, orderBy: { updated_at: 'desc' }, where: { applicant_id: null, status: 'COMPLETED' } },
+          bank_statements: { take: 1, orderBy: { updated_at: 'desc' }, where: { applicant_id: null, status: 'COMPLETED' } }
+        }
       },
       applicants: {
-         include: {
-            bureau_checks: { orderBy: { created_at: 'desc' } },
-            salary_ocr_results: { orderBy: { created_at: 'desc' } },
-            income_entries: true,
-            obligations: true,
-            itr_analytics: { take: 1, orderBy: { created_at: 'desc' } },
-            bank_statements: { take: 1, orderBy: { created_at: 'desc' } }
-         }
+        include: {
+          bureau_checks: { orderBy: { created_at: 'desc' } },
+          salary_ocr_results: { orderBy: { created_at: 'desc' } },
+          income_entries: true,
+          obligations: true,
+          itr_analytics: { take: 1, orderBy: { created_at: 'desc' } },
+          bank_statements: { take: 1, orderBy: { created_at: 'desc' } }
+        }
       },
       property: true,
       esr_financials: true,
@@ -320,23 +324,23 @@ async function getCaseById(case_id, tenant_id) {
 
   // Ensure primary applicant exists for old cases (backfill/fix)
   if (!existingCase.applicants.some(a => a.type === 'PRIMARY')) {
-     const primaryApp = await prisma.applicant.create({
-        data: {
-           case_id: existingCase.id,
-           type: 'PRIMARY',
-           mobile: existingCase.customer.business_mobile,
-           email: existingCase.customer.business_email,
-           pan_number: existingCase.customer.business_pan,
-           otp_verified: existingCase.customer.mobile_verified // If customer mobile was verified, mark applicant verified
-        }
-     });
-     existingCase.applicants.push(primaryApp);
+    const primaryApp = await prisma.applicant.create({
+      data: {
+        case_id: existingCase.id,
+        type: 'PRIMARY',
+        mobile: existingCase.customer.business_mobile,
+        email: existingCase.customer.business_email,
+        pan_number: existingCase.customer.business_pan,
+        otp_verified: existingCase.customer.mobile_verified // If customer mobile was verified, mark applicant verified
+      }
+    });
+    existingCase.applicants.push(primaryApp);
   }
 
   // Fetch suggested co-applicants from other cases
   const otherCases = await prisma.case.findMany({
-    where: { 
-      customer_id: existingCase.customer_id, 
+    where: {
+      customer_id: existingCase.customer_id,
       tenant_id: tenant_id,
       id: { not: existingCase.id }
     },
@@ -369,7 +373,7 @@ async function getCaseById(case_id, tenant_id) {
     for (const a of c.applicants) {
       const identifier = a.pan_number ? a.pan_number.toUpperCase() : a.mobile;
       if (!identifier || seenIdentifiers.has(identifier)) continue;
-      
+
       seenIdentifiers.add(identifier);
       suggestions.push({
         source_case_id: c.id,
@@ -405,10 +409,10 @@ async function getCaseById(case_id, tenant_id) {
   delete existingCase.customer.itr_analytics;
   delete existingCase.customer.bank_statements;
 
-  return { 
-    ...existingCase, 
+  return {
+    ...existingCase,
     business_financials,
-    suggested_co_applicants: suggestions 
+    suggested_co_applicants: suggestions
   };
 }
 
@@ -430,7 +434,7 @@ async function getPipeline(tenantId, params) {
   }
 
   if (stage) {
-    if (stage === 'All') {} // Ignore filter
+    if (stage === 'All') { } // Ignore filter
     else {
       // Map UI stage names to Backend Enum if needed, or assume they come exactly as enum
       where.stage = stage;
@@ -452,7 +456,7 @@ async function getPipeline(tenantId, params) {
   // Sorting
   let orderBy = {};
   const order = sort_order === 'asc' ? 'asc' : 'desc';
-  
+
   if (sort_by === 'lead_date') orderBy = { lead_date: order };
   else if (sort_by === 'name') orderBy = { customer_name: order };
   else if (sort_by === 'cibil_score') orderBy = { cibil_score: order };
@@ -513,7 +517,7 @@ async function updateStage(caseId, tenantId, newStage, userId, tx = null) {
       'CLOSED': []
     };
     if (!allowedNext[existingCase.stage] || !allowedNext[existingCase.stage].includes(newStage)) {
-       throw new Error(`Backward transition from ${existingCase.stage} to ${newStage} is restricted.`);
+      throw new Error(`Backward transition from ${existingCase.stage} to ${newStage} is restricted.`);
     }
   }
 
@@ -523,8 +527,8 @@ async function updateStage(caseId, tenantId, newStage, userId, tx = null) {
   // Use updateMany to safely update with tenant_id filter
   await db.case.updateMany({
     where: { id: caseId, tenant_id: tenantId },
-    data: { 
-      stage: newStage, 
+    data: {
+      stage: newStage,
       updated_at: new Date(),
       is_locked: lockOnDisbursement ? true : existingCase.is_locked
     }
@@ -631,7 +635,7 @@ async function rollbackStage(caseId, targetStage, reason, userId, tenantId, user
     // Rule: Rollback BEFORE APPROVED -> Archive sanction
     if (targetOrder < STAGE_ORDER['APPROVED'] && existingCase.sanction) {
       sanctionDeletedPayload = existingCase.sanction;
-      
+
       // We can only hard delete the sanction if there are NO disbursements (not even CANCELLED ones),
       // because Disbursements have a hard foreign key (case_sanction_id) pointing to the Sanction.
       // If we don't delete it here, it's fine: the sanction service uses an `upsert` and will cleanly 
@@ -745,8 +749,8 @@ async function syncCustomerSnapshots(customerId, tenantId) {
   // Harden: Snapshot Protection After Disbursement
   // Snapshot fields (name, entity, score) must remain immutable after financial stage.
   await prisma.case.updateMany({
-    where: { 
-      customer_id: customerId, 
+    where: {
+      customer_id: customerId,
       tenant_id: tenantId,
       stage: { notIn: ['DISBURSED', 'PARTLY_DISBURSED', 'CLOSED'] }
     },
@@ -767,8 +771,8 @@ async function createCaseFromExisting(customerId, tenantId, userId, productType 
 
     // 2. Find latest case with high-value data (OCR, Income, or Obligations)
     let latestCase = await tx.case.findFirst({
-      where: { 
-        customer_id: customerId, 
+      where: {
+        customer_id: customerId,
         tenant_id: tenantId,
         applicants: {
           some: {
@@ -802,8 +806,8 @@ async function createCaseFromExisting(customerId, tenantId, userId, productType 
     if (!latestCase) {
       // Fallback: Latest case with at least one applicant
       latestCase = await tx.case.findFirst({
-        where: { 
-          customer_id: customerId, 
+        where: {
+          customer_id: customerId,
           tenant_id: tenantId,
           applicants: { some: {} }
         },
@@ -1145,8 +1149,8 @@ async function reuseApplicant(caseId, sourceApplicantId, tenantId, userId) {
 
     // 3. Prevent duplicate reuse in the same target case
     const alreadyReused = await tx.applicant.findFirst({
-      where: { 
-        case_id: targetCase.id, 
+      where: {
+        case_id: targetCase.id,
         pan_number: sourceApp.pan_number,
         mobile: sourceApp.mobile
       }
@@ -1258,10 +1262,10 @@ async function reuseApplicant(caseId, sourceApplicantId, tenantId, userId) {
         // Find the newly cloned document for this OCR result by matching storage_path
         const oldDoc = sourceApp.documents.find(d => d.id === ocr.document_id);
         if (oldDoc) {
-           const newlyClonedDoc = await tx.document.findFirst({
-             where: { applicant_id: newApp.id, storage_path: oldDoc.storage_path }
-           });
-           if (newlyClonedDoc) newDocId = newlyClonedDoc.id;
+          const newlyClonedDoc = await tx.document.findFirst({
+            where: { applicant_id: newApp.id, storage_path: oldDoc.storage_path }
+          });
+          if (newlyClonedDoc) newDocId = newlyClonedDoc.id;
         }
       }
 
@@ -1390,11 +1394,11 @@ async function removeApplicant(caseId, applicantId, tenantId) {
     await tx.caseCreditObligation.deleteMany({ where: { applicant_id: app.id } });
     await tx.salarySlipOcrResult.deleteMany({ where: { applicant_id: app.id } });
     await tx.applicantBureauCheck.deleteMany({ where: { applicant_id: app.id } });
-    await tx.document.deleteMany({ where: { applicant_id: app.id } }); 
+    await tx.document.deleteMany({ where: { applicant_id: app.id } });
     await tx.itrAnalyticsRequest.deleteMany({ where: { applicant_id: app.id } });
     await tx.bankStatementAnalysisRequest.deleteMany({ where: { applicant_id: app.id } });
     await tx.gstrAnalyticsRequest.deleteMany({ where: { applicant_id: app.id } });
-    
+
     await tx.applicant.delete({ where: { id: app.id } });
 
     return { success: true, message: 'Applicant removed.' };

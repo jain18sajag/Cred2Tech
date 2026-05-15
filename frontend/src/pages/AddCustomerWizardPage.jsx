@@ -121,7 +121,8 @@ const AddCustomerWizardPage = () => {
         gst_profile: caseData.business_financials?.gst_profile?.raw_response || null,
         itr_completed: (caseData.data_pull_status?.itr_status === 'COMPLETE') || !!caseData.business_financials?.itr_analytics,
         business_itr_profile: caseData.business_financials?.itr_analytics || null,
-        business_bank_profile: caseData.business_financials?.bank_statements || null
+        business_bank_profile: caseData.business_financials?.bank_statements || null,
+        pan_profile: caseData.customer?.pan_profiles?.[0] || null
       });
 
       // Navigate to step 2 if primary details and mobile are verified
@@ -237,18 +238,24 @@ const AddCustomerWizardPage = () => {
       });
       const data = res.data;
 
-      const entityName = data.providerResponse?.data?.full_name || data.providerResponse?.data?.entityName || '';
+      const entityName = data.providerResponse?.data?.full_name || data.providerResponse?.data?.entityName || data.result?.gstnDetailed?.[0]?.legalNameOfBusiness || '';
       
-      setFormData(prev => ({
-         ...prev,
-         business_name: entityName && !prev.business_name ? entityName : prev.business_name,
-         pan_profile: data
-      }));
+      if (isCoapplicant && idx !== null) {
+        const list = [...formData.applicants];
+        list[idx] = { ...list[idx], name: entityName };
+        setFormData(prev => ({ ...prev, applicants: list, pan_profile: data }));
+      } else {
+        setFormData(prev => ({
+           ...prev,
+           business_name: entityName && !prev.business_name ? entityName : prev.business_name,
+           pan_profile: data
+        }));
+      }
 
       toast.success('PAN Verified Successfully!');
 
     } catch(err) {
-      const errMsg = err.response?.data?.error || err.message || 'Failed to verify PAN';
+      const errMsg = err.response?.data?.error_message || err.response?.data?.error || err.message || 'Failed to verify PAN';
       toast.error(errMsg);
     } finally {
       setPanVerifying(false);
@@ -360,7 +367,7 @@ const AddCustomerWizardPage = () => {
   const addCoApplicantRow = () => {
     setFormData(prev => ({
       ...prev,
-      applicants: [...prev.applicants, { type: 'CO_APPLICANT', employment_type: 'SELF_EMPLOYED', pan_number: '', mobile: '', email: '', otp_verified: false }]
+      applicants: [...prev.applicants, { type: 'CO_APPLICANT', name: '', employment_type: 'SELF_EMPLOYED', pan_number: '', mobile: '', email: '', otp_verified: false }]
     }));
   };
 
@@ -492,10 +499,15 @@ const AddCustomerWizardPage = () => {
         toast.success("Bureau pull success!");
       }
 
-      // Update local state to reflect bureau_fetched
-      const updatedApps = formData.applicants.map(a => 
-        a.id === applicantId ? { ...a, bureau_fetched: true } : a
-      );
+      // Update local state to reflect bureau_fetched and the new score
+      const updatedApps = formData.applicants.map(a => {
+        if (a.id === applicantId) {
+          // Find the score in the response
+          const newScore = a.type === 'PRIMARY' ? data.applicantScore : data.coApplicantScores.find(cs => cs.applicantId === a.id)?.score;
+          return { ...a, bureau_fetched: true, cibil_score: newScore || a.cibil_score };
+        }
+        return a;
+      });
       setFormData(prev => ({ ...prev, applicants: updatedApps }));
     } catch(err) {
       toast.error(err.response?.data?.error || "Bureau fetch failed");
@@ -630,7 +642,7 @@ const AddCustomerWizardPage = () => {
               
               <div style={{ padding: 24 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
-                  <FormField label="PAN NUMBER" name="business_pan" required disabled={!!caseId || formData.mobile_verified}>
+                  <FormField label="PAN NUMBER" name="business_pan" required disabled={formData.pan_profile || formData.mobile_verified}>
                     <div style={{ display: 'flex', gap: 10 }}>
                       <input 
                         type="text" 
@@ -639,12 +651,12 @@ const AddCustomerWizardPage = () => {
                         onBlur={() => checkPanDuplicate(formData.business_pan)}
                         className="form-control" 
                         placeholder="E.G. AABCE1234F" 
-                        disabled={!!caseId || formData.mobile_verified} 
+                        disabled={formData.pan_profile || formData.mobile_verified} 
                         style={{ textTransform: 'uppercase' }} 
                       />
                       {formData.mobile_verified && (
-                        <button type="button" onClick={handleVerifyPan} disabled={panVerifying || !formData.business_pan || formData.pan_profile?.status === 'SUCCESS' || !!caseId} className="btn btn-secondary">
-                          {panVerifying ? 'Wait...' : (formData.pan_profile?.status === 'SUCCESS' || !!caseId ? 'Verified' : 'Verify pan')}
+                        <button type="button" onClick={handleVerifyPan} disabled={panVerifying || !formData.business_pan || formData.pan_profile} className="btn btn-secondary">
+                          {panVerifying ? 'Wait...' : (formData.pan_profile ? 'Verified' : 'Verify pan')}
                         </button>
                       )}
                     </div>
@@ -750,12 +762,15 @@ const AddCustomerWizardPage = () => {
                              <button type="button" onClick={() => removeApplicant(realIdx)} style={{ color: 'var(--error)', fontSize: 13, fontWeight: 600, border: 'none', background: 'none' }}>Remove ×</button>
                           </div>
                           <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: 'var(--text-secondary)' }}>Applicant #{coApplicantIdx + 1}</h4>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1fr', gap: 16, alignItems: 'end' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr 1fr 1fr 1fr', gap: 16, alignItems: 'end' }}>
                             <FormField label="EMPLOYMENT TYPE" name={`coemp_${realIdx}`}>
                               <select className="form-control" value={app.employment_type || 'SELF_EMPLOYED'} onChange={e => updateApplicantRow(realIdx, 'employment_type', e.target.value)}>
                                  <option value="SELF_EMPLOYED">Self Employed</option>
                                  <option value="SALARIED">Salaried</option>
                               </select>
+                            </FormField>
+                            <FormField label="FULL NAME" name={`coname_${realIdx}`}>
+                              <input type="text" value={app.name || ''} onChange={e => updateApplicantRow(realIdx, 'name', e.target.value)} className="form-control" placeholder="Enter Full Name" />
                             </FormField>
                             <FormField label="PAN NUMBER" name={`copan_${realIdx}`}>
                               <input type="text" value={app.pan_number || ''} onChange={e => updateApplicantRow(realIdx, 'pan_number', e.target.value)} className="form-control" style={{ textTransform: 'uppercase' }} disabled={app.otp_verified} />
@@ -857,7 +872,11 @@ const AddCustomerWizardPage = () => {
                          </div>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                         {app.cibil_score && <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--primary)' }}>CIBIL: {app.cibil_score}</span>}
+                         {app.bureau_fetched && (
+                           <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--primary)' }}>
+                             CIBIL: {app.cibil_score || 'N/A'}
+                           </span>
+                         )}
                          <button 
                            type="button"
                            className={`btn btn-sm ${app.bureau_fetched ? 'btn-secondary' : 'btn-primary'}`}

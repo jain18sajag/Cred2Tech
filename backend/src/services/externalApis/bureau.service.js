@@ -86,27 +86,6 @@ async function runBureauCheck({ caseId, applicantId, mobileNumber, firstName, la
         score = vData.ResponseData.data.score?.toString() || null;
       }
 
-      // MOCK FALLBACK for sandbox testing so frontend gets a score instead of null
-      if (!score && baseUrl.includes('sandbox')) {
-        console.warn('Sandbox returned null score, Mocking 785 for frontend flow.');
-        score = "785";
-        responsePayload.mocked = true;
-      }
-
-    } else if (baseUrl.includes('sandbox') && data?.status?.code === 500) {
-      // MOCK FALLBACK for broken Sandbox
-      console.warn('Veri5 Sandbox returned 500; Mocking a successful Bureau response for testing.');
-      apiStatus = 'SUCCESS';
-      score = "785"; // Mock Score
-      responsePayload = {
-        ...responsePayload,
-        mocked: true,
-        verifiedData: {
-          ResponseData: {
-            data: { score: score, age: "32" }
-          }
-        }
-      };
     } else {
       apiStatus = 'FAILED';
     }
