@@ -41,6 +41,82 @@ function handleResponse(response) {
     }
     return response.data.result || response.data;
 }
+/**
+ * Step 1 (New): Get Request ID
+ * POST /api/v3/itr/requestId
+ */
+async function initiateRequestId(pan) {
+    const { apiBase, authToken } = getProviderConfig();
+    try {
+        const response = await axios.post(
+            `${apiBase}/itr/requestId`,
+            { userName: pan.toUpperCase() },
+            {
+                headers: {
+                    'Authorization': authToken,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 30000
+            }
+        );
+        return handleResponse(response);
+    } catch (error) {
+        throw parseError(error);
+    }
+}
+
+/**
+ * Step 2 (New): Authorisation
+ * POST /api/v3/itr/authorisation
+ */
+async function submitAuthorisation(requestId, { otp, password }) {
+    const { apiBase, authToken } = getProviderConfig();
+    const payload = { requestId };
+    if (otp) payload.otp = otp;
+    if (password) payload.password = password;
+
+    try {
+        const response = await axios.post(
+            `${apiBase}/itr/authorisation`,
+            payload,
+            {
+                headers: {
+                    'Authorization': authToken,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 30000
+            }
+        );
+        return handleResponse(response);
+    } catch (error) {
+        throw parseError(error);
+    }
+}
+
+/**
+ * Step 3 (New): Get ITR Form
+ * POST /api/v3/itr/getitrform
+ */
+async function fetchItrForm(requestId) {
+    const { apiBase, authToken } = getProviderConfig();
+    try {
+        const response = await axios.post(
+            `${apiBase}/itr/getitrform`,
+            { requestId, range: 3 },
+            {
+                headers: {
+                    'Authorization': authToken,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 60000
+            }
+        );
+        return handleResponse(response);
+    } catch (error) {
+        throw parseError(error);
+    }
+}
+
 
 /**
  * Step 1: Get Reference ID
@@ -95,6 +171,9 @@ async function getAnalytics(referenceId) {
 }
 
 module.exports = {
+    initiateRequestId,
+    submitAuthorisation,
+    fetchItrForm,
     getReferenceId,
     getAnalytics
 };

@@ -177,6 +177,11 @@ const AddSalariedCustomerWizardPage = () => {
     if (!targetCaseId && (!formData.business_pan || !formData.business_mobile || !formData.business_name)) {
       throw new Error("PAN, Name, and Mobile are required first");
     }
+
+    // Validation: Ensure mobile is numeric (to prevent PAN being entered in mobile field)
+    if (/[a-zA-Z]/.test(formData.business_mobile)) {
+      throw new Error("Invalid Mobile Number. Please ensure you haven't entered the PAN in the mobile field.");
+    }
     
     if (!caseId) {
       // Create NEW case
@@ -532,7 +537,10 @@ const AddSalariedCustomerWizardPage = () => {
                       <input 
                         type="tel" 
                         value={formData.business_mobile} 
-                        onChange={e => setFormData({...formData, business_mobile: e.target.value})} 
+                        onChange={e => {
+                          const val = e.target.value.replace(/\D/g, ''); // Keep only digits
+                          setFormData({...formData, business_mobile: val});
+                        }} 
                         className="form-control" 
                         placeholder="9820012345" 
                         disabled={formData.mobile_verified} 
@@ -542,6 +550,7 @@ const AddSalariedCustomerWizardPage = () => {
                       ) : (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--success)', fontWeight: 600, padding: '0 10px', whiteSpace: 'nowrap' }}>
                           <CheckCircle2 size={18} /> Verified
+                          <button type="button" onClick={() => setFormData({...formData, mobile_verified: false})} style={{ marginLeft: 8, fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Edit</button>
                         </div>
                       )}
                     </div>
@@ -600,7 +609,10 @@ const AddSalariedCustomerWizardPage = () => {
                             </FormField>
                             <FormField label="MOBILE NUMBER" name={`comob_${realIdx}`}>
                               <div style={{ display: 'flex', gap: 8 }}>
-                                <input type="tel" value={app.mobile || ''} onChange={e => updateApplicantRow(realIdx, 'mobile', e.target.value)} className="form-control" disabled={app.otp_verified} />
+                                <input type="tel" value={app.mobile || ''} onChange={e => {
+                                  const val = e.target.value.replace(/\D/g, ''); // Keep only digits
+                                  updateApplicantRow(realIdx, 'mobile', val);
+                                }} className="form-control" disabled={app.otp_verified} />
                               </div>
                             </FormField>
                             <FormField label="EMAIL ADDRESS" name={`coemail_${realIdx}`}>

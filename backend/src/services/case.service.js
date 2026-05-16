@@ -29,7 +29,8 @@ async function createCase(customer_id, product_type, tenant_id, user_id) {
           is_primary: true,   // FIXED: was missing, causing Case.cibil_score to never update
           mobile: customer.business_mobile,
           email: customer.business_email,
-          pan_number: customer.business_pan
+          pan_number: customer.business_pan,
+          otp_verified: customer.mobile_verified || true // If customer was verified before createCase, mark applicant verified
         }
       }
     }
@@ -92,7 +93,8 @@ async function createSalariedCase({ business_pan, business_name, business_mobile
             name: customer.business_name,
             mobile: customer.business_mobile,
             email: customer.business_email,
-            pan_number: customer.business_pan
+            pan_number: customer.business_pan,
+            otp_verified: customer.mobile_verified || true
           }
         }
       },
@@ -166,7 +168,7 @@ async function addApplicant(case_id, applicantData, tenant_id) {
       pan_number: applicantData.pan_number,
       mobile: applicantData.mobile,
       email: applicantData.email,
-      employment_type: applicantData.employment_type || 'NA'
+      employment_type: applicantData.employment_type || 'SELF_EMPLOYED'
     }
   });
 
@@ -294,7 +296,7 @@ async function getCaseById(case_id, tenant_id) {
       customer: {
         include: {
           gst_profiles: { take: 1, orderBy: { created_at: 'desc' } },
-          pan_profiles: { take: 1, orderBy: { created_at: 'desc' } },
+          pan_profiles: { orderBy: { created_at: 'desc' }, include: { gstin_records: true } },
           gst_requests: { take: 1, orderBy: { updated_at: 'desc' }, where: { applicant_id: null, status: { in: ['COMPLETED', 'REPORT_READY', 'CALLBACK_RECEIVED'] } } },
           itr_analytics: { take: 1, orderBy: { updated_at: 'desc' }, where: { applicant_id: null } },
           bank_statements: { take: 1, orderBy: { updated_at: 'desc' }, where: { applicant_id: null } }

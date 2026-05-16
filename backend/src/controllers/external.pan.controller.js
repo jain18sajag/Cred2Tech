@@ -134,7 +134,41 @@ exports.fetchPanIntelligence = async (req, res) => {
                         raw_response: apiResponse
                     }
                 });
-                
+                console.log(`[PAN] CustomerPanProfile saved with ID: ${profile.id}`);
+
+                // --- Legacy Compatibility: Save Primary GST Profile ---
+                if (gstin) {
+                    try {
+                        console.log(`[PAN] Syncing legacy GST Profile for ${gstin}...`);
+                        const existingGst = await prisma.customerGSTProfile.findFirst({
+                            where: { gstin: gstin, customer_id: customer_id }
+                        });
+
+                        const gstData = {
+                            customer_id,
+                            gstin: gstin,
+                            filing_status: primaryGst.applicationStatus || 'Active',
+                            last_filed_period: 'NA',
+                            annual_turnover: turnoverMax || 0,
+                            raw_response: primaryGst
+                        };
+
+                        if (existingGst) {
+                            await prisma.customerGSTProfile.update({
+                                where: { id: existingGst.id },
+                                data: gstData
+                            });
+                        } else {
+                            await prisma.customerGSTProfile.create({
+                                data: gstData
+                            });
+                        }
+                        console.log(`[PAN] Legacy GST Profile synced for ${gstin}`);
+                    } catch (gstErr) {
+                        console.error('[PAN] Failed to sync legacy GST Profile:', gstErr.message);
+                    }
+                }
+
                 // --- Robust GSTIN Extraction & Storage ---
                 let gstRecordsMap = {};
 

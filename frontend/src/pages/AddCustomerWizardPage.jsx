@@ -33,6 +33,7 @@ const AddCustomerWizardPage = () => {
     business_email: '',
     mobile_verified: false,
     applicants: [],
+    linked_gstins: [],
     product_type: '',
     // Property (Step 3)
     property_type: '',
@@ -109,20 +110,23 @@ const AddCustomerWizardPage = () => {
         business_mobile: caseData.customer?.business_mobile || '',
         business_email: caseData.customer?.business_email || '',
         mobile_verified: caseData.customer?.mobile_verified || false,
-        applicants: caseData.applicants || [],
+        applicants: (caseData.applicants || []).map(app => ({
+          ...app,
+          linked_gstins: caseData.customer?.pan_profiles?.find(p => p.pan === app.pan_number)?.gstin_records || []
+        })),
         product_type: caseData.product_type || '',
         property_type: caseData.property?.property_type || '',
         occupancy_status: caseData.property?.occupancy_status || 'Self Occupied',
         ownership_type: caseData.property?.ownership_type || 'Sole Owner',
         market_value: caseData.property?.market_value || '',
-        // Recover pull statuses from backend state or reused customer state
-        // Recover pull statuses from business financials or Primary applicant
+        // Recover pull statuses
         gst_completed: (caseData.data_pull_status?.gst_status === 'COMPLETE') || !!caseData.business_financials?.gst_profile || !!caseData.business_financials?.gst_request,
         gst_profile: caseData.business_financials?.gst_profile?.raw_response || null,
         itr_completed: (caseData.data_pull_status?.itr_status === 'COMPLETE') || !!caseData.business_financials?.itr_analytics,
         business_itr_profile: caseData.business_financials?.itr_analytics || null,
         business_bank_profile: caseData.business_financials?.bank_statements || null,
-        pan_profile: caseData.customer?.pan_profiles?.[0] || null
+        pan_profile: caseData.customer?.pan_profiles?.find(p => p.pan === caseData.customer.business_pan) || null,
+        linked_gstins: caseData.customer?.pan_profiles?.find(p => p.pan === caseData.customer.business_pan)?.gstin_records || []
       });
 
       // Navigate to step 2 if primary details and mobile are verified
@@ -192,6 +196,11 @@ const AddCustomerWizardPage = () => {
     if (!formData.business_pan || !formData.business_mobile) {
       throw new Error("Business PAN and Mobile are required first");
     }
+
+    // Validation: Ensure mobile is numeric (to prevent PAN being entered in mobile field)
+    if (/[a-zA-Z]/.test(formData.business_mobile)) {
+      throw new Error("Invalid Mobile Number. Please ensure you haven't entered the PAN in the mobile field.");
+    }
     
     // Always upsert the customer data so email/name updates are preserved
     const customer = await customerService.createOrAttach({
@@ -242,13 +251,14 @@ const AddCustomerWizardPage = () => {
       
       if (isCoapplicant && idx !== null) {
         const list = [...formData.applicants];
-        list[idx] = { ...list[idx], name: entityName };
+        list[idx] = { ...list[idx], name: entityName, linked_gstins: data.gst_records || [] };
         setFormData(prev => ({ ...prev, applicants: list, pan_profile: data }));
       } else {
         setFormData(prev => ({
            ...prev,
            business_name: entityName && !prev.business_name ? entityName : prev.business_name,
-           pan_profile: data
+           pan_profile: data,
+           linked_gstins: data.gst_records || []
         }));
       }
 
@@ -667,7 +677,10 @@ const AddCustomerWizardPage = () => {
                       <input 
                         type="tel" 
                         value={formData.business_mobile} 
-                        onChange={e => setFormData({...formData, business_mobile: e.target.value})} 
+                        onChange={e => {
+                          const val = e.target.value.replace(/\D/g, ''); // Keep only digits
+                          setFormData({...formData, business_mobile: val});
+                        }} 
                         className="form-control" 
                         placeholder="9820012345" 
                         disabled={formData.mobile_verified} 
@@ -677,6 +690,7 @@ const AddCustomerWizardPage = () => {
                       ) : (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--success)', fontWeight: 600, padding: '0 10px', whiteSpace: 'nowrap' }}>
                           <CheckCircle2 size={18} /> Verified
+                          <button type="button" onClick={() => setFormData({...formData, mobile_verified: false})} style={{ marginLeft: 8, fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Edit</button>
                         </div>
                       )}
                     </div>
@@ -777,7 +791,10 @@ const AddCustomerWizardPage = () => {
                             </FormField>
                             <FormField label="MOBILE NUMBER" name={`comob_${realIdx}`}>
                               <div style={{ display: 'flex', gap: 8 }}>
-                                <input type="tel" value={app.mobile || ''} onChange={e => updateApplicantRow(realIdx, 'mobile', e.target.value)} className="form-control" disabled={app.otp_verified} />
+                                <input type="tel" value={app.mobile || ''} onChange={e => {
+                                  const val = e.target.value.replace(/\D/g, ''); // Keep only digits
+                                  updateApplicantRow(realIdx, 'mobile', val);
+                                }} className="form-control" disabled={app.otp_verified} />
                                 {!app.otp_verified ? (
                                   <button type="button" className="btn btn-primary" onClick={() => handleSendCoapplicantOtp(realIdx)} style={{ padding: '0 16px', whiteSpace: 'nowrap' }} disabled={saving}>Send OTP</button>
                                 ) : (
@@ -821,6 +838,7 @@ const AddCustomerWizardPage = () => {
                     <GstAnalyticsForm 
                        caseId={caseId} 
                        customerId={formData.customer_id} 
+                       linkedGstins={formData.linked_gstins || []}
                        onComplete={() => setFormData(prev => ({...prev, gst_completed: true}))} 
                     />
                     <ItrAnalyticsForm
@@ -897,6 +915,7 @@ const AddCustomerWizardPage = () => {
                               caseId={caseId} 
                               customerId={formData.customer_id} 
                               applicantId={app.id}
+                              linkedGstins={app.linked_gstins || []}
                               onComplete={() => console.log(`Applicant ${app.id} GST complete`)} 
                            />
                          </div>

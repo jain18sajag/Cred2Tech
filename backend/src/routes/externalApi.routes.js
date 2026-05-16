@@ -17,9 +17,11 @@ router.use(authenticate);
 router.post('/bureau-pull', externalApiController.bureauPull);
 
 // ITR Analytics Integration
-router.post('/itr/analyze', itrAnalyticsController.analyze);
-router.post('/itr/sync',    itrAnalyticsController.sync);
-router.post('/itr/download', itrAnalyticsController.download);
+router.post('/itr/analyze',   itrAnalyticsController.analyze);
+router.post('/itr/initiate',  itrAnalyticsController.initiate);
+router.post('/itr/authorise', itrAnalyticsController.authorise);
+router.post('/itr/sync',      itrAnalyticsController.sync);
+router.post('/itr/download',  itrAnalyticsController.download);
 
 // Bank Statement Integration
 router.post('/bank/analyze', bankController.analyze);

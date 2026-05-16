@@ -648,6 +648,9 @@ model GstrAnalyticsRequest {
   turnover_previous_year  Decimal?  @db.Decimal(18, 2)
   financial_year_latest   String?   // e.g. "FY 2024-25"
   financial_year_previous String?   // e.g. "FY 2023-24"
+  avg_monthly_turnover    Decimal?  @db.Decimal(18, 2)
+  months_filed_12m        Int?
+  nil_return_months       Int?
 
   created_at         DateTime @default(now())
   updated_at         DateTime @updatedAt

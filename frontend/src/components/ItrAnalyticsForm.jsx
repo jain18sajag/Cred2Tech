@@ -30,13 +30,69 @@ const ItrAnalyticsForm = ({
 
     const [pan, setPan] = useState(prefillPan || '');
     const [password, setPassword] = useState('');
-
+    const [otp, setOtp] = useState('');
+    const [authMode, setAuthMode] = useState('OTP'); // 'OTP' or 'PASSWORD'
+    
+    // Auto-resume if there is an existing pending record
+    const initialStep = (existingRecord?.status === 'INITIATED' || existingRecord?.status === 'PROCESSING') ? 2 : 1;
+    const [step, setStep] = useState(initialStep); 
+    
     const [loading, setLoading] = useState(false);
-    const [isOpen, setIsOpen] = useState(false);
+    const [isOpen, setIsOpen] = useState(initialStep === 2);
+    
+    React.useEffect(() => {
+        if (initialStep === 2) setIsOpen(true);
+    }, [initialStep]);
 
     const roleLabel = applicantType === 'PRIMARY' ? 'Primary Borrower' : 'Co-Applicant';
 
+    const handleInitiate = async () => {
+        if (!pan) return toast.error('PAN is required');
+        setLoading(true);
+        try {
+            const res = await api.post('/external/itr/initiate', {
+                customer_id: customerId,
+                case_id: caseId,
+                applicant_id: applicantId,
+                pan: pan.toUpperCase()
+            });
+            setReferenceId(res.data.referenceId);
+            setStep(2);
+            toast.success('Request initiated. Please enter ' + authMode);
+        } catch (error) {
+            toast.error(error.response?.data?.error || error.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleAuthorise = async () => {
+        if (authMode === 'OTP' && !otp) return toast.error('OTP is required');
+        if (authMode === 'PASSWORD' && !password) return toast.error('Password is required');
+
+        setLoading(true);
+        try {
+            await api.post('/external/itr/authorise', {
+                reference_id: referenceId,
+                otp: authMode === 'OTP' ? otp : null,
+                password: authMode === 'PASSWORD' ? password : null
+            });
+            
+            toast.success('Authorisation successful. Starting analysis...');
+            setStep(1); // Reset for next time
+            setStatus('PROCESSING');
+            setIsOpen(false);
+            setOtp('');
+            setPassword('');
+        } catch (error) {
+            toast.error(error.response?.data?.error || error.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleAnalyze = async () => {
+        // Legacy fallback
         if (!pan) return toast.error('PAN is required');
         if (!password) return toast.error('ITR portal password is required');
 
@@ -249,38 +305,86 @@ const ItrAnalyticsForm = ({
                             )}
 
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 14, background: 'var(--bg-base)', padding: 16, borderRadius: 8, border: '1px solid #e2e8f0' }}>
-                                <FormField label="PAN / ITR Username" required>
-                                    <input
-                                        type="text"
-                                        className="form-control"
-                                        value={pan}
-                                        onChange={e => setPan(e.target.value.toUpperCase())}
-                                        placeholder="ABCDE1234F"
-                                        style={{ backgroundColor: '#f1f5f9', border: 'none', textTransform: 'uppercase' }}
-                                    />
-                                </FormField>
-                                <FormField label="ITR Portal Password" required>
-                                    <input
-                                        type="password"
-                                        className="form-control"
-                                        value={password}
-                                        onChange={e => setPassword(e.target.value)}
-                                        placeholder="Enter portal password"
-                                        style={{ backgroundColor: '#f1f5f9', border: 'none', borderLeft: '3px solid #7c3aed' }}
-                                    />
-                                </FormField>
+                                {step === 1 ? (
+                                    <>
+                                        <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
+                                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                                                <input type="radio" name="itrAuthMode" value="OTP" checked={authMode === 'OTP'} onChange={() => setAuthMode('OTP')} />
+                                                OTP Mode
+                                            </label>
+                                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                                                <input type="radio" name="itrAuthMode" value="PASSWORD" checked={authMode === 'PASSWORD'} onChange={() => setAuthMode('PASSWORD')} />
+                                                Password Mode
+                                            </label>
+                                        </div>
+                                        <FormField label="PAN / ITR Username" required>
+                                            <input
+                                                type="text"
+                                                className="form-control"
+                                                value={pan}
+                                                onChange={e => setPan(e.target.value.toUpperCase())}
+                                                placeholder="ABCDE1234F"
+                                                style={{ backgroundColor: '#f1f5f9', border: 'none', textTransform: 'uppercase' }}
+                                            />
+                                        </FormField>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div style={{ padding: '8px 12px', background: '#f1f5f9', borderRadius: 6, fontSize: 13, color: '#475569', marginBottom: 4 }}>
+                                            Request ID: <span style={{ fontWeight: 600 }}>{referenceId}</span>
+                                        </div>
+                                        {authMode === 'OTP' ? (
+                                            <FormField label="Enter 6-digit OTP" required>
+                                                <input
+                                                    type="text"
+                                                    className="form-control"
+                                                    value={otp}
+                                                    onChange={e => setOtp(e.target.value)}
+                                                    placeholder="123456"
+                                                    maxLength={6}
+                                                    style={{ backgroundColor: '#f1f5f9', border: 'none', borderLeft: '3px solid #7c3aed', letterSpacing: '4px', textAlign: 'center', fontWeight: 700 }}
+                                                />
+                                            </FormField>
+                                        ) : (
+                                            <FormField label="ITR Portal Password" required>
+                                                <input
+                                                    type="password"
+                                                    className="form-control"
+                                                    value={password}
+                                                    onChange={e => setPassword(e.target.value)}
+                                                    placeholder="Enter portal password"
+                                                    style={{ backgroundColor: '#f1f5f9', border: 'none', borderLeft: '3px solid #7c3aed' }}
+                                                />
+                                            </FormField>
+                                        )}
+                                    </>
+                                )}
                             </div>
 
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 16 }}>
-                                <button type="button" style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 13 }} onClick={() => setIsOpen(false)}>Cancel</button>
-                                <button
-                                    type="button"
-                                    style={{ backgroundColor: '#7c3aed', color: 'white', border: 'none', padding: '8px 24px', borderRadius: 6, fontWeight: 600, fontSize: 13, cursor: 'pointer', opacity: (loading || walletBalance < itrCost) ? 0.6 : 1 }}
-                                    onClick={handleAnalyze}
-                                    disabled={loading || walletBalance < itrCost}
-                                >
-                                    {loading ? 'Submitting...' : `Analyze (~${itrCost} Cr)`}
-                                </button>
+                                <button type="button" style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 13 }} onClick={() => {
+                                    setIsOpen(false);
+                                    setStep(1);
+                                }}>Cancel</button>
+                                {step === 1 ? (
+                                    <button
+                                        type="button"
+                                        style={{ backgroundColor: '#7c3aed', color: 'white', border: 'none', padding: '8px 24px', borderRadius: 6, fontWeight: 600, fontSize: 13, cursor: 'pointer', opacity: (loading || walletBalance < itrCost) ? 0.6 : 1 }}
+                                        onClick={handleInitiate}
+                                        disabled={loading || walletBalance < itrCost}
+                                    >
+                                        {loading ? 'Initiating...' : `Initiate (~${itrCost} Cr)`}
+                                    </button>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        style={{ backgroundColor: '#10b981', color: 'white', border: 'none', padding: '8px 24px', borderRadius: 6, fontWeight: 600, fontSize: 13, cursor: 'pointer', opacity: loading ? 0.6 : 1 }}
+                                        onClick={handleAuthorise}
+                                        disabled={loading}
+                                    >
+                                        {loading ? 'Verifying...' : `Verify & Analyze`}
+                                    </button>
+                                )}
                             </div>
                         </>
                     ) : (

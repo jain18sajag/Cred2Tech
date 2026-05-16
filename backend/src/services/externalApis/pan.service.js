@@ -33,6 +33,7 @@ async function fetchPanIntelligence(panNumber) {
 
     } catch (error) {
         const providerError = error.response?.data;
+        console.error('[Signzy PAN API Error Payload]:', JSON.stringify(providerError, null, 2));
         const errorMessage = providerError?.error?.message || providerError?.message || error.message || 'Provider failure';
         throw new Error(`${errorMessage}`);
     }

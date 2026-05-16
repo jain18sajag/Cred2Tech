@@ -5,10 +5,26 @@ import FormField from './ui/FormField';
 import api from '../api/axiosInstance';
 import { downloadDocument } from '../api/documentHelper';
 
-const GstAnalyticsForm = ({ caseId, customerId, applicantId = null, onComplete }) => {
+const GstAnalyticsForm = ({ caseId, customerId, applicantId = null, linkedGstins = [], onComplete }) => {
     const [mode, setMode] = useState('IN_SYSTEM');
     const [authType, setAuthType] = useState('OTP');
+    const [isManualGstin, setIsManualGstin] = useState(false);
     
+    // Date states
+    const [fromMonth, setFromMonth] = useState('04');
+    const [fromYear, setFromYear] = useState('2022');
+    const [toMonth, setToMonth] = useState('03');
+    const [toYear, setToYear] = useState('2025');
+
+    const months = [
+        { v: '01', l: 'Jan' }, { v: '02', l: 'Feb' }, { v: '03', l: 'Mar' },
+        { v: '04', l: 'Apr' }, { v: '05', l: 'May' }, { v: '06', l: 'Jun' },
+        { v: '07', l: 'Jul' }, { v: '08', l: 'Aug' }, { v: '09', l: 'Sep' },
+        { v: '10', l: 'Oct' }, { v: '11', l: 'Nov' }, { v: '12', l: 'Dec' }
+    ];
+    const currentYear = new Date().getFullYear();
+    const years = Array.from({ length: 7 }, (_, i) => (currentYear - 4 + i).toString());
+
     const [formData, setFormData] = useState({
         gstin: '',
         username: '',
@@ -28,6 +44,17 @@ const GstAnalyticsForm = ({ caseId, customerId, applicantId = null, onComplete }
             fetchRequests();
         }
     }, [caseId]);
+
+    useEffect(() => {
+        if (linkedGstins && linkedGstins.length > 0 && !formData.gstin) {
+            const activeGstin = linkedGstins.find(g => g.status === 'Active')?.gstin || linkedGstins[0].gstin;
+            setFormData(prev => ({ ...prev, gstin: activeGstin }));
+        }
+    }, [linkedGstins]);
+
+    useEffect(() => {
+        setFormData(prev => ({ ...prev, from_date: `${fromMonth}${fromYear}`, to_date: `${toMonth}${toYear}` }));
+    }, [fromMonth, fromYear, toMonth, toYear]);
 
     const fetchRequests = async () => {
         try {
@@ -141,8 +168,44 @@ const GstAnalyticsForm = ({ caseId, customerId, applicantId = null, onComplete }
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-                <FormField label="GSTIN" required>
-                    <input type="text" value={formData.gstin} onChange={e => setFormData({...formData, gstin: e.target.value.toUpperCase()})} className="form-control" placeholder="12ABCDE3456X7YZ" />
+                <FormField label="SELECT GSTIN" required>
+                    {!isManualGstin && linkedGstins && linkedGstins.length > 0 ? (
+                        <div style={{ display: 'flex', gap: 8 }}>
+                            <select 
+                                className="form-control" 
+                                value={formData.gstin} 
+                                onChange={e => {
+                                    if (e.target.value === '__manual__') {
+                                        setIsManualGstin(true);
+                                        setFormData({...formData, gstin: ''});
+                                    } else {
+                                        setFormData({...formData, gstin: e.target.value});
+                                    }
+                                }}
+                            >
+                                <option value="">Select GSTIN</option>
+                                {linkedGstins.map(g => (
+                                    <option key={g.gstin} value={g.gstin}>
+                                        {g.gstin} ({g.registration_name || 'No Name'}) - {g.status}
+                                    </option>
+                                ))}
+                                <option value="__manual__">Enter manually...</option>
+                            </select>
+                        </div>
+                    ) : (
+                        <div style={{ display: 'flex', gap: 8 }}>
+                            <input 
+                                type="text" 
+                                value={formData.gstin} 
+                                onChange={e => setFormData({...formData, gstin: e.target.value.toUpperCase()})} 
+                                className="form-control" 
+                                placeholder="12ABCDE3456X7YZ" 
+                            />
+                            {linkedGstins && linkedGstins.length > 0 && (
+                                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setIsManualGstin(false)}>Cancel</button>
+                            )}
+                        </div>
+                    )}
                 </FormField>
                 
                 {mode === 'IN_SYSTEM' && (
@@ -151,12 +214,26 @@ const GstAnalyticsForm = ({ caseId, customerId, applicantId = null, onComplete }
                     </FormField>
                 )}
                 
-                <FormField label="From Date (MMYYYY)" required>
-                    <input type="text" value={formData.from_date} onChange={e => setFormData({...formData, from_date: e.target.value})} className="form-control" placeholder="042022" />
+                <FormField label="FROM DATE" required>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                        <select className="form-control" value={fromMonth} onChange={e => setFromMonth(e.target.value)} style={{ flex: 1 }}>
+                            {months.map(m => <option key={m.v} value={m.v}>{m.l}</option>)}
+                        </select>
+                        <select className="form-control" value={fromYear} onChange={e => setFromYear(e.target.value)} style={{ flex: 1 }}>
+                            {years.map(y => <option key={y} value={y}>{y}</option>)}
+                        </select>
+                    </div>
                 </FormField>
                 
-                <FormField label="To Date (MMYYYY)" required>
-                    <input type="text" value={formData.to_date} onChange={e => setFormData({...formData, to_date: e.target.value})} className="form-control" placeholder="032025" />
+                <FormField label="TO DATE" required>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                        <select className="form-control" value={toMonth} onChange={e => setToMonth(e.target.value)} style={{ flex: 1 }}>
+                            {months.map(m => <option key={m.v} value={m.v}>{m.l}</option>)}
+                        </select>
+                        <select className="form-control" value={toYear} onChange={e => setToYear(e.target.value)} style={{ flex: 1 }}>
+                            {years.map(y => <option key={y} value={y}>{y}</option>)}
+                        </select>
+                    </div>
                 </FormField>
             </div>
 

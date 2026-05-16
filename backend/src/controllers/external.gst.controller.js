@@ -268,9 +268,30 @@ async function syncGstData(req, res) {
                     // Still processing
                 } else if (dataRes.gstin) {
                     currentStatus = 'DATA_READY';
+                    
+                    const updateData = { 
+                        raw_gst_data: dataRes, 
+                        status: 'DATA_READY',
+                        callback_payload: dataRes // Store whole response for audit
+                    };
+                    
+                    // Extract structured metrics
+                    try {
+                        const gstExtracted = extractGstDetails(dataRes);
+                        if (gstExtracted.turnover_latest_year !== null) {
+                            updateData.turnover_latest_year = gstExtracted.turnover_latest_year;
+                            updateData.turnover_previous_year = gstExtracted.turnover_previous_year;
+                            updateData.financial_year_latest = gstExtracted.financial_year_latest;
+                            updateData.financial_year_previous = gstExtracted.financial_year_previous;
+                            updateData.avg_monthly_turnover = gstExtracted.avg_monthly_turnover;
+                            updateData.months_filed_12m = gstExtracted.months_filed_12m;
+                            updateData.nil_return_months = gstExtracted.nil_return_months;
+                        }
+                    } catch (e) { console.error('[Sync] Metric extraction failed:', e.message); }
+
                     await prisma.gstrAnalyticsRequest.update({
                         where: { id: dbReq.id },
-                        data: { raw_gst_data: dataRes }
+                        data: updateData
                     });
                     dataSynced = true;
                 }
@@ -327,10 +348,11 @@ async function syncGstData(req, res) {
                     await prisma.gstrAnalyticsRequest.update({
                         where: { id: dbReq.id },
                         data: {
-                            report_json_url: reportRes.jsonDataUrl || dbReq.report_json_url,   // Audit only
-                            report_excel_url: reportRes.excelUrl || dbReq.report_excel_url,   // Audit only
-                            report_pdf_url: reportRes.pdfUrl || dbReq.report_pdf_url,         // Audit only
+                            report_json_url: reportRes.jsonDataUrl || dbReq.report_json_url,   
+                            report_excel_url: reportRes.excelUrl || dbReq.report_excel_url,   
+                            report_pdf_url: reportRes.pdfUrl || dbReq.report_pdf_url,         
                             status: 'REPORT_READY',
+                            callback_payload: reportRes, // Store whole report response for audit
                             gst_pdf_document_id: pdfDocId || undefined,
                             gst_excel_document_id: excelDocId || undefined,
                             gst_json_document_id: jsonDocId || undefined,

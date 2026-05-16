@@ -35,7 +35,7 @@ async function addApplicant(req, res) {
 
     const tenant_id = req.user.tenant_id;
 
-    const applicant = await caseService.addApplicant(caseId, { id, type, pan_number, mobile, email, employment_type }, tenant_id);
+    const applicant = await caseService.addApplicant(caseId, { id, type, name, pan_number, mobile, email, employment_type }, tenant_id);
     res.status(201).json(applicant);
   } catch (error) {
     if (error.message === 'Case not found or unauthorized.') {

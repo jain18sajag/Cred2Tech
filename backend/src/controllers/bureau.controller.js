@@ -37,11 +37,42 @@ async function runBureauVerification(req, res) {
       let successCount = 0;
 
       for (const applicant of applicantsToVerify) {
-         const fullName = applicant.name || (applicant.type === 'PRIMARY' ? caseRecord.customer.business_name : '');
-         let firstName = fullName?.split(' ')[0] || (applicant.type === 'PRIMARY' ? 'Unknown' : 'CoApplicant');
-         let lastName = fullName?.split(' ').slice(1).join(' ') || 'User';
-         const mobile = applicant.mobile || caseRecord.customer.business_mobile || '9999999999';
          const panNumber = applicant.pan_number || caseRecord.customer.business_pan || '';
+         let mobile = applicant.mobile;
+
+         // If applicant mobile is missing or looks like a PAN, fallback to business mobile
+         if (!mobile || /[a-zA-Z]/.test(mobile)) {
+            mobile = caseRecord.customer.business_mobile;
+         }
+
+         // Final fallback if both are missing or corrupted
+         if (!mobile || /[a-zA-Z]/.test(mobile)) {
+            mobile = '9999999999';
+         }
+
+         // Fetch intelligence from PAN profile if available
+         let panProfile = null;
+         if (panNumber) {
+            panProfile = await prisma.customerPanProfile.findFirst({
+               where: { pan: panNumber }
+            });
+         }
+
+         const fullName = applicant.name
+            || panProfile?.legal_name
+            || (applicant.type === 'PRIMARY' ? caseRecord.customer.business_name : '');
+
+         const nameParts = fullName?.trim().split(/\s+/).filter(Boolean) || [];
+         let firstName = nameParts[0] || (applicant.type === 'PRIMARY' ? 'Unknown' : 'CoApplicant');
+         let lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : 'User';
+
+         console.log(`[Bureau Pull] Triggering for applicant ${applicant.id}:`, {
+            fullName,
+            firstName,
+            lastName,
+            mobile,
+            pan: panNumber
+         });
 
          const payload = {
             caseId: caseId,

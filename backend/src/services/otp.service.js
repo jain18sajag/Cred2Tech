@@ -79,12 +79,18 @@ const otpService = {
     if (targetType === 'CUSTOMER') {
       await prisma.customer.update({
         where: { id: targetId },
-        data: { mobile_verified: true }
+        data: { 
+          mobile_verified: true,
+          business_mobile: record.mobile // Use the number that was actually verified
+        }
       });
     } else if (targetType === 'APPLICANT') {
       await prisma.applicant.update({
         where: { id: targetId },
-        data: { otp_verified: true }
+        data: { 
+          otp_verified: true,
+          mobile: record.mobile // Use the number that was actually verified
+        }
       });
     }
 
