@@ -61,6 +61,9 @@ router.post('/:caseId/applicants/:applicantId/salary-slips', upload.single('file
 // Trigger OCR on a specific salary slip
 router.post('/:caseId/applicants/:applicantId/salary-slips/:documentId/ocr', salaryOcrController.triggerSalarySlipOcr);
 
+// Add manual salary entry
+router.post('/:caseId/applicants/:applicantId/salary-slips/manual', salaryOcrController.addManualSalaryEntry);
+
 // Trigger OCR batch for multiple salary slips
 router.post('/:caseId/applicants/:applicantId/salary-slips/ocr-batch', salaryOcrController.processSalarySlipOcrBatch);
 

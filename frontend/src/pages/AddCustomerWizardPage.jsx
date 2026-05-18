@@ -107,11 +107,12 @@ const AddCustomerWizardPage = () => {
         customer_id: caseData.customer?.id,
         business_pan: caseData.customer?.business_pan || '',
         business_name: caseData.customer?.business_name || '',
-        business_mobile: caseData.customer?.business_mobile || '',
+        business_mobile: (caseData.customer?.business_mobile || '').replace(/\D/g, ''),
         business_email: caseData.customer?.business_email || '',
         mobile_verified: caseData.customer?.mobile_verified || false,
         applicants: (caseData.applicants || []).map(app => ({
           ...app,
+          mobile: (app.mobile || '').replace(/\D/g, ''),
           linked_gstins: caseData.customer?.pan_profiles?.find(p => p.pan === app.pan_number)?.gstin_records || []
         })),
         product_type: caseData.product_type || '',

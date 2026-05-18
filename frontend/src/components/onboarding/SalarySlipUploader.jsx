@@ -14,6 +14,9 @@ const SalarySlipUploader = ({ caseId, applicantId, applicantName }) => {
 
   const fileInputRef = useRef(null);
   const [currentUploadMonth, setCurrentUploadMonth] = useState(null);
+  const [mode, setMode] = useState('OCR'); // 'OCR' | 'MANUAL'
+  const [manualEntryMonth, setManualEntryMonth] = useState(null);
+  const [manualForm, setManualForm] = useState({ month: '', year: new Date().getFullYear().toString(), gross_salary: '', net_salary: '', deductions: '', employer_name: '', employee_name: applicantName || '' });
 
   // Fetch existing OCR results on mount
   useEffect(() => {
@@ -57,6 +60,55 @@ const SalarySlipUploader = ({ caseId, applicantId, applicantName }) => {
   const handleUploadClick = (monthId) => {
     setCurrentUploadMonth(monthId);
     fileInputRef.current.click();
+  };
+
+  const handleManualClick = (monthId) => {
+    setManualEntryMonth(monthId);
+    const existing = months.find(m => m.id === monthId)?.result;
+    if (existing) {
+      setManualForm({
+        month: existing.month || '',
+        year: existing.year || new Date().getFullYear().toString(),
+        gross_salary: existing.gross_salary || '',
+        net_salary: existing.net_salary || '',
+        deductions: existing.deductions || '',
+        employer_name: existing.employer_name || '',
+        employee_name: existing.employee_name || applicantName || ''
+      });
+    } else {
+      setManualForm({
+        month: '',
+        year: new Date().getFullYear().toString(),
+        gross_salary: '',
+        net_salary: '',
+        deductions: '',
+        employer_name: '',
+        employee_name: applicantName || ''
+      });
+    }
+  };
+
+  const handleManualSubmit = async (e) => {
+    if (e) e.preventDefault();
+    if (!manualForm.month || !manualForm.gross_salary || !manualForm.net_salary) {
+      toast.error('Month, Gross Salary, and Net Salary are required.');
+      return;
+    }
+    
+    setLoadingMonth(manualEntryMonth);
+    try {
+      const res = await api.post(`/cases/${caseId}/applicants/${applicantId}/salary-slips/manual`, manualForm);
+      if (res.data?.success) {
+        toast.success(`Manual entry saved for ${months.find(m => m.id === manualEntryMonth)?.label}`);
+        setManualEntryMonth(null);
+        fetchSummary();
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Failed to save manual entry');
+      console.error(error);
+    } finally {
+      setLoadingMonth(null);
+    }
   };
 
   const pollOcrStatus = async (documentId, monthIndex) => {
@@ -224,6 +276,77 @@ const SalarySlipUploader = ({ caseId, applicantId, applicantName }) => {
         accept="application/pdf,image/jpeg,image/png"
       />
 
+      <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+        <button 
+          type="button"
+          onClick={() => setMode('OCR')} 
+          style={{ flex: 1, padding: '10px', border: mode === 'OCR' ? '2px solid #3182ce' : '1px solid #e2e8f0', background: mode === 'OCR' ? '#ebf8ff' : '#fff', fontWeight: 600, color: mode === 'OCR' ? '#2b6cb0' : '#4a5568', borderRadius: '8px', cursor: 'pointer', transition: 'all 0.2s' }}
+        >
+          📄 Upload OCR
+        </button>
+        <button 
+          type="button"
+          onClick={() => setMode('MANUAL')} 
+          style={{ flex: 1, padding: '10px', border: mode === 'MANUAL' ? '2px solid #3182ce' : '1px solid #e2e8f0', background: mode === 'MANUAL' ? '#ebf8ff' : '#fff', fontWeight: 600, color: mode === 'MANUAL' ? '#2b6cb0' : '#4a5568', borderRadius: '8px', cursor: 'pointer', transition: 'all 0.2s' }}
+        >
+          ✍️ Manual Entry
+        </button>
+      </div>
+
+      {manualEntryMonth && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#fff', padding: '24px', borderRadius: '12px', width: '400px', maxWidth: '90%' }}>
+            <h3 style={{ marginTop: 0, marginBottom: '16px', fontSize: '18px', fontWeight: 600 }}>Manual Salary Entry ({months.find(m => m.id === manualEntryMonth)?.label})</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px', color: '#4A5568' }}>Month</label>
+                  <select required value={manualForm.month} onChange={e => setManualForm({...manualForm, month: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #E2E8F0' }}>
+                    <option value="">Select Month</option>
+                    <option value="January">January</option>
+                    <option value="February">February</option>
+                    <option value="March">March</option>
+                    <option value="April">April</option>
+                    <option value="May">May</option>
+                    <option value="June">June</option>
+                    <option value="July">July</option>
+                    <option value="August">August</option>
+                    <option value="September">September</option>
+                    <option value="October">October</option>
+                    <option value="November">November</option>
+                    <option value="December">December</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px', color: '#4A5568' }}>Year</label>
+                  <input type="number" required value={manualForm.year} onChange={e => setManualForm({...manualForm, year: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #E2E8F0' }} />
+                </div>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px', color: '#4A5568' }}>Gross Salary (₹)</label>
+                <input type="number" required min="0" value={manualForm.gross_salary} onChange={e => setManualForm({...manualForm, gross_salary: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #E2E8F0' }} placeholder="e.g. 60000" />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px', color: '#4A5568' }}>Net Salary (₹)</label>
+                <input type="number" required min="0" value={manualForm.net_salary} onChange={e => setManualForm({...manualForm, net_salary: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #E2E8F0' }} placeholder="e.g. 55000" />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px', color: '#4A5568' }}>Deductions (₹)</label>
+                <input type="number" min="0" value={manualForm.deductions} onChange={e => setManualForm({...manualForm, deductions: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #E2E8F0' }} placeholder="e.g. 5000" />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px', color: '#4A5568' }}>Employer Name</label>
+                <input type="text" value={manualForm.employer_name} onChange={e => setManualForm({...manualForm, employer_name: e.target.value})} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #E2E8F0' }} placeholder="Company Name" />
+              </div>
+              <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                <button type="button" onClick={() => setManualEntryMonth(null)} style={{ flex: 1, padding: '10px', background: '#EDF2F7', border: 'none', borderRadius: '6px', fontWeight: 600, color: '#4A5568', cursor: 'pointer' }}>Cancel</button>
+                <button type="button" onClick={handleManualSubmit} disabled={loadingMonth !== null} style={{ flex: 1, padding: '10px', background: '#3182CE', border: 'none', borderRadius: '6px', fontWeight: 600, color: '#FFF', cursor: 'pointer' }}>{loadingMonth === manualEntryMonth ? 'Saving...' : 'Save Entry'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px', marginBottom: '16px' }}>
         {months.map((m) => (
           <div key={m.id} style={{ background: '#F7FAFC', border: '1.5px dashed #E2E8F0', borderRadius: '12px', padding: '16px', textAlign: 'center' }}>
@@ -235,10 +358,10 @@ const SalarySlipUploader = ({ caseId, applicantId, applicantName }) => {
                 <button
                   type="button"
                   style={{ background: '#E2E8F0', color: '#4A5568', border: 'none', padding: '6px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, width: '100%', cursor: 'pointer' }}
-                  onClick={() => handleUploadClick(m.id)}
+                  onClick={() => mode === 'OCR' ? handleUploadClick(m.id) : handleManualClick(m.id)}
                   disabled={loadingMonth !== null}
                 >
-                  Re-upload
+                  {mode === 'OCR' ? 'Re-upload' : 'Edit Details'}
                 </button>
               </>
             ) : m.isUploaded ? (
@@ -251,17 +374,17 @@ const SalarySlipUploader = ({ caseId, applicantId, applicantName }) => {
                 <button
                   type="button"
                   style={{ background: '#E2E8F0', color: '#4A5568', border: 'none', padding: '6px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, width: '100%', cursor: 'pointer' }}
-                  onClick={() => handleUploadClick(m.id)}
+                  onClick={() => mode === 'OCR' ? handleUploadClick(m.id) : handleManualClick(m.id)}
                   disabled={loadingMonth !== null || runningAllOcr}
                 >
-                  Change File
+                  {mode === 'OCR' ? 'Change File' : 'Enter Details'}
                 </button>
               </>
             ) : (
               <>
                 <div style={{ fontSize: '24px', marginBottom: '8px' }}>📋</div>
                 <div style={{ fontSize: '13px', fontWeight: 600, color: '#1A202C', marginBottom: '4px' }}>{m.label}</div>
-                <div style={{ fontSize: '11px', color: '#A0AEC0', marginBottom: '12px' }}>Upload salary slip PDF / image</div>
+                <div style={{ fontSize: '11px', color: '#A0AEC0', marginBottom: '12px' }}>{mode === 'OCR' ? 'Upload salary slip PDF / image' : 'Enter manual salary values'}</div>
                 <button
                   type="button"
                   style={{
@@ -269,10 +392,10 @@ const SalarySlipUploader = ({ caseId, applicantId, applicantName }) => {
                     padding: '8px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, width: '100%', cursor: loadingMonth ? 'not-allowed' : 'pointer',
                     opacity: loadingMonth === m.id ? 0.7 : 1
                   }}
-                  onClick={() => handleUploadClick(m.id)}
+                  onClick={() => mode === 'OCR' ? handleUploadClick(m.id) : handleManualClick(m.id)}
                   disabled={loadingMonth !== null || runningAllOcr}
                 >
-                  {loadingMonth === m.id ? 'Uploading...' : 'Upload Slip'}
+                  {loadingMonth === m.id ? (mode === 'OCR' ? 'Uploading...' : 'Saving...') : (mode === 'OCR' ? 'Upload Slip' : 'Enter Details')}
                 </button>
               </>
             )}
@@ -280,7 +403,7 @@ const SalarySlipUploader = ({ caseId, applicantId, applicantName }) => {
         ))}
       </div>
 
-      {months.some(m => m.isUploaded && m.ocrStatus !== 'COMPLETED') && (
+      {mode === 'OCR' && months.some(m => m.isUploaded && m.ocrStatus !== 'COMPLETED') && (
          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
             <button 
               type="button"

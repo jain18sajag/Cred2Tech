@@ -1550,6 +1550,7 @@ model SalarySlipOcrResult {
   month            String    // e.g. "February" or "02"
   year             String    // e.g. "2026"
   ocr_status       OcrStatus @default(PENDING)
+  source           String    @default("OCR") // OCR | MANUAL
   
   gross_salary     Float?
   net_salary       Float?

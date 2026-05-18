@@ -472,9 +472,75 @@ async function getSalarySummary(req, res) {
     }
 }
 
+/**
+ * Add a manual salary entry, acting exactly like a completed OCR result downstream.
+ * POST /api/cases/:caseId/applicants/:applicantId/salary-slips/manual
+ */
+async function addManualSalaryEntry(req, res) {
+    try {
+        const { caseId, applicantId } = req.params;
+        const { month, year, gross_salary, net_salary, deductions, employer_name, employee_name } = req.body;
+        const tenant_id = req.user.tenant_id;
+
+        if (!month || !year) return res.status(400).json({ error: 'Month and year are required' });
+        if (!gross_salary || !net_salary) return res.status(400).json({ error: 'Gross and Net salary are required' });
+
+        const applicant = await prisma.applicant.findUnique({
+            where: { id: parseInt(applicantId) },
+            select: { case: { select: { customer_id: true } } }
+        });
+
+        if (!applicant) return res.status(404).json({ error: 'Applicant not found' });
+
+        const record = await prisma.salarySlipOcrResult.upsert({
+            where: {
+                case_id_applicant_id_month_year: {
+                    case_id: parseInt(caseId),
+                    applicant_id: parseInt(applicantId),
+                    month,
+                    year
+                }
+            },
+            update: {
+                source: 'MANUAL',
+                ocr_status: 'COMPLETED',
+                gross_salary: parseFloat(gross_salary),
+                net_salary: parseFloat(net_salary),
+                deductions: deductions ? parseFloat(deductions) : null,
+                employer_name: employer_name || null,
+                employee_name: employee_name || null
+            },
+            create: {
+                tenant_id,
+                customer_id: applicant.case.customer_id,
+                case_id: parseInt(caseId),
+                applicant_id: parseInt(applicantId),
+                month,
+                year,
+                source: 'MANUAL',
+                ocr_status: 'COMPLETED',
+                gross_salary: parseFloat(gross_salary),
+                net_salary: parseFloat(net_salary),
+                deductions: deductions ? parseFloat(deductions) : null,
+                employer_name: employer_name || null,
+                employee_name: employee_name || null
+            }
+        });
+
+        // Sync to CaseIncomeEntry
+        await recalculateApplicantIncome(tenant_id, parseInt(caseId), parseInt(applicantId));
+
+        res.json({ success: true, data: record });
+    } catch (error) {
+        console.error('[salaryOcr.controller] addManualSalaryEntry error:', error);
+        res.status(500).json({ error: 'Failed to add manual salary entry.' });
+    }
+}
+
 module.exports = {
     triggerSalarySlipOcr,
     processSalarySlipOcrBatch,
     pollSalarySlipOcr,
-    getSalarySummary
+    getSalarySummary,
+    addManualSalaryEntry
 };

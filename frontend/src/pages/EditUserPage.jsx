@@ -72,6 +72,18 @@ const EditUserPage = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    const LEVELS = { L1: 1, L2: 2, L3: 3, L4: 4 };
+    if (form.manager_id && form.hierarchy_level) {
+      const manager = tenantUsers.find(u => u.id === Number(form.manager_id));
+      if (manager && manager.hierarchy_level) {
+        if (LEVELS[manager.hierarchy_level] >= LEVELS[form.hierarchy_level]) {
+          toast.error('Manager must be at a higher level than the employee');
+          return;
+        }
+      }
+    }
+    
     setSaving(true);
     try {
       await updateUser(id, {
@@ -153,7 +165,15 @@ const EditUserPage = () => {
             <FormField label="Manager" name="manager_id">
               <select name="manager_id" value={form.manager_id} onChange={handleChange} className="form-control">
                 <option value="">None (root level)</option>
-                {tenantUsers.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role?.name || u.role})</option>)}
+                {tenantUsers
+                  .filter(u => {
+                    if (u.id === Number(id)) return false; // Prevent self-assignment
+                    if (!form.hierarchy_level) return true;
+                    if (!u.hierarchy_level) return true;
+                    const LEVELS = { L1: 1, L2: 2, L3: 3, L4: 4 };
+                    return LEVELS[u.hierarchy_level] < LEVELS[form.hierarchy_level];
+                  })
+                  .map(u => <option key={u.id} value={u.id}>{u.name} ({u.role?.name || u.role})</option>)}
               </select>
             </FormField>
           </div>

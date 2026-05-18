@@ -34,8 +34,9 @@ async function addApplicant(req, res) {
     }
 
     const tenant_id = req.user.tenant_id;
+    const mobileStr = mobile ? mobile.toString().replace(/\D/g, '') : null;
 
-    const applicant = await caseService.addApplicant(caseId, { id, type, name, pan_number, mobile, email, employment_type }, tenant_id);
+    const applicant = await caseService.addApplicant(caseId, { id, type, name, pan_number, mobile: mobileStr, email, employment_type }, tenant_id);
     res.status(201).json(applicant);
   } catch (error) {
     if (error.message === 'Case not found or unauthorized.') {
@@ -79,7 +80,7 @@ async function updateProductProperty(req, res) {
 async function getCases(req, res) {
   try {
     const tenant_id = req.user.tenant_id;
-    const cases = await caseService.getAllCases(tenant_id);
+    const cases = await caseService.getAllCases(tenant_id, req.user);
     res.json(cases);
   } catch (error) {
     console.error(error);
@@ -91,7 +92,7 @@ async function getCaseById(req, res) {
   try {
     const caseId = req.params.id;
     const tenant_id = req.user.tenant_id;
-    const caseRecord = await caseService.getCaseById(caseId, tenant_id);
+    const caseRecord = await caseService.getCaseById(caseId, tenant_id, req.user);
     res.json(caseRecord);
   } catch (error) {
     if (error.message === 'Case not found or unauthorized.') {
@@ -112,13 +113,23 @@ async function getSummary(req, res) {
         include: {
            customer: true,
            applicants: true,
-           api_logs: true
+           api_logs: true,
+           created_by: true
         }
      });
 
      if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
-     if (req.user.role.name !== 'SUPER_ADMIN' && caseRecord.tenant_id !== req.user.tenant_id) {
+     
+     const roleName = req.user.role?.name || req.user.role;
+     if (caseRecord.tenant_id !== req.user.tenant_id) {
         return res.status(403).json({ error: 'Forbidden' });
+     }
+
+     const isBypassed = roleName === 'DSA_ADMIN';
+     if (!isBypassed && caseRecord.created_by_user_id !== req.user.id) {
+        if (!caseRecord.created_by?.hierarchy_path?.startsWith(req.user.hierarchy_path)) {
+           return res.status(403).json({ error: 'Forbidden: Hierarchy restriction' });
+        }
      }
 
      const primaryApplicant = caseRecord.applicants?.find(a => a.type === 'PRIMARY') || {};
@@ -158,11 +169,20 @@ async function getCoBorrowers(req, res) {
      const caseId = parseInt(req.params.id, 10);
      const caseRecord = await prisma.case.findUnique({
         where: { id: caseId },
-        include: { applicants: true }
+        include: { applicants: true, created_by: true }
      });
 
      if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
-     if (req.user.role.name !== 'SUPER_ADMIN' && caseRecord.tenant_id !== req.user.tenant_id) return res.status(403).json({ error: 'Forbidden' });
+     
+     const roleName = req.user.role?.name || req.user.role;
+     if (caseRecord.tenant_id !== req.user.tenant_id) return res.status(403).json({ error: 'Forbidden' });
+
+     const isBypassed = roleName === 'DSA_ADMIN';
+     if (!isBypassed && caseRecord.created_by_user_id !== req.user.id) {
+        if (!caseRecord.created_by?.hierarchy_path?.startsWith(req.user.hierarchy_path)) {
+           return res.status(403).json({ error: 'Forbidden: Hierarchy restriction' });
+        }
+     }
 
      const coBorrowers = caseRecord.applicants.filter(a => a.type === 'CO_APPLICANT').map(a => ({
          name: a.email || 'Co-Applicant',
@@ -184,10 +204,19 @@ async function getActivityLog(req, res) {
   // #swagger.tags = ['Cases']
   try {
      const caseId = parseInt(req.params.id, 10);
-     const caseRecord = await prisma.case.findUnique({ where: { id: caseId } });
+     const caseRecord = await prisma.case.findUnique({ where: { id: caseId }, include: { created_by: true } });
      
      if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
-     if (req.user.role.name !== 'SUPER_ADMIN' && caseRecord.tenant_id !== req.user.tenant_id) return res.status(403).json({ error: 'Forbidden' });
+     
+     const roleName = req.user.role?.name || req.user.role;
+     if (caseRecord.tenant_id !== req.user.tenant_id) return res.status(403).json({ error: 'Forbidden' });
+
+     const isBypassed = roleName === 'DSA_ADMIN';
+     if (!isBypassed && caseRecord.created_by_user_id !== req.user.id) {
+        if (!caseRecord.created_by?.hierarchy_path?.startsWith(req.user.hierarchy_path)) {
+           return res.status(403).json({ error: 'Forbidden: Hierarchy restriction' });
+        }
+     }
 
      const logs = await prisma.activityLog.findMany({
          where: { case_id: caseId },
@@ -215,7 +244,7 @@ async function getPipeline(req, res) {
       search, stage, lender, entity_type, alert, sort_by, sort_order,
       page: parseInt(page) || 1,
       limit: parseInt(limit) || 10
-    });
+    }, req.user);
     
     res.json(result);
   } catch (error) {

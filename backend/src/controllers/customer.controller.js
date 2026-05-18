@@ -67,6 +67,7 @@ async function createOrAttach(req, res) {
     let { business_pan, business_mobile, business_email, business_name, customer_id } = req.body;
     
     business_pan = business_pan?.trim().toUpperCase();
+    const mobileStr = business_mobile ? business_mobile.toString().replace(/\D/g, '') : null;
 
     if (!business_pan && !customer_id) {
       return res.status(400).json({ error: 'business_pan or customer_id is required.' });
@@ -78,7 +79,7 @@ async function createOrAttach(req, res) {
     const customer = await customerService.createOrAttachCustomer({
       customer_id,
       business_pan,
-      business_mobile,
+      business_mobile: mobileStr,
       business_email,
       business_name
     }, tenant_id, user_id);
@@ -103,10 +104,12 @@ async function createSalariedCustomer(req, res) {
     const tenant_id = req.user.tenant_id;
     const user_id = req.user.id;
 
+    const mobileStr = business_mobile ? business_mobile.toString().replace(/\D/g, '') : null;
+
     const newCase = await caseService.createSalariedCase({
       business_pan,
       business_name,
-      business_mobile,
+      business_mobile: mobileStr,
       business_email,
       product_type
     }, tenant_id, user_id);

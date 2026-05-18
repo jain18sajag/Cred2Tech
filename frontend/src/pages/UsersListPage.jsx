@@ -141,6 +141,7 @@ const UsersListPage = () => {
                   <th style={{ padding: '12px 24px', fontSize: 11, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>NAME</th>
                   <th style={{ padding: '12px 24px', fontSize: 11, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>ROLE</th>
                   <th style={{ padding: '12px 24px', fontSize: 11, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>DESIGNATION</th>
+                  <th style={{ padding: '12px 24px', fontSize: 11, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>MANAGER</th>
                   <th style={{ padding: '12px 24px', fontSize: 11, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>MOBILE</th>
                   <th style={{ padding: '12px 24px', fontSize: 11, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>EMAIL</th>
                   <th style={{ padding: '12px 24px', fontSize: 11, fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>LAST LOGIN</th>
@@ -162,6 +163,7 @@ const UsersListPage = () => {
                       </span>
                     </td>
                     <td style={{ padding: '16px 24px', color: '#475569', fontSize: 13 }}>{u.designation || 'Operations Executive'}</td>
+                    <td style={{ padding: '16px 24px', color: '#475569', fontSize: 13, fontWeight: 600 }}>{users.find(m => m.id === u.manager_id)?.name || '—'}</td>
                     <td style={{ padding: '16px 24px', color: '#475569', fontSize: 13 }}>{u.mobile || '—'}</td>
                     <td style={{ padding: '16px 24px', color: '#475569', fontSize: 13 }}>{u.email || '—'}</td>
                     <td style={{ padding: '16px 24px', color: '#475569', fontSize: 13 }}>{u.last_login_at ? formatDateTime(u.last_login_at) : 'Today 09:15'}</td>

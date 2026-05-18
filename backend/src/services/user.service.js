@@ -1,5 +1,6 @@
 const prisma = require('../../config/db');
 const { hashPassword } = require('../utils/hash');
+const { isValidManager } = require('../utils/hierarchy');
 
 async function createUser(data, currentUser) {
   console.log('CREATE USER PAYLOAD:', JSON.stringify(data));
@@ -83,6 +84,9 @@ async function createUser(data, currentUser) {
       const error = new Error('Manager and subordinate must belong to the same tenant');
       error.status = 400;
       throw error;
+    }
+    if (!isValidManager(hierarchy_level, manager.hierarchy_level)) {
+      throw Object.assign(new Error('Invalid hierarchy: manager must be senior to employee'), { status: 400 });
     }
   }
 
@@ -189,12 +193,72 @@ async function getUserById(id, currentUser) {
 async function updateUser(id, data, currentUser) {
   const user = await getUserById(id, currentUser); // Will throw 403 if mismatch
 
-  return await prisma.user.update({
-    where: { id: Number(id) },
-    data: {
-      ...data,
-      updated_by: currentUser.id
+  const parsedManagerId = data.manager_id !== undefined ? (data.manager_id ? parseInt(data.manager_id, 10) : null) : user.manager_id;
+  const newHierarchyLevel = data.hierarchy_level !== undefined ? data.hierarchy_level : user.hierarchy_level;
+
+  let manager = null;
+  if (parsedManagerId) {
+    manager = await prisma.user.findUnique({ where: { id: parsedManagerId } });
+    if (!manager || manager.tenant_id !== user.tenant_id) {
+      throw Object.assign(new Error('Manager and subordinate must belong to the same tenant'), { status: 400 });
     }
+
+    if (!isValidManager(newHierarchyLevel, manager.hierarchy_level)) {
+      throw Object.assign(new Error('Invalid hierarchy: manager must be senior to employee'), { status: 400 });
+    }
+
+    // Prevent cycles
+    if (parsedManagerId === Number(id)) {
+      throw Object.assign(new Error('Invalid hierarchy: user cannot be their own manager'), { status: 400 });
+    }
+    if (manager.hierarchy_path && manager.hierarchy_path.includes(`/${id}/`)) {
+      throw Object.assign(new Error('Invalid hierarchy: user cannot be moved under one of their descendants'), { status: 400 });
+    }
+  }
+
+  return await prisma.$transaction(async (tx) => {
+    const updatedUser = await tx.user.update({
+      where: { id: Number(id) },
+      data: {
+        ...data,
+        updated_by: currentUser.id
+      }
+    });
+
+    if (data.manager_id !== undefined && data.manager_id !== user.manager_id) {
+      const oldPath = user.hierarchy_path;
+      let newPath = `/${updatedUser.id}/`;
+
+      if (parsedManagerId && manager) {
+        newPath = `${manager.hierarchy_path}${updatedUser.id}/`;
+      }
+
+      await tx.user.update({
+        where: { id: updatedUser.id },
+        data: { hierarchy_path: newPath }
+      });
+
+      if (oldPath) {
+        // Find all descendants and update their paths
+        const descendants = await tx.user.findMany({
+          where: {
+            tenant_id: user.tenant_id,
+            hierarchy_path: { startsWith: oldPath },
+            id: { not: updatedUser.id }
+          }
+        });
+
+        for (const desc of descendants) {
+          const descNewPath = desc.hierarchy_path.replace(oldPath, newPath);
+          await tx.user.update({
+            where: { id: desc.id },
+            data: { hierarchy_path: descNewPath }
+          });
+        }
+      }
+      updatedUser.hierarchy_path = newPath;
+    }
+    return updatedUser;
   });
 }
 

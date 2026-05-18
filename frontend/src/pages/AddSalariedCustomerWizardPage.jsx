@@ -144,10 +144,13 @@ const AddSalariedCustomerWizardPage = () => {
         customer_id: caseData.customer?.id,
         business_pan: caseData.customer?.business_pan || '',
         business_name: caseData.customer?.business_name || '',
-        business_mobile: caseData.customer?.business_mobile || '',
+        business_mobile: (caseData.customer?.business_mobile || '').replace(/\D/g, ''),
         business_email: caseData.customer?.business_email || '',
         mobile_verified: caseData.customer?.mobile_verified || false,
-        applicants: restoredApplicants,
+        applicants: restoredApplicants.map(app => ({
+          ...app,
+          mobile: (app.mobile || '').replace(/\D/g, '')
+        })),
         product_type: caseData.product_type || '',
         property_type: caseData.property?.property_type || '',
         occupancy_status: caseData.property?.occupancy_status || 'Self Occupied',

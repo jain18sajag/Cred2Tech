@@ -1,5 +1,4 @@
 const prisma = require('../../config/db');
-
 async function createCase(customer_id, product_type, tenant_id, user_id) {
   // 1. Verify that the customer exists and belongs to the correct tenant
   const customer = await prisma.customer.findFirst({
@@ -275,9 +274,20 @@ async function updateProductProperty(case_id, payload, tenant_id) {
 }
 
 
-async function getAllCases(tenant_id) {
+async function getAllCases(tenant_id, currentUser) {
+  const isBypassed = currentUser.role === 'DSA_ADMIN';
+
+  const hierarchyFilter = isBypassed ? {} : {
+    created_by: {
+      hierarchy_path: { startsWith: currentUser.hierarchy_path }
+    }
+  };
+
   return await prisma.case.findMany({
-    where: { tenant_id },
+    where: { 
+      tenant_id,
+      ...hierarchyFilter
+    },
     include: {
       customer: true,
       applicants: true
@@ -286,11 +296,20 @@ async function getAllCases(tenant_id) {
   });
 }
 
-async function getCaseById(case_id, tenant_id) {
+async function getCaseById(case_id, tenant_id, currentUser) {
+  const isBypassed = currentUser.role === 'DSA_ADMIN';
+
+  const hierarchyFilter = isBypassed ? {} : {
+    created_by: {
+      hierarchy_path: { startsWith: currentUser.hierarchy_path }
+    }
+  };
+
   const existingCase = await prisma.case.findFirst({
     where: {
       id: parseInt(case_id, 10),
-      tenant_id: tenant_id
+      tenant_id: tenant_id,
+      ...hierarchyFilter
     },
     include: {
       customer: {
@@ -419,10 +438,21 @@ async function getCaseById(case_id, tenant_id) {
 }
 
 
-async function getPipeline(tenantId, params) {
+async function getPipeline(tenantId, params, currentUser) {
   const { search, stage, lender, entity_type, alert, sort_by, sort_order, page, limit } = params;
 
-  let where = { tenant_id: tenantId };
+  const isBypassed = currentUser.role === 'DSA_ADMIN';
+
+  const hierarchyFilter = isBypassed ? {} : {
+    created_by: {
+      hierarchy_path: { startsWith: currentUser.hierarchy_path }
+    }
+  };
+
+  let where = { 
+    tenant_id: tenantId,
+    ...hierarchyFilter
+  };
 
   if (search) {
     // Only search against Case fields (ID, customer_name, lender_name) to avoid heavy joins
@@ -483,7 +513,10 @@ async function getPipeline(tenantId, params) {
 
   // Distinct customers count
   const distinctCustomers = await prisma.case.findMany({
-    where: { tenant_id: tenantId },
+    where: { 
+      tenant_id: tenantId,
+      ...hierarchyFilter 
+    },
     distinct: ['customer_id'],
     select: { customer_id: true }
   });

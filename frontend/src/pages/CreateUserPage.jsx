@@ -71,6 +71,15 @@ const CreateUserPage = () => {
     if (!form.password) e.password = 'Password is required';
     else if (form.password.length < 6) e.password = 'Minimum 6 characters required';
     if (!form.role_id) e.role_id = 'Please select a role';
+    
+    if (form.manager_id && form.hierarchy_level) {
+      const manager = tenantUsers.find(u => u.id === Number(form.manager_id));
+      if (manager && manager.hierarchy_level) {
+        if (LEVELS[manager.hierarchy_level] >= LEVELS[form.hierarchy_level]) {
+          e.manager_id = 'Manager must be at a higher level than the employee';
+        }
+      }
+    }
     return e;
   };
 
@@ -109,8 +118,15 @@ const CreateUserPage = () => {
     return false;
   });
 
+  const LEVELS = { L1: 1, L2: 2, L3: 3, L4: 4 };
+
   // Manager dropdown: only same-tenant users (backend also enforces this)
-  const eligibleManagers = tenantUsers.filter(u => u.tenant_id === currentUser?.tenant_id);
+  const eligibleManagers = tenantUsers.filter(u => {
+    if (u.tenant_id !== currentUser?.tenant_id) return false;
+    if (!form.hierarchy_level) return true;
+    if (!u.hierarchy_level) return true; // Admins / users without level
+    return LEVELS[u.hierarchy_level] < LEVELS[form.hierarchy_level];
+  });
 
   return (
     <div>

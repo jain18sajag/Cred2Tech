@@ -30,7 +30,9 @@ async function authenticate(req, res, next) {
       id: user.id,
       role: user.role.name,
       tenant_id: user.tenant_id,
-      tenant_type: user.tenant.type
+      tenant_type: user.tenant.type,
+      hierarchy_level: user.hierarchy_level,
+      hierarchy_path: user.hierarchy_path
     };
 
     next();
