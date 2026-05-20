@@ -70,7 +70,7 @@ function extractDataFromRawItrJson(apiResponse) {
     };
 
     if (!apiResponse) return result;
-    
+
     // Support both wrapped { result: {...} } and unwrapped payloads
     const actualData = apiResponse.result || apiResponse;
     if (typeof actualData !== 'object' || Object.keys(actualData).length === 0) return result;
@@ -85,25 +85,42 @@ function extractDataFromRawItrJson(apiResponse) {
     const parseFy = (fy) => {
         const records = actualData[fy];
         if (!records || !records.length) return { pat: null, receipts: null };
-        
+
         const record = records[0];
-        const json = record.json?.ITR || record.json?.itr;
+        const json = record.json?.ITR || record.json?.itr || record.json;
         if (!json) return { pat: null, receipts: null };
 
-        // Try to find the specific ITR type (ITR1, ITR2, ITR4 etc.)
-        const itrKey = Object.keys(json).find(k => k.startsWith('ITR'));
-        const itrData = json[itrKey];
-        if (!itrData) return { pat: null, receipts: null };
+        console.log(`[ITR Debug] FY ${fy} top-level keys:`, Object.keys(json));
 
-        const incDec = itrData.ITR1_IncomeDeductions || itrData.ITR4_IncomeDeductions || itrData.IncomeDeductions;
-        const taxComp = itrData.ITR1_TaxComputation || itrData.ITR4_TaxComputation || itrData.TaxComputation;
+        // Recursive helper to find a key anywhere in the JSON
+        const findKeyVal = (obj, searchKey) => {
+            if (!obj || typeof obj !== 'object') return null;
+            for (const [k, v] of Object.entries(obj)) {
+                if (k.toLowerCase() === searchKey.toLowerCase() && (typeof v === 'number' || typeof v === 'string')) {
+                    let cleanStr = String(v).replace(/,/g, '');
+                    const num = Number(cleanStr);
+                    if (!isNaN(num)) return num;
+                }
+                if (typeof v === 'object') {
+                    const res = findKeyVal(v, searchKey);
+                    if (res !== null) return res;
+                }
+            }
+            return null;
+        };
 
-        const receipts = incDec?.GrossTotIncome || incDec?.GrossTotalIncome || incDec?.GrossSalary || 0;
-        const totalIncome = incDec?.TotalIncome || 0;
-        const taxPayable = taxComp?.TotalTaxPayable || 0;
+        const receipts = findKeyVal(json, 'GrossTotIncome') 
+                      || findKeyVal(json, 'GrossTotalIncome') 
+                      || findKeyVal(json, 'GrossSalary')
+                      || findKeyVal(json, 'TotalIncome') 
+                      || 0;
+                      
+        const totalIncome = findKeyVal(json, 'TotalIncome') || receipts;
+        const taxPayable = findKeyVal(json, 'TotalTaxPayable') || findKeyVal(json, 'TotalTax') || 0;
         
-        // Approximation of Net Profit if not directly present
         const pat = totalIncome - taxPayable;
+        
+        console.log(`[ITR Debug] FY ${fy} Extracted -> receipts: ${receipts}, totalIncome: ${totalIncome}, taxPayable: ${taxPayable}, pat: ${pat}`);
 
         return { pat, receipts };
     };
@@ -236,12 +253,12 @@ async function initiate(req, res) {
 async function authorise(req, res) {
     try {
         const { reference_id, otp, password } = req.body;
-        
+
         const providerRes = await itrAnalyticsService.submitAuthorisation(reference_id, { otp, password });
 
         await prisma.itrAnalyticsRequest.update({
             where: { reference_id },
-            data: { 
+            data: {
                 status: 'PROCESSING',
                 provider_message: providerRes.messageCode || null
             }
@@ -297,7 +314,7 @@ async function sync(req, res) {
         if (existing.status === 'PROCESSING' || existing.status === 'INITIATED') {
             providerRes = await itrAnalyticsService.fetchItrForm(reference_id);
             analyticsData = providerRes; // The whole result object
-            
+
             // The getitrform API returns PDF URLs inside the result object for each year
             // We'll take the latest available form URL
             const actualData = providerRes.result || providerRes;
