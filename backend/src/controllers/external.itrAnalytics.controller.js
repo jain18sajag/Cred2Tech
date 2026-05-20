@@ -69,17 +69,21 @@ function extractDataFromRawItrJson(apiResponse) {
         financial_year_latest: null, financial_year_previous: null
     };
 
-    if (!apiResponse || !apiResponse.result) return result;
+    if (!apiResponse) return result;
+    
+    // Support both wrapped { result: {...} } and unwrapped payloads
+    const actualData = apiResponse.result || apiResponse;
+    if (typeof actualData !== 'object' || Object.keys(actualData).length === 0) return result;
 
     // Get all FYs and sort descending
-    const fys = Object.keys(apiResponse.result).sort((a, b) => {
+    const fys = Object.keys(actualData).sort((a, b) => {
         const yearA = parseInt(a.split('-')[0]);
         const yearB = parseInt(b.split('-')[0]);
         return yearB - yearA;
     });
 
     const parseFy = (fy) => {
-        const records = apiResponse.result[fy];
+        const records = actualData[fy];
         if (!records || !records.length) return { pat: null, receipts: null };
         
         const record = records[0];
@@ -293,10 +297,12 @@ async function sync(req, res) {
         if (existing.status === 'PROCESSING' || existing.status === 'INITIATED') {
             providerRes = await itrAnalyticsService.fetchItrForm(reference_id);
             analyticsData = providerRes; // The whole result object
+            
             // The getitrform API returns PDF URLs inside the result object for each year
             // We'll take the latest available form URL
-            const fies = Object.keys(providerRes.result || {});
-            if (fies.length > 0) excelUrl = providerRes.result[fies[0]][0]?.form || null;
+            const actualData = providerRes.result || providerRes;
+            const fies = Object.keys(actualData || {});
+            if (fies.length > 0) excelUrl = actualData[fies[0]][0]?.form || null;
         } else {
             providerRes = await itrAnalyticsService.getAnalytics(reference_id);
             excelUrl = providerRes.excelUrl || null;
