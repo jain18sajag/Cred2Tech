@@ -72,7 +72,41 @@ const parameterMasterConfig = [
   { key: 'dbr_rental_bank', label: 'DBR - Rental - Bank Credit - 100%', category: 'DBR/FOIR % Calculation' },
   { key: 'dbr_rental_cash', label: 'DBR - Rental - Cash - 50%', category: 'DBR/FOIR % Calculation' },
   { key: 'dbr_agri_itr', label: 'DBR - Agricultural Income ITR - 100%', category: 'DBR/FOIR % Calculation' },
-  { key: 'existing_obligation', label: 'Existing Obligation', category: 'DBR/FOIR % Calculation' }
+  { key: 'existing_obligation', label: 'Existing Obligation', category: 'DBR/FOIR % Calculation' },
+
+  // New parameters from seed_parameters.js
+  { key: 'min_loan_hl', label: 'Min Loan (HL)', category: 'LOAN RANGE PARAMETERS' },
+  { key: 'max_loan_hl', label: 'Max Loan (HL)', category: 'LOAN RANGE PARAMETERS' },
+  { key: 'min_loan_lap', label: 'Min Loan (LAP)', category: 'LOAN RANGE PARAMETERS' },
+  { key: 'max_loan_lap', label: 'Max Loan (LAP)', category: 'LOAN RANGE PARAMETERS' },
+  { key: 'roi_range_hl', label: 'ROI Range (HL)', category: 'ROI PARAMETERS' },
+  { key: 'roi_range_lap', label: 'ROI Range (LAP)', category: 'ROI PARAMETERS' },
+  { key: 'processing_fee_hl', label: 'Processing Fee (HL)', category: 'PROCESSING FEES' },
+  { key: 'processing_fee_lap', label: 'Processing Fee (LAP)', category: 'PROCESSING FEES' },
+  { key: 'max_tenure_hl', label: 'Max Tenure (HL months)', category: 'TENURE' },
+  { key: 'max_tenure_lap', label: 'Max Tenure (LAP months)', category: 'TENURE' },
+  { key: 'age_income_applicant', label: 'Age Eligibility (Income Applicant)', category: 'AGE ELIGIBILITY' },
+  { key: 'age_non_income_applicant', label: 'Age Eligibility (Non-Income Applicant)', category: 'AGE ELIGIBILITY' },
+  { key: 'min_cibil_score', label: 'Min CIBIL Score', category: 'BUREAU PARAMETERS' },
+  { key: 'bureau_type', label: 'Bureau Preference', category: 'BUREAU PARAMETERS' },
+  { key: 'income_method', label: 'Income Method Rules', category: 'INCOME ELIGIBILITY' },
+  { key: 'foir', label: 'FOIR Slab', category: 'INCOME ELIGIBILITY' },
+  { key: 'insr', label: 'INSR Logic', category: 'INCOME ELIGIBILITY' },
+  { key: 'rental_income_bank', label: 'Rental Income (Banked)', category: 'OTHER INCOME SOURCES' },
+  { key: 'rental_income_cash', label: 'Rental Income (Cash)', category: 'OTHER INCOME SOURCES' },
+  { key: 'agriculture_income', label: 'Agriculture Income', category: 'OTHER INCOME SOURCES' },
+  { key: 'existing_obligation_rule', label: 'Existing Obligation Deductions', category: 'EXISTING OBLIGATION RULE' },
+  { key: 'ltv_residential_self', label: 'Residential Self Occupied', category: 'LAP LTV PARAMETERS' },
+  { key: 'ltv_residential_rented', label: 'Residential Rented', category: 'LAP LTV PARAMETERS' },
+  { key: 'ltv_residential_vacant', label: 'Residential Vacant', category: 'LAP LTV PARAMETERS' },
+  { key: 'ltv_commercial_self', label: 'Commercial Self Occupied', category: 'LAP LTV PARAMETERS' },
+  { key: 'ltv_commercial_rented', label: 'Commercial Rented', category: 'LAP LTV PARAMETERS' },
+  { key: 'ltv_commercial_vacant', label: 'Commercial Vacant', category: 'LAP LTV PARAMETERS' },
+  { key: 'ltv_industrial_self', label: 'Industrial Self Occupied', category: 'LAP LTV PARAMETERS' },
+  { key: 'ltv_industrial_rented', label: 'Industrial Rented', category: 'LAP LTV PARAMETERS' },
+  { key: 'ltv_plot_property', label: 'Plot Property', category: 'LAP LTV PARAMETERS' },
+  { key: 'ltv_special_property', label: 'Special Property', category: 'LAP LTV PARAMETERS' },
+  { key: 'hl_ltv_30_to_75', label: 'LTV > 30L & <= 75L', category: 'HL LTV PARAMETERS' }
 ];
 
 const schemeMapping = {
