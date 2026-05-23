@@ -146,6 +146,7 @@ async function ingestFromUrl({
     uploadedByUserId = null,
     originalFileName = null,
     metadata = null,
+    headers = null,
 }) {
     // 1. SSRF / URL validation
     validateVendorUrl(vendorUrl);
@@ -155,13 +156,21 @@ async function ingestFromUrl({
 
     // 2. Download with strict limits
     try {
-        const response = await axios.get(vendorUrl, {
+        const axiosConfig = {
             responseType: 'arraybuffer',
             timeout: 30000,                          // 30s timeout
             maxRedirects: 3,
             maxContentLength: MAX_FILE_SIZE_BYTES,
             maxBodyLength: MAX_FILE_SIZE_BYTES,
-        });
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+        };
+        if (headers) {
+            axiosConfig.headers = { ...axiosConfig.headers, ...headers };
+        }
+
+        const response = await axios.get(vendorUrl, axiosConfig);
 
         buffer = Buffer.from(response.data);
         detectedMime = response.headers['content-type'] || 'application/octet-stream';

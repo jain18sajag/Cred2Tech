@@ -24,6 +24,12 @@ export const ROLES = {
     bg: 'var(--role-dsa-member-bg)',
     description: 'Field employee within a DSA hierarchy',
   },
+  SUB_DSA: {
+    name: 'Sub-DSA Partner',
+    color: '#7C3AED',
+    bg: '#EDE9FE',
+    description: 'External partner agent with commission-based payout',
+  },
 };
 
 // Role options for the Create User form (role_id mapped to internal name)
@@ -32,6 +38,7 @@ export const ROLE_OPTIONS = [
   { label: 'Cred2Tech Member', value: 'CRED2TECH_MEMBER' },
   { label: 'DSA Admin', value: 'DSA_ADMIN' },
   { label: 'DSA Member', value: 'DSA_MEMBER' },
+  { label: 'Sub-DSA Partner', value: 'SUB_DSA' },
 ];
 
 export const TENANT_TYPES = ['CRED2TECH', 'DSA'];

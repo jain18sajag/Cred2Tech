@@ -1,5 +1,6 @@
 const prisma = require('../../config/db');
 const caseService = require('./case.service');
+const { processDisbursementCommission } = require('./commission/commissionLedger.service');
 const { Decimal } = require('@prisma/client');
 
 /**
@@ -130,8 +131,8 @@ async function recordDisbursement(caseId, tenantId, payload, userId, idempotency
             }
         });
 
-        // TODO: emit DISBURSEMENT_CREATED for commission engine later
-        console.log(`[HOOK] DISBURSEMENT_CREATED event placeholder for case ${caseId}`);
+        // 9. Synchronous Commission Execution
+        await processDisbursementCommission(tenantId, caseId, disbursement, sanction, userId, tx);
 
         return disbursement;
     });

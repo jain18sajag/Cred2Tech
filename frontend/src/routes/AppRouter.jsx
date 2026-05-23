@@ -37,6 +37,10 @@ const DSALenderContactsPage = lazy(() => import('../pages/DSALenderContactsPage'
 const CaseDetailPage = lazy(() => import('../pages/CaseDetailPage'));
 const PartDisbursementPage = lazy(() => import('../pages/PartDisbursementPage'));
 const PddManagementPage = lazy(() => import('../pages/PddManagementPage'));
+const SalesIncentivePage = lazy(() => import('../pages/SalesIncentivePage'));
+const LenderCommissionPage = lazy(() => import('../pages/LenderCommissionPage'));
+const SubDsaPayoutPage = lazy(() => import('../pages/SubDsaPayoutPage'));
+const DsaTeamManagementPage = lazy(() => import('../pages/DsaTeamManagementPage'));
 
 const PageLoader = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -206,7 +210,38 @@ const AppRouter = () => (
                 </ProtectedRoute>
               }
             />
-
+            <Route
+              path="/financials/sales-incentive"
+              element={
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER']}>
+                  <SalesIncentivePage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/financials/lender-commission"
+              element={
+                <ProtectedRoute allowedRoles={['DSA_ADMIN']}>
+                  <LenderCommissionPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/financials/sub-dsa-payout"
+              element={
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'SUB_DSA']}>
+                  <SubDsaPayoutPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/team-management"
+              element={
+                <ProtectedRoute allowedRoles={['DSA_ADMIN']}>
+                  <DsaTeamManagementPage />
+                </ProtectedRoute>
+              }
+            />
 
           </Route>
 

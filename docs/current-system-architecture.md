@@ -229,6 +229,32 @@ $$\text{APPROVED} \longrightarrow \text{PARTLY\_DISBURSED} \longrightarrow \text
 
 ---
 
+### 5.3. Commission Ledger & Reversal Engine
+
+Cred2Tech features a robust, historically immutable, append-only `CommissionLedger` system to track DSA partner earnings and employee payouts.
+
+```mermaid
+graph TD
+    Disb[Record Disbursement] -->|Trigger| CommRule{Find Active Lender Rule}
+    CommRule -->|Found & Mapped| Calc[Calculate Commission Slab Snapshot]
+    Calc -->|Write Ledger| Base[Create BASE_COMMISSION Entry +Amt]
+    
+    Rev[Revert Disbursement] -->|Trigger| FindBase{Find Original Entry}
+    FindBase -->|Status PENDING| CreateRev[Create REVERSAL Entry -Amt]
+    FindBase -->|Status PAID/INVOICED| Block[Block Auto-Reversal / Credit Note Needed]
+    
+    CreateRev -->|Link| SetOrig[Mark is_reversed = true on Base]
+```
+
+*   **Immutable Ledger Design:** Commission records are never mutated or deleted. Instead, the platform relies on an append-only architecture:
+    *   **`BASE_COMMISSION`:** Created automatically upon a tranche disbursement. Reflects a positive commission value based on immutable snapshots of active lender commission slabs.
+    *   **`REVERSAL`:** Created when a disbursement tranche is rolled back. Houses a negative commission value, links back to the original entry via `reversal_of_id`, and marks the original entry's `is_reversed` flag to `true` with reversal timestamps.
+    *   **Status Protection:** Automatic reversals are strictly blocked if the original entry has already progressed to `INVOICED`, `PAID`, or `RECONCILED` status. Such cases are flagged for manual Credit Note intervention.
+*   **Security & Tenant Isolation:** Ledger queries and updates strictly validate `{ tenant_id: req.user.tenant_id }` and enforce tree-level visibility using `hierarchy_path` so that DSA managers only view subtree payouts.
+*   **Sales Incentive Dashboard:** An operational financials view groups active commission records by the case owner (`case_entity.created_by_user_id`), dynamically aggregates net payouts, and filters cases based on dynamic ledger creation dates.
+
+---
+
 ## 6. Architecture Status & Future Extensions
 
 Cred2Tech has matured from a simple "data pulling engine" into an integrated CRM and loan management platform.
@@ -237,8 +263,8 @@ Cred2Tech has matured from a simple "data pulling engine" into an integrated CRM
 *   **Automated Eligibility:** Parametric evaluation of applications across multiple lenders in real-time.
 *   **Reliability:** Strict multi-tenant isolation, automated data cleaning, name-splitting compliance, and mock fallback engines.
 *   **Complete Lifecycle Support:** End-to-end flow from initial lead generation to multi-tranche post-sanction disbursements.
+*   **Immutable Commission Ledger:** Resilient transactional commission calculations with automated ledger generation, positive/negative reversals, and manager hierarchy-tree reporting visibility.
 
 ### 6.2. Future Roadmap
-*   **Automated Commissions:** Dynamic payout settlement rules for sub-DSAs and agents.
-*   **Integrated Invoicing:** Automatic invoice generation for lenders and partners.
+*   **Integrated Invoicing:** Automatic invoice generation for lenders and partners based on the compiled ledger.
 *   **Tenant Wallet Auto-topups:** Secure payment gateway integration for automated credit purchasing.

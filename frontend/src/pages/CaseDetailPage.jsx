@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { caseService } from '../api/caseService';
 import { toast } from 'react-hot-toast';
+import { getTenantLenders } from '../api/tenantLenderService';
 import { 
   ArrowLeft, 
   ExternalLink, 
@@ -72,6 +73,7 @@ export default function CaseDetailPage() {
   const [showStageModal, setShowStageModal] = useState(false);
   const [selectedStage, setSelectedStage] = useState('');
   const [disbursementSummary, setDisbursementSummary] = useState(null);
+  const [tenantLenders, setTenantLenders] = useState([]);
   
   const { hasRole } = useAuth();
   const [rollbackReason, setRollbackReason] = useState('');
@@ -86,7 +88,8 @@ export default function CaseDetailPage() {
     processing_fee: '',
     remarks: '',
     lender_name: '',
-    product_type: ''
+    product_type: '',
+    tenant_lender_id: ''
   });
 
   // Disbursement Form State
@@ -112,7 +115,8 @@ export default function CaseDetailPage() {
           processing_fee: data.sanction.processing_fee || '',
           remarks: data.sanction.remarks || '',
           lender_name: data.sanction.lender_name || '',
-          product_type: data.sanction.product_type || ''
+          product_type: data.sanction.product_type || '',
+          tenant_lender_id: data.sanction.tenant_lender_id || ''
         });
       }
     } catch (err) {
@@ -125,6 +129,14 @@ export default function CaseDetailPage() {
       setLoading(true);
       const data = await caseService.getCaseById(id);
       setCaseData(data);
+      if (data && !disbursementSummary?.sanction) {
+        setSanctionForm(prev => ({
+          ...prev,
+          lender_name: prev.lender_name || data.lender_name || '',
+          product_type: prev.product_type || data.product_type || '',
+          tenant_lender_id: prev.tenant_lender_id || data.tenant_lender_id || ''
+        }));
+      }
     } catch (error) {
       toast.error('Failed to load case details');
       console.error(error);
@@ -135,6 +147,7 @@ export default function CaseDetailPage() {
 
   useEffect(() => {
     fetchCase();
+    getTenantLenders().then(d => setTenantLenders(d.filter(l => l.is_active))).catch(console.error);
   }, [fetchCase]);
 
   const handleFetchBureau = async () => {
@@ -692,13 +705,24 @@ export default function CaseDetailPage() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                     <div>
                       <label style={{ display: 'block', fontSize: 11, color: '#64748B', marginBottom: 4 }}>Lender Name</label>
-                      <input 
-                        type="text" 
-                        value={sanctionForm.lender_name}
+                      <select 
+                        value={sanctionForm.tenant_lender_id || ''}
                         disabled={disbursementSummary?.summary?.is_locked}
-                        onChange={(e) => setSanctionForm({...sanctionForm, lender_name: e.target.value})}
-                        style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #CBD5E1' }}
-                      />
+                        onChange={(e) => {
+                          const selected = tenantLenders.find(l => String(l.id) === e.target.value);
+                          setSanctionForm({
+                            ...sanctionForm, 
+                            tenant_lender_id: e.target.value,
+                            lender_name: selected ? selected.lender_name : ''
+                          });
+                        }}
+                        style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #CBD5E1', background: '#fff' }}
+                      >
+                        <option value="">— Select Lender —</option>
+                        {tenantLenders.map(l => (
+                          <option key={l.id} value={l.id}>{l.lender_name}</option>
+                        ))}
+                      </select>
                     </div>
                     <div>
                       <label style={{ display: 'block', fontSize: 11, color: '#64748B', marginBottom: 4 }}>Product Type</label>

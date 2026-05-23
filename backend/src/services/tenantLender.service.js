@@ -6,17 +6,25 @@ const prisma = require('../../config/db');
 
 // ── List tenant's configured lenders (with their contacts) ───────────────────
 async function listTenantLenders(tenantId) {
-  // 1. Fetch all active platform lenders
-  const platformLenders = await prisma.$queryRawUnsafe(`
-    SELECT id as platform_lender_id, name as lender_name, code
+  // 1. Auto-provision all active platform lenders into tenant_lenders
+  await prisma.$executeRawUnsafe(`
+    INSERT INTO tenant_lenders (tenant_id, lender_name, platform_lender_id, is_active, is_esr_enabled, created_at, updated_at)
+    SELECT $1, name, id::text, true, true, NOW(), NOW()
     FROM lenders
-    WHERE status = 'ACTIVE'
-  `);
+    WHERE status = 'ACTIVE' 
+      AND NOT EXISTS (
+        SELECT 1 FROM tenant_lenders tl 
+        WHERE tl.tenant_id = $1 AND tl.platform_lender_id = lenders.id::text
+      )
+  `, tenantId);
 
-  // 2. Fetch all tenant lenders (overrides and custom)
+  // 2. Fetch all tenant lenders
   const tenantLenders = await prisma.$queryRawUnsafe(`
-    SELECT * FROM tenant_lenders
-    WHERE tenant_id = $1
+    SELECT tl.*, l.code
+    FROM tenant_lenders tl
+    LEFT JOIN lenders l ON l.id::text = tl.platform_lender_id
+    WHERE tl.tenant_id = $1
+    ORDER BY tl.lender_name ASC
   `, tenantId);
 
   // 3. Fetch all contacts for the tenant
@@ -26,40 +34,19 @@ async function listTenantLenders(tenantId) {
     ORDER BY product_type ASC, is_primary DESC, created_at ASC
   `, tenantId);
 
-  const result = [];
+  // 4. Map contacts
+  const result = tenantLenders.map(tl => ({
+    id: tl.id,
+    tenant_lender_id: tl.id,
+    platform_lender_id: tl.platform_lender_id,
+    lender_name: tl.lender_name,
+    code: tl.code,
+    is_active: tl.is_active,
+    is_esr_enabled: tl.is_esr_enabled,
+    source: tl.platform_lender_id ? 'PLATFORM' : 'CUSTOM',
+    contacts: contacts.filter(c => c.tenant_lender_id === tl.id)
+  }));
 
-  // Map platform lenders to overrides
-  for (const pl of platformLenders) {
-    const override = tenantLenders.find(t => t.platform_lender_id === pl.platform_lender_id);
-    result.push({
-      id: override ? override.id : `global_${pl.platform_lender_id}`,
-      tenant_lender_id: override ? override.id : null,
-      platform_lender_id: pl.platform_lender_id,
-      lender_name: pl.lender_name,
-      code: pl.code,
-      source: override ? 'OVERRIDE' : 'GLOBAL',
-      is_active: override ? override.is_active : true,
-      is_esr_enabled: override ? override.is_esr_enabled : false,
-      contacts: override ? contacts.filter(c => c.tenant_lender_id === override.id) : [],
-    });
-  }
-
-  // Add custom lenders (no platform_lender_id)
-  for (const tl of tenantLenders.filter(t => !t.platform_lender_id)) {
-    result.push({
-      id: tl.id,
-      tenant_lender_id: tl.id,
-      platform_lender_id: null,
-      lender_name: tl.lender_name,
-      code: null,
-      source: 'CUSTOM',
-      is_active: tl.is_active,
-      is_esr_enabled: tl.is_esr_enabled,
-      contacts: contacts.filter(c => c.tenant_lender_id === tl.id),
-    });
-  }
-
-  result.sort((a, b) => a.lender_name.localeCompare(b.lender_name));
   return result;
 }
 

@@ -1,4 +1,5 @@
 const prisma = require('../../config/db');
+const { normalizeParameter, isCriticalParameter } = require('../utils/esrParsers');
 
 // --- Lenders ---
 exports.getLenders = async (req, res) => {
@@ -252,15 +253,48 @@ exports.updateSchemeParameter = async (req, res) => {
     const scheme_id = parseInt(req.params.id, 10);
     const { parameter_id, value } = req.body;
     
-    // value must be explicitly JSON format as per schema enforcement.
+    if (isNaN(scheme_id) || isNaN(parseInt(parameter_id, 10))) {
+        return res.status(400).json({ error: 'Invalid scheme_id or parameter_id' });
+    }
+
+    // Validation Layer (Phase 1 Safe Normalization)
+    const paramMaster = await prisma.parameterMaster.findUnique({
+      where: { id: parseInt(parameter_id, 10) }
+    });
+    
+    if (!paramMaster) return res.status(404).json({ error: 'Parameter not found' });
+
+    const rawVal = value?.raw ?? value?.value ?? value;
+    
+    let normalizedPayload;
+    try {
+        normalizedPayload = normalizeParameter(paramMaster.parameter_key, rawVal);
+    } catch (error) {
+        return res.status(400).json({ error: `Normalization error: ${error.message}` });
+    }
+
+    if (isCriticalParameter(paramMaster.parameter_key)) {
+        if (normalizedPayload.type === 'unsupported_rule' || 
+            normalizedPayload.error || 
+            (normalizedPayload.normalized === null && normalizedPayload.type !== 'no_cap') ||
+            normalizedPayload.normalized === undefined) {
+            return res.status(400).json({ error: `Validation Failed for ${paramMaster.parameter_key}: ${normalizedPayload.error || 'Ambiguous format'}` });
+        }
+    }
+    
+    // Save normalized wrapper to JSON column
     const record = await prisma.schemeParameterValue.upsert({
       where: { scheme_id_parameter_id: { scheme_id, parameter_id: parseInt(parameter_id, 10) } },
-      update: { value, updated_by: req.user.id },
-      create: { scheme_id, parameter_id: parseInt(parameter_id, 10), value, created_by: req.user.id }
+      update: { value: normalizedPayload, updated_by: req.user.id },
+      create: { scheme_id, parameter_id: parseInt(parameter_id, 10), value: normalizedPayload, created_by: req.user.id }
     });
+
+    if (normalizedPayload.type === 'unsupported_rule' && !isCriticalParameter(paramMaster.parameter_key)) {
+        record._warning = 'Saved unsupported rule for non-critical parameter.';
+    }
+
     res.json(record);
   } catch (error) {
-    console.error(error);
     res.status(500).json({ error: 'Failed to update matrix value' });
   }
 };

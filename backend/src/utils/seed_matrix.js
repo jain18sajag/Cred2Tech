@@ -194,8 +194,9 @@ async function seedDataMatrix() {
       paramKeyMap[p.parameter_key] = p.id;
     }
 
-    // 2. Insert Values
-    // Fetch all required schemes
+    // 2. Insert Values (SEED-ONLY: only insert if no value exists yet)
+    // ⚠️  DO NOT change this to upsert/update — the update scripts store
+    //    normalized JSON payloads that must not be overwritten on restart.
     const lenders = ['ICICI', 'HDFC'];
     const products = ['HL', 'LAP'];
 
@@ -218,6 +219,13 @@ async function seedDataMatrix() {
 
           if (!schemeObj) continue;
 
+          // Load existing parameter IDs that already have a value for this scheme
+          const existingRows = await prisma.schemeParameterValue.findMany({
+            where: { scheme_id: schemeObj.id },
+            select: { parameter_id: true }
+          });
+          const existingParamIds = new Set(existingRows.map(r => r.parameter_id));
+
           const mappedPrefix = schemeMapping[schemeName];
 
           for (const [paramKey, rule] of Object.entries(dataSet)) {
@@ -227,17 +235,11 @@ async function seedDataMatrix() {
             const pId = paramKeyMap[paramKey];
             if (!pId) continue;
 
-            await prisma.schemeParameterValue.upsert({
-              where: {
-                scheme_id_parameter_id: {
-                  scheme_id: schemeObj.id,
-                  parameter_id: pId
-                }
-              },
-              update: {
-                value: val
-              },
-              create: {
+            // ✅ Only insert if this parameter does not yet have a value — never overwrite
+            if (existingParamIds.has(pId)) continue;
+
+            await prisma.schemeParameterValue.create({
+              data: {
                 scheme_id: schemeObj.id,
                 parameter_id: pId,
                 value: val

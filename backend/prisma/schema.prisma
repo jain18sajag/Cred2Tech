@@ -33,18 +33,18 @@ model Role {
 }
 
 model Tenant {
-  id           Int          @id @default(autoincrement())
-  name         String
-  email        String       @unique
-  mobile       String?
-  type         TenantType
-  status       TenantStatus @default(ACTIVE)
-  created_at   DateTime     @default(now())
-  updated_at   DateTime     @updatedAt
-  
+  id         Int          @id @default(autoincrement())
+  name       String
+  email      String       @unique
+  mobile     String?
+  type       TenantType
+  status     TenantStatus @default(ACTIVE)
+  created_at DateTime     @default(now())
+  updated_at DateTime     @updatedAt
+
   // Audit tracking fields
-  created_by   Int?
-  updated_by   Int?
+  created_by Int?
+  updated_by Int?
 
   // Compliance metadata fields
   pan_number   String?
@@ -54,10 +54,10 @@ model Tenant {
   city         String?
   pincode      String?
 
-  users        User[]
-  customers    Customer[]
-  cases        Case[]
-  otps         OtpVerification[]
+  users                 User[]
+  customers             Customer[]
+  cases                 Case[]
+  otps                  OtpVerification[]
   wallet                TenantWallet?
   transactions          WalletTransaction[]
   api_logs              ApiUsageLog[]
@@ -72,9 +72,13 @@ model Tenant {
   eligibility_reports   EligibilityReport[]
   proposals             Proposal[]
   sanctions             CaseSanction[]
-  disbursements        Disbursement[]
+  disbursements         Disbursement[]
   pdd_tasks             PDDTask[]
   salary_ocr_results    SalarySlipOcrResult[]
+  commission_ledgers    CommissionLedger[]
+  SubDsaPayoutRule      SubDsaPayoutRule[]
+  SubDsaPayoutLedger    SubDsaPayoutLedger[]
+  SubDsaInvoice         SubDsaInvoice[]
 
   @@map("tenants")
 }
@@ -95,26 +99,29 @@ model User {
   created_at      DateTime   @default(now())
   updated_at      DateTime   @updatedAt
 
-  created_by      Int?
-  updated_by      Int?
-  last_login_at   DateTime?
+  created_by    Int?
+  updated_by    Int?
+  last_login_at DateTime?
 
-  role            Role       @relation(fields: [role_id], references: [id])
-  tenant          Tenant     @relation(fields: [tenant_id], references: [id])
-  manager         User?      @relation("UserToManager", fields: [manager_id], references: [id])
-  subordinates    User[]     @relation("UserToManager")
+  role         Role   @relation(fields: [role_id], references: [id])
+  tenant       Tenant @relation(fields: [tenant_id], references: [id])
+  manager      User?  @relation("UserToManager", fields: [manager_id], references: [id])
+  subordinates User[] @relation("UserToManager")
+
+  created_customers   Customer[]            @relation("CustomerCreator")
+  created_cases       Case[]                @relation("CaseCreator")
+  created_otps        OtpVerification[]     @relation("OtpCreator")
+  api_logs            ApiUsageLog[]
+  activity_logs       ActivityLog[]
+  audit_logs          AuditLog[]
+  stage_history       CaseStageHistory[]
+  SubDsaPayoutRule    SubDsaPayoutRule?
+  SubDsaPayoutLedger  SubDsaPayoutLedger[]
+  SubDsaInvoice       SubDsaInvoice[]
+  SubDsaPayoutHistory SubDsaPayoutHistory[]
 
   @@index([tenant_id])
   @@index([manager_id])
-
-  created_customers Customer[] @relation("CustomerCreator")
-  created_cases     Case[]            @relation("CaseCreator")
-  created_otps      OtpVerification[] @relation("OtpCreator")
-  api_logs          ApiUsageLog[]
-  activity_logs     ActivityLog[]
-  audit_logs        AuditLog[]
-  stage_history     CaseStageHistory[]
-
   @@map("users")
 }
 
@@ -126,34 +133,34 @@ enum CustomerCategory {
 }
 
 model Customer {
-  id                 Int       @id @default(autoincrement())
-  tenant_id          Int
-  category           CustomerCategory @default(MSME)
-  business_pan       String
-  business_name      String?
-  business_mobile    String?
-  business_email     String?
-  entity_type        String?
-  industry           String?
-  business_vintage   String?
-  mobile_verified    Boolean   @default(false)
-  created_at         DateTime  @default(now())
-  updated_at         DateTime  @updatedAt
+  id               Int              @id @default(autoincrement())
+  tenant_id        Int
+  category         CustomerCategory @default(MSME)
+  business_pan     String
+  business_name    String?
+  business_mobile  String?
+  business_email   String?
+  entity_type      String?
+  industry         String?
+  business_vintage String?
+  mobile_verified  Boolean          @default(false)
+  created_at       DateTime         @default(now())
+  updated_at       DateTime         @updatedAt
 
   created_by_user_id Int
 
-  tenant         Tenant        @relation(fields: [tenant_id], references: [id])
-  created_by     User          @relation("CustomerCreator", fields: [created_by_user_id], references: [id])
-  cases          Case[]
-  api_logs       ApiUsageLog[]
-  activity_logs  ActivityLog[]
-  consents       CustomerConsent[]
-  gst_profiles    CustomerGSTProfile[]
-  pan_profiles    CustomerPanProfile[]
-  gst_requests    GstrAnalyticsRequest[]
-  bank_statements BankStatementAnalysisRequest[]
-  itr_analytics   ItrAnalyticsRequest[]
-  documents       Document[]
+  tenant             Tenant                         @relation(fields: [tenant_id], references: [id])
+  created_by         User                           @relation("CustomerCreator", fields: [created_by_user_id], references: [id])
+  cases              Case[]
+  api_logs           ApiUsageLog[]
+  activity_logs      ActivityLog[]
+  consents           CustomerConsent[]
+  gst_profiles       CustomerGSTProfile[]
+  pan_profiles       CustomerPanProfile[]
+  gst_requests       GstrAnalyticsRequest[]
+  bank_statements    BankStatementAnalysisRequest[]
+  itr_analytics      ItrAnalyticsRequest[]
+  documents          Document[]
   salary_ocr_results SalarySlipOcrResult[]
 
   @@unique([tenant_id, business_pan])
@@ -161,41 +168,41 @@ model Customer {
 }
 
 model CustomerPanProfile {
-  id                        Int       @id @default(autoincrement())
-  customer_id               Int
-  pan                       String    @unique
-  gstin                     String?
-  constitution_of_business  String?
-  legal_name                String?
-  trade_name                String?
-  principal_state           String?
-  principal_city            String?
-  principal_pincode         String?
-  principal_address         String?
-  director_names            Json?
-  annual_turnover_range     String?
-  turnover_min              Float?
-  turnover_max              Float?
-  gross_total_income        String?
-  income_financial_year     String?
-  raw_response              Json
-  created_at                DateTime  @default(now())
+  id                       Int      @id @default(autoincrement())
+  customer_id              Int
+  pan                      String   @unique
+  gstin                    String?
+  constitution_of_business String?
+  legal_name               String?
+  trade_name               String?
+  principal_state          String?
+  principal_city           String?
+  principal_pincode        String?
+  principal_address        String?
+  director_names           Json?
+  annual_turnover_range    String?
+  turnover_min             Float?
+  turnover_max             Float?
+  gross_total_income       String?
+  income_financial_year    String?
+  raw_response             Json
+  created_at               DateTime @default(now())
 
-  customer                  Customer  @relation(fields: [customer_id], references: [id])
-  gstin_records             CustomerPanGstinRecord[]
+  customer      Customer                 @relation(fields: [customer_id], references: [id])
+  gstin_records CustomerPanGstinRecord[]
 
   @@map("customer_pan_profiles")
 }
 
 model CustomerPanGstinRecord {
-  id                Int       @id @default(autoincrement())
+  id                Int      @id @default(autoincrement())
   pan_profile_id    Int
   gstin             String
   registration_name String?
   status            String?
-  created_at        DateTime  @default(now())
+  created_at        DateTime @default(now())
 
-  pan_profile       CustomerPanProfile @relation(fields: [pan_profile_id], references: [id])
+  pan_profile CustomerPanProfile @relation(fields: [pan_profile_id], references: [id])
 
   @@map("customer_pan_gstin_records")
 }
@@ -216,39 +223,39 @@ enum CaseStage {
 }
 
 model Case {
-  id                 Int       @id @default(autoincrement())
-  tenant_id          Int
-  customer_id        Int
-  product_type       String?   // LAP, HL, WC, TL, ML, BL, Other
-  loan_amount        Float?
-  lender_name        String?   // DEPRECATED: use case_lender_selections (Phase 2)
-  property_type      String?   // DEPRECATED: use case_property_details
-  occupancy          String?   // DEPRECATED: use case_property_details
-  property_value     Float?    // DEPRECATED: use case_property_details
-  location           String?   // DEPRECATED: use case_property_details
-  ltv_ratio          Float?    // DEPRECATED: computed during ESR
-  dsa_notes          String?
-  esr_generated      Boolean   @default(false)  // NEW Phase 1
-  stage              CaseStage @default(DRAFT)
-  
+  id             Int       @id @default(autoincrement())
+  tenant_id      Int
+  customer_id    Int
+  product_type   String? // LAP, HL, WC, TL, ML, BL, Other
+  loan_amount    Float?
+  lender_name    String? // DEPRECATED: use case_lender_selections (Phase 2)
+  property_type  String? // DEPRECATED: use case_property_details
+  occupancy      String? // DEPRECATED: use case_property_details
+  property_value Float? // DEPRECATED: use case_property_details
+  location       String? // DEPRECATED: use case_property_details
+  ltv_ratio      Float? // DEPRECATED: computed during ESR
+  dsa_notes      String?
+  esr_generated  Boolean   @default(false) // NEW Phase 1
+  stage          CaseStage @default(DRAFT)
+
   // Pipeline Snapshot Fields (Performance Design)
-  customer_name      String?
-  entity_type        String?
-  cibil_score        Int?
-  alert_flag         String?
-  lead_date          DateTime  @default(now())
-  is_locked          Boolean   @default(false)
+  customer_name String?
+  entity_type   String?
+  cibil_score   Int?
+  alert_flag    String?
+  lead_date     DateTime @default(now())
+  is_locked     Boolean  @default(false)
 
   // Financial Summary Snapshot (Source of Truth is Disbursement table)
   sanctioned_amount             Decimal?  @db.Decimal(18, 2)
-  total_disbursed_amount        Decimal?  @db.Decimal(18, 2) @default(0)
-  remaining_disbursement_amount Decimal?  @db.Decimal(18, 2) @default(0)
+  total_disbursed_amount        Decimal?  @default(0) @db.Decimal(18, 2)
+  remaining_disbursement_amount Decimal?  @default(0) @db.Decimal(18, 2)
   first_disbursement_date       DateTime?
   last_disbursement_date        DateTime?
 
-  created_at         DateTime  @default(now())
-  updated_at         DateTime  @updatedAt
-  proposal_sent_at   DateTime?
+  created_at               DateTime  @default(now())
+  updated_at               DateTime  @updatedAt
+  proposal_sent_at         DateTime?
   proposal_sent_by_user_id Int?
 
   created_by_user_id Int
@@ -262,13 +269,13 @@ model Case {
   contact_name       String?
   contact_email      String?
   contact_mobile     String?
-  is_cloned_snapshot Boolean   @default(false)
+  is_cloned_snapshot Boolean @default(false)
 
-  tenant           Tenant                        @relation(fields: [tenant_id], references: [id])
-  customer         Customer                      @relation(fields: [customer_id], references: [id])
-  created_by       User                          @relation("CaseCreator", fields: [created_by_user_id], references: [id])
-  parent_case      Case?                         @relation("ParentChildCase", fields: [parent_case_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  child_cases      Case[]                        @relation("ParentChildCase")
+  tenant           Tenant                         @relation(fields: [tenant_id], references: [id])
+  customer         Customer                       @relation(fields: [customer_id], references: [id])
+  created_by       User                           @relation("CaseCreator", fields: [created_by_user_id], references: [id])
+  parent_case      Case?                          @relation("ParentChildCase", fields: [parent_case_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  child_cases      Case[]                         @relation("ParentChildCase")
   applicants       Applicant[]
   api_logs         ApiUsageLog[]
   activity_logs    ActivityLog[]
@@ -289,10 +296,12 @@ model Case {
   proposals        Proposal[]
 
   // Sanction & Disbursement
-  sanction         CaseSanction?
-  disbursements    Disbursement[]
-  pdd_tasks        PDDTask[]
+  sanction           CaseSanction?
+  disbursements      Disbursement[]
+  pdd_tasks          PDDTask[]
   salary_ocr_results SalarySlipOcrResult[]
+  commission_ledgers CommissionLedger[]
+  SubDsaPayoutLedger SubDsaPayoutLedger[]
 
   @@index([tenant_id, stage])
   @@index([tenant_id, lender_name])
@@ -312,33 +321,33 @@ enum EmploymentType {
 }
 
 model Applicant {
-  id             Int           @id @default(autoincrement())
-  case_id        Int
-  type           ApplicantType
-  employment_type EmploymentType @default(NA)
-  name           String?       // Phase 1: display name for bureau/income pages
-  pan_number     String?
-  mobile         String?
-  email          String?
-  cibil_score    Int?
-  emi            Float?        // DEPRECATED: use sum of CaseCreditObligation.emi_per_month
-  is_primary     Boolean       @default(false)
-  otp_verified   Boolean       @default(false)
-  bureau_fetched Boolean       @default(false)
-  created_at     DateTime      @default(now())
-  updated_at     DateTime      @updatedAt
-  source_applicant_id Int?     // To map parent applicant to child applicant
-  
-  case            Case                         @relation(fields: [case_id], references: [id], onDelete: Cascade)
-  bank_statements BankStatementAnalysisRequest[]
-  itr_analytics   ItrAnalyticsRequest[]
-  gstr_analytics  GstrAnalyticsRequest[]
-  bureau_checks   BureauVerification[]
-  documents       Document[]
+  id                  Int            @id @default(autoincrement())
+  case_id             Int
+  type                ApplicantType
+  employment_type     EmploymentType @default(NA)
+  name                String? // Phase 1: display name for bureau/income pages
+  pan_number          String?
+  mobile              String?
+  email               String?
+  cibil_score         Int?
+  emi                 Float? // DEPRECATED: use sum of CaseCreditObligation.emi_per_month
+  is_primary          Boolean        @default(false)
+  otp_verified        Boolean        @default(false)
+  bureau_fetched      Boolean        @default(false)
+  created_at          DateTime       @default(now())
+  updated_at          DateTime       @updatedAt
+  source_applicant_id Int? // To map parent applicant to child applicant
+
+  case               Case                           @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  bank_statements    BankStatementAnalysisRequest[]
+  itr_analytics      ItrAnalyticsRequest[]
+  gstr_analytics     GstrAnalyticsRequest[]
+  bureau_checks      BureauVerification[]
+  documents          Document[]
   salary_ocr_results SalarySlipOcrResult[]
   // Phase 1 relations
-  income_entries  CaseIncomeEntry[]
-  obligations     CaseCreditObligation[]
+  income_entries     CaseIncomeEntry[]
+  obligations        CaseCreditObligation[]
 
   @@map("applicants")
 }
@@ -362,16 +371,16 @@ model ActivityLog {
 }
 
 model CaseStageHistory {
-  id           Int       @id @default(autoincrement())
-  case_id      Int
-  tenant_id    Int
-  old_stage    CaseStage
-  new_stage    CaseStage
-  changed_by   Int?
-  changed_at   DateTime  @default(now())
+  id         Int       @id @default(autoincrement())
+  case_id    Int
+  tenant_id  Int
+  old_stage  CaseStage
+  new_stage  CaseStage
+  changed_by Int?
+  changed_at DateTime  @default(now())
 
-  case         Case      @relation(fields: [case_id], references: [id])
-  user         User?     @relation(fields: [changed_by], references: [id])
+  case Case  @relation(fields: [case_id], references: [id])
+  user User? @relation(fields: [changed_by], references: [id])
 
   @@index([case_id])
   @@index([tenant_id])
@@ -402,9 +411,9 @@ model OtpVerification {
   attempt_count      Int           @default(0)
   created_at         DateTime      @default(now())
   verified_at        DateTime?
-  
-  tenant             Tenant        @relation(fields: [tenant_id], references: [id])
-  created_by         User          @relation("OtpCreator", fields: [created_by_user_id], references: [id])
+
+  tenant     Tenant @relation(fields: [tenant_id], references: [id])
+  created_by User   @relation("OtpCreator", fields: [created_by_user_id], references: [id])
 
   @@index([tenant_id, target_type, target_id])
   @@index([mobile])
@@ -445,8 +454,8 @@ model TenantApiPricingOverride {
   api_code           String
   custom_credit_cost Int
   created_at         DateTime @default(now())
-  
-  tenant             Tenant   @relation(fields: [tenant_id], references: [id])
+
+  tenant Tenant @relation(fields: [tenant_id], references: [id])
 
   @@unique([tenant_id, api_code])
   @@map("tenant_api_pricing_overrides")
@@ -529,9 +538,9 @@ model ApiUsageLog {
   customer    Customer @relation(fields: [customer_id], references: [id])
   case_entity Case?    @relation(fields: [case_id], references: [id])
 
+  @@unique([tenant_id, api_code, idempotency_key])
   @@index([tenant_id, api_code])
   @@index([customer_id])
-  @@unique([tenant_id, api_code, idempotency_key])
   @@map("api_usage_logs")
 }
 
@@ -571,15 +580,15 @@ model CustomerConsent {
 }
 
 model CustomerGSTProfile {
-  id                 Int      @id @default(autoincrement())
-  customer_id        Int
-  gstin              String
-  filing_status      String
-  last_filed_period  String
-  annual_turnover    Float
-  raw_response       Json
-  created_at         DateTime @default(now())
-  updated_at         DateTime @updatedAt
+  id                Int      @id @default(autoincrement())
+  customer_id       Int
+  gstin             String
+  filing_status     String
+  last_filed_period String
+  annual_turnover   Float
+  raw_response      Json
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
 
   customer Customer @relation(fields: [customer_id], references: [id])
 
@@ -611,44 +620,44 @@ enum GstrAnalyticsStatus {
 }
 
 model GstrAnalyticsRequest {
-  id                 Int      @id @default(autoincrement())
-  tenant_id          Int
-  customer_id        Int
-  case_id            Int?
-  applicant_id       Int?     // NEW: Allow applicant-scoped GST
-  mode               GstrRequestMode
-  auth_type          GstrAuthType?
-  gstin              String
-  username           String?
-  from_date          String
-  to_date            String
-  entity_details     Boolean  @default(false)
-  pdf_url_requested  Boolean  @default(false)
-  emails             Json?    
-  mobile_numbers     Json?    
-  callback_url       String?
-  provider_request_id String? @unique
-  auth_link          String?
-  status             GstrAnalyticsStatus @default(INITIATED)
-  provider_message   String?
-  raw_gst_data       Json?
-  report_json_url    String?   // Source audit URL — NOT used for serving
-  report_excel_url   String?   // Source audit URL — NOT used for serving
-  report_pdf_url     String?   // Source audit URL — NOT used for serving
-  callback_payload   Json?
+  id                    Int                 @id @default(autoincrement())
+  tenant_id             Int
+  customer_id           Int
+  case_id               Int?
+  applicant_id          Int? // NEW: Allow applicant-scoped GST
+  mode                  GstrRequestMode
+  auth_type             GstrAuthType?
+  gstin                 String
+  username              String?
+  from_date             String
+  to_date               String
+  entity_details        Boolean             @default(false)
+  pdf_url_requested     Boolean             @default(false)
+  emails                Json?
+  mobile_numbers        Json?
+  callback_url          String?
+  provider_request_id   String?             @unique
+  auth_link             String?
+  status                GstrAnalyticsStatus @default(INITIATED)
+  provider_message      String?
+  raw_gst_data          Json?
+  report_json_url       String? // Source audit URL — NOT used for serving
+  report_excel_url      String? // Source audit URL — NOT used for serving
+  report_pdf_url        String? // Source audit URL — NOT used for serving
+  callback_payload      Json?
   wallet_transaction_id Int?
-  otp_attempts       Int      @default(0)
+  otp_attempts          Int                 @default(0)
   // Document storage references (populated after vendor URL ingestion)
   gst_pdf_document_id   Int?
   gst_excel_document_id Int?
   gst_json_document_id  Int?
 
   // Income snapshot — populated at callback ingestion time
-  turnover_latest_year    Decimal?  @db.Decimal(18, 2)
-  turnover_previous_year  Decimal?  @db.Decimal(18, 2)
-  financial_year_latest   String?   // e.g. "FY 2024-25"
-  financial_year_previous String?   // e.g. "FY 2023-24"
-  avg_monthly_turnover    Decimal?  @db.Decimal(18, 2)
+  turnover_latest_year    Decimal? @db.Decimal(18, 2)
+  turnover_previous_year  Decimal? @db.Decimal(18, 2)
+  financial_year_latest   String? // e.g. "FY 2024-25"
+  financial_year_previous String? // e.g. "FY 2023-24"
+  avg_monthly_turnover    Decimal? @db.Decimal(18, 2)
   months_filed_12m        Int?
   nil_return_months       Int?
 
@@ -656,10 +665,10 @@ model GstrAnalyticsRequest {
   updated_at         DateTime @updatedAt
   created_by_user_id Int
 
-  tenant         Tenant     @relation(fields: [tenant_id], references: [id])
-  customer       Customer   @relation(fields: [customer_id], references: [id])
-  case_entity    Case?      @relation(fields: [case_id], references: [id])
-  applicant      Applicant? @relation(fields: [applicant_id], references: [id], onDelete: Cascade)
+  tenant      Tenant     @relation(fields: [tenant_id], references: [id])
+  customer    Customer   @relation(fields: [customer_id], references: [id])
+  case_entity Case?      @relation(fields: [case_id], references: [id])
+  applicant   Applicant? @relation(fields: [applicant_id], references: [id], onDelete: Cascade)
 
   @@index([tenant_id])
   @@index([provider_request_id])
@@ -676,30 +685,30 @@ enum ItrAnalyticsStatus {
 }
 
 model ItrAnalyticsRequest {
-  id                 Int                @id @default(autoincrement())
-  tenant_id          Int
-  customer_id        Int
-  case_id            Int?
-  applicant_id       Int?
-  pan                String
-  reference_id       String?            @unique
-  status             ItrAnalyticsStatus @default(INITIATED)
-  excel_url          String?            // Source audit URL — NOT used for serving
-  analytics_payload  Json?
-  provider_message   String?
+  id                Int                @id @default(autoincrement())
+  tenant_id         Int
+  customer_id       Int
+  case_id           Int?
+  applicant_id      Int?
+  pan               String
+  reference_id      String?            @unique
+  status            ItrAnalyticsStatus @default(INITIATED)
+  excel_url         String? // Source audit URL — NOT used for serving
+  analytics_payload Json?
+  provider_message  String?
   // Document storage reference (populated after vendor URL ingestion)
-  itr_document_id    Int?
+  itr_document_id   Int?
 
   // Income snapshot — populated at sync completion time
-  net_profit_latest_year       Decimal?  @db.Decimal(18, 2)
-  net_profit_previous_year     Decimal?  @db.Decimal(18, 2)
-  gross_receipts_latest_year   Decimal?  @db.Decimal(18, 2)
-  gross_receipts_previous_year Decimal?  @db.Decimal(18, 2)
+  net_profit_latest_year       Decimal? @db.Decimal(18, 2)
+  net_profit_previous_year     Decimal? @db.Decimal(18, 2)
+  gross_receipts_latest_year   Decimal? @db.Decimal(18, 2)
+  gross_receipts_previous_year Decimal? @db.Decimal(18, 2)
   financial_year_latest        String?
   financial_year_previous      String?
 
-  created_at         DateTime           @default(now())
-  updated_at         DateTime           @updatedAt
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
   created_by_user_id Int
 
   tenant      Tenant     @relation(fields: [tenant_id], references: [id])
@@ -721,22 +730,22 @@ enum BankStatementStatus {
 }
 
 model BankStatementAnalysisRequest {
-  id                 Int      @id @default(autoincrement())
-  tenant_id          Int
-  customer_id        Int
-  case_id            Int?
-  applicant_id       Int?      
-  auth_token         String?   
-  report_id          String?   @unique
-  status             BankStatementStatus @default(INITIATED)
-  provider_message   String?
-  report_json_url    String?
-  report_excel_url   String?
-  files_payload      Json?
-  
-  raw_analyze_response   Json?
-  raw_retrieve_response  Json?
-  raw_download_response  Json?
+  id               Int                 @id @default(autoincrement())
+  tenant_id        Int
+  customer_id      Int
+  case_id          Int?
+  applicant_id     Int?
+  auth_token       String?
+  report_id        String?             @unique
+  status           BankStatementStatus @default(INITIATED)
+  provider_message String?
+  report_json_url  String?
+  report_excel_url String?
+  files_payload    Json?
+
+  raw_analyze_response  Json?
+  raw_retrieve_response Json?
+  raw_download_response Json?
 
   wallet_transaction_id Int?
 
@@ -745,8 +754,8 @@ model BankStatementAnalysisRequest {
   bank_json_document_id  Int?
 
   // Income snapshot — populated when bank analysis completes
-  avg_bank_balance_latest_year   Decimal?  @db.Decimal(18, 2)
-  avg_bank_balance_previous_year Decimal?  @db.Decimal(18, 2)
+  avg_bank_balance_latest_year   Decimal? @db.Decimal(18, 2)
+  avg_bank_balance_previous_year Decimal? @db.Decimal(18, 2)
   financial_year_latest          String?
   financial_year_previous        String?
 
@@ -754,10 +763,10 @@ model BankStatementAnalysisRequest {
   updated_at         DateTime @updatedAt
   created_by_user_id Int
 
-  tenant         Tenant   @relation(fields: [tenant_id], references: [id])
-  customer       Customer @relation(fields: [customer_id], references: [id])
-  case_entity    Case?    @relation(fields: [case_id], references: [id])
-  applicant      Applicant? @relation(fields: [applicant_id], references: [id])
+  tenant      Tenant     @relation(fields: [tenant_id], references: [id])
+  customer    Customer   @relation(fields: [customer_id], references: [id])
+  case_entity Case?      @relation(fields: [case_id], references: [id])
+  applicant   Applicant? @relation(fields: [applicant_id], references: [id])
 
   @@index([tenant_id])
   @@index([report_id])
@@ -788,34 +797,34 @@ model CaseDataPullStatus {
 // --- Bureau Verification Models ---
 
 model BureauVerification {
-  id                String   @id @default(uuid())
-  case_id           Int
-  applicant_id      Int
-  applicant_type    String   // PRIMARY or CO_APPLICANT
-  request_id        String   @unique
-  stan              String
-  mobile_number     String
-  score             String?
-  raw_response      Json?
-  status            String
-  emi_obligations_total Decimal? @db.Decimal(18, 2)  // Total EMI from bureau for ESR FOIR
-  created_at        DateTime @default(now())
-  updated_at        DateTime @updatedAt
+  id                    String   @id @default(uuid())
+  case_id               Int
+  applicant_id          Int
+  applicant_type        String // PRIMARY or CO_APPLICANT
+  request_id            String   @unique
+  stan                  String
+  mobile_number         String
+  score                 String?
+  raw_response          Json?
+  status                String
+  emi_obligations_total Decimal? @db.Decimal(18, 2) // Total EMI from bureau for ESR FOIR
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
 
-  case_entity       Case      @relation(fields: [case_id], references: [id])
-  applicant         Applicant @relation(fields: [applicant_id], references: [id])
+  case_entity Case      @relation(fields: [case_id], references: [id])
+  applicant   Applicant @relation(fields: [applicant_id], references: [id])
 
   @@map("bureau_verifications")
 }
 
 model BureauVerificationLog {
-  id                String   @id @default(uuid())
-  case_id           Int
-  applicant_id      Int
-  request_payload   Json
-  response_payload  Json
-  status            String
-  created_at        DateTime @default(now())
+  id               String   @id @default(uuid())
+  case_id          Int
+  applicant_id     Int
+  request_payload  Json
+  response_payload Json
+  status           String
+  created_at       DateTime @default(now())
 
   @@map("bureau_verification_logs")
 }
@@ -840,7 +849,7 @@ model Lender {
 
   products       LenderProduct[]
   proposals      Proposal[]
-  tenant_lenders TenantLender[]   // back-relation: DSA lenders linked to this platform lender
+  tenant_lenders TenantLender[] // back-relation: DSA lenders linked to this platform lender
 
   @@map("lenders")
 }
@@ -848,35 +857,35 @@ model Lender {
 enum LenderProductType {
   HL
   LAP
-  WC   // Working Capital / CC / OD
-  TL   // Term Loan
-  ML   // Machinery / Equipment Finance
-  BL   // Business Loan (Unsecured)
+  WC // Working Capital / CC / OD
+  TL // Term Loan
+  ML // Machinery / Equipment Finance
+  BL // Business Loan (Unsecured)
 }
 
 model LenderProduct {
-  id           Int                @id @default(autoincrement())
+  id           Int               @id @default(autoincrement())
   lender_id    String
   product_type LenderProductType
-  status       LenderStatus       @default(ACTIVE)
-  
-  lender       Lender             @relation(fields: [lender_id], references: [id])
-  schemes      Scheme[]
+  status       LenderStatus      @default(ACTIVE)
+
+  lender  Lender   @relation(fields: [lender_id], references: [id])
+  schemes Scheme[]
 
   @@unique([lender_id, product_type])
   @@map("lender_products")
 }
 
 model Scheme {
-  id          Int            @id @default(autoincrement())
+  id          Int          @id @default(autoincrement())
   product_id  Int
   scheme_name String
-  status      LenderStatus   @default(ACTIVE)
-  created_at  DateTime       @default(now())
-  updated_at  DateTime       @updatedAt
+  status      LenderStatus @default(ACTIVE)
+  created_at  DateTime     @default(now())
+  updated_at  DateTime     @updatedAt
 
-  created_by  Int?
-  updated_by  Int?
+  created_by Int?
+  updated_by Int?
 
   product          LenderProduct          @relation(fields: [product_id], references: [id])
   parameter_values SchemeParameterValue[]
@@ -885,15 +894,15 @@ model Scheme {
 }
 
 model ParameterMaster {
-  id                Int                    @id @default(autoincrement())
-  parameter_key     String                 @unique
+  id                Int     @id @default(autoincrement())
+  parameter_key     String  @unique
   parameter_label   String
   category          String
   data_type         String
   display_order     Int
-  is_editable_label Boolean                @default(false)
+  is_editable_label Boolean @default(false)
 
-  values            SchemeParameterValue[]
+  values SchemeParameterValue[]
 
   @@map("parameter_master")
 }
@@ -905,12 +914,12 @@ model SchemeParameterValue {
   value        Json
   created_at   DateTime @default(now())
   updated_at   DateTime @updatedAt
-  
-  created_by   Int?
-  updated_by   Int?
 
-  scheme       Scheme          @relation(fields: [scheme_id], references: [id])
-  parameter    ParameterMaster @relation(fields: [parameter_id], references: [id])
+  created_by Int?
+  updated_by Int?
+
+  scheme    Scheme          @relation(fields: [scheme_id], references: [id])
+  parameter ParameterMaster @relation(fields: [parameter_id], references: [id])
 
   @@unique([scheme_id, parameter_id])
   @@map("scheme_parameter_values")
@@ -937,9 +946,9 @@ enum DocumentType {
 }
 
 enum DocumentSource {
-  VENDOR_DOWNLOAD   // Downloaded from a vendor-provided URL (Signzy etc.)
-  DIRECT_UPLOAD     // Uploaded directly by user
-  SYSTEM_GENERATED  // Created internally
+  VENDOR_DOWNLOAD // Downloaded from a vendor-provided URL (Signzy etc.)
+  DIRECT_UPLOAD // Uploaded directly by user
+  SYSTEM_GENERATED // Created internally
 }
 
 enum DocumentStatus {
@@ -955,41 +964,41 @@ enum StorageProvider {
 }
 
 model Document {
-  id                  Int              @id @default(autoincrement())
-  tenant_id           Int
-  customer_id         Int?
-  case_id             Int?
-  applicant_id        Int?
+  id           Int  @id @default(autoincrement())
+  tenant_id    Int
+  customer_id  Int?
+  case_id      Int?
+  applicant_id Int?
 
-  document_type       DocumentType
-  source_type         DocumentSource
+  document_type DocumentType
+  source_type   DocumentSource
   /// Original vendor URL kept for audit/debug — app NEVER uses this to serve
-  source_url          String?
+  source_url    String?
 
-  storage_provider    StorageProvider  @default(LOCAL)
+  storage_provider StorageProvider @default(LOCAL)
   /// Relative path/key within the storage root — never exposed to frontend
-  storage_path        String
+  storage_path     String
 
-  file_name           String           // System-generated safe filename
-  original_file_name  String?          // Filename as received (for display only)
-  mime_type           String
-  extension           String
-  file_size_bytes     Int?
-  checksum_md5        String?
+  file_name          String // System-generated safe filename
+  original_file_name String? // Filename as received (for display only)
+  mime_type          String
+  extension          String
+  file_size_bytes    Int?
+  checksum_md5       String?
 
-  status              DocumentStatus   @default(ACTIVE)
+  status              DocumentStatus @default(ACTIVE)
   uploaded_by_user_id Int?
-  metadata            Json?            // Extensible — store any extra provider data
+  metadata            Json? // Extensible — store any extra provider data
   deleted_at          DateTime?
 
-  created_at          DateTime         @default(now())
-  updated_at          DateTime         @updatedAt
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
-  tenant     Tenant     @relation(fields: [tenant_id], references: [id])
-  customer   Customer?  @relation(fields: [customer_id], references: [id])
-  case_entity Case?     @relation(fields: [case_id], references: [id])
-  applicant   Applicant? @relation(fields: [applicant_id], references: [id])
-  proposal_docs ProposalDocument[]
+  tenant                 Tenant               @relation(fields: [tenant_id], references: [id])
+  customer               Customer?            @relation(fields: [customer_id], references: [id])
+  case_entity            Case?                @relation(fields: [case_id], references: [id])
+  applicant              Applicant?           @relation(fields: [applicant_id], references: [id])
+  proposal_docs          ProposalDocument[]
   salary_slip_ocr_result SalarySlipOcrResult?
 
   @@index([tenant_id])
@@ -1004,34 +1013,34 @@ model Document {
 model CasePropertyDetails {
   id               Int      @id @default(autoincrement())
   case_id          Int      @unique
-  property_type    String?  // Commercial / Residential / Industrial / Plot
-  occupancy_status String?  // Self Occupied / Rented Out / Vacant
-  ownership_type   String?  // Sole Owner / Joint Owner / Company Owned
-  market_value     Float?   // DSA estimate in INR
+  property_type    String? // Commercial / Residential / Industrial / Plot
+  occupancy_status String? // Self Occupied / Rented Out / Vacant
+  ownership_type   String? // Sole Owner / Joint Owner / Company Owned
+  market_value     Float? // DSA estimate in INR
   remarks          String?
   created_at       DateTime @default(now())
   updated_at       DateTime @updatedAt
 
-  case_entity      Case     @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  case_entity Case @relation(fields: [case_id], references: [id], onDelete: Cascade)
 
   @@index([case_id])
   @@map("case_property_details")
 }
 
 model CaseIncomeEntry {
-  id                  Int       @id @default(autoincrement())
+  id                  Int      @id @default(autoincrement())
   case_id             Int
   applicant_id        Int?
-  income_type         String    // Director Salary / Rental Income / Agriculture Income / Other...
-  applicant_label     String?   // Human-readable label (e.g. "Rajesh Kumar")
+  income_type         String // Director Salary / Rental Income / Agriculture Income / Other...
+  applicant_label     String? // Human-readable label (e.g. "Rajesh Kumar")
   annual_amount       Float
-  supporting_doc_type String?   // CA Certificate / Salary Slip / Form 16 / Bank Credit / None
+  supporting_doc_type String? // CA Certificate / Salary Slip / Form 16 / Bank Credit / None
   remarks             String?
-  created_at          DateTime  @default(now())
-  updated_at          DateTime  @updatedAt
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
 
-  case_entity         Case       @relation(fields: [case_id], references: [id], onDelete: Cascade)
-  applicant           Applicant? @relation(fields: [applicant_id], references: [id], onDelete: SetNull)
+  case_entity Case       @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  applicant   Applicant? @relation(fields: [applicant_id], references: [id], onDelete: SetNull)
 
   @@index([case_id])
   @@index([applicant_id])
@@ -1039,25 +1048,25 @@ model CaseIncomeEntry {
 }
 
 model CaseCreditObligation {
-  id                  Int       @id @default(autoincrement())
-  case_id             Int
-  applicant_id        Int
-  lender_name         String?
-  loan_type           String?   // Home Loan / Car Loan / Business Loan / Personal Loan / etc.
-  loan_amount         Float?
-  outstanding_amount  Float?
-  loan_start_date     DateTime?
-  emi_per_month       Float     @default(0)
-  status              String    @default("ACTIVE")  // ACTIVE | CLOSED | NPA | VERIFY
-  source              String    @default("BUREAU")  // BUREAU | MANUAL
-  needs_verification  Boolean   @default(false)     // true when bureau EMI = 0
-  include_in_foir     Boolean   @default(true)      // NEW: For ESR FOIR calculation
-  remarks             String?
-  created_at          DateTime  @default(now())
-  updated_at          DateTime  @updatedAt
+  id                 Int       @id @default(autoincrement())
+  case_id            Int
+  applicant_id       Int
+  lender_name        String?
+  loan_type          String? // Home Loan / Car Loan / Business Loan / Personal Loan / etc.
+  loan_amount        Float?
+  outstanding_amount Float?
+  loan_start_date    DateTime?
+  emi_per_month      Float     @default(0)
+  status             String    @default("ACTIVE") // ACTIVE | CLOSED | NPA | VERIFY
+  source             String    @default("BUREAU") // BUREAU | MANUAL
+  needs_verification Boolean   @default(false) // true when bureau EMI = 0
+  include_in_foir    Boolean   @default(true) // NEW: For ESR FOIR calculation
+  remarks            String?
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
 
-  case_entity         Case      @relation(fields: [case_id], references: [id], onDelete: Cascade)
-  applicant           Applicant @relation(fields: [applicant_id], references: [id], onDelete: Cascade)
+  case_entity Case      @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  applicant   Applicant @relation(fields: [applicant_id], references: [id], onDelete: Cascade)
 
   @@index([case_id])
   @@index([applicant_id])
@@ -1066,126 +1075,126 @@ model CaseCreditObligation {
 }
 
 model CaseEsrFinancials {
-  id                    Int      @id @default(autoincrement())
-  case_id               Int      @unique
-  requested_loan_amount Float?
+  id                      Int     @id @default(autoincrement())
+  case_id                 Int     @unique
+  requested_loan_amount   Float?
   requested_tenure_months Int?
-  product_type          String?
+  product_type            String?
 
-  property_value        Float?
-  property_type         String?
-  occupancy_type        String?
+  property_value Float?
+  property_type  String?
+  occupancy_type String?
 
-  bureau_score          Int?
-  applicant_age         Int?
-  existing_obligations  Float?
-  icici_exposure        Float?
+  bureau_score         Int?
+  applicant_age        Int?
+  existing_obligations Float?
+  icici_exposure       Float?
 
-  itr_pat               Float?
-  itr_depreciation      Float?
-  itr_finance_cost      Float?
-  itr_gross_receipts    Float?
+  itr_pat            Float?
+  itr_depreciation   Float?
+  itr_finance_cost   Float?
+  itr_gross_receipts Float?
 
   gst_avg_monthly_sales Float?
   gst_industry_type     String?
   gst_industry_margin   Float?
 
-  bank_avg_balance      Float?
-  bank_monthly_income   Float?
+  bank_avg_balance    Float?
+  bank_monthly_income Float?
 
-  net_profit_income     Float?
-  gst_income            Float?
-  banking_income        Float?
+  net_profit_income Float?
+  gst_income        Float?
+  banking_income    Float?
 
   // --- Salaried Income Fields (Phase 2) ---
-  salaried_income       Float?   // avg net monthly salary derived from OCR + manual income entries
+  salaried_income        Float? // avg net monthly salary derived from OCR + manual income entries
   salaried_income_source String? // "OCR" | "MANUAL" | "MIXED"
-  salaried_slip_count   Int?     // number of OCR-completed salary slips used in derivation
+  salaried_slip_count    Int? // number of OCR-completed salary slips used in derivation
 
-  selected_income_method String?
+  selected_income_method  String?
   selected_monthly_income Float?
 
-  constitution_type     String?
-  employment_type       String?
+  constitution_type       String?
+  employment_type         String?
   business_vintage_months Int?
 
   // --- Extraction Lifecycle (Phase 2) ---
   // Tracks whether the snapshot is fresh and safe to use for ESR generation
-  extraction_status     String   @default("PENDING") // "PENDING" | "COMPLETED" | "FAILED"
-  extracted_at          DateTime?  // timestamp of last successful extraction
+  extraction_status String    @default("PENDING") // "PENDING" | "COMPLETED" | "FAILED"
+  extracted_at      DateTime? // timestamp of last successful extraction
 
-  created_at            DateTime @default(now())
-  updated_at            DateTime @updatedAt
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
-  case_entity           Case     @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  case_entity Case @relation(fields: [case_id], references: [id], onDelete: Cascade)
 
   @@map("case_esr_financials")
 }
 
 model EligibilityReport {
-  id                    Int      @id @default(autoincrement())
-  case_id               Int
-  tenant_id             Int
+  id        Int @id @default(autoincrement())
+  case_id   Int
+  tenant_id Int
 
-  version_number        Int
-  is_latest             Boolean  @default(true)
+  version_number Int
+  is_latest      Boolean @default(true)
 
-  generated_at          DateTime @default(now())
-  generated_by_user_id  Int?
+  generated_at         DateTime @default(now())
+  generated_by_user_id Int?
 
-  combined_income       Float?
-  property_value        Float?
-  primary_cibil_score   Int?
-  lowest_cibil_score    Int?
-  total_emi_per_month   Float?
+  combined_income     Float?
+  property_value      Float?
+  primary_cibil_score Int?
+  lowest_cibil_score  Int?
+  total_emi_per_month Float?
 
-  input_snapshot        Json
-  raw_payload           Json?    // Debugging only
+  input_snapshot Json
+  raw_payload    Json? // Debugging only
 
-  status                String   @default("GENERATED")
-  
-  lenders               EligibilityReportLender[]
+  status String @default("GENERATED")
 
-  created_at            DateTime @default(now())
-  updated_at            DateTime @updatedAt
+  lenders EligibilityReportLender[]
 
-  case_entity           Case     @relation(fields: [case_id], references: [id], onDelete: Cascade)
-  tenant                Tenant   @relation(fields: [tenant_id], references: [id])
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
-  @@index([case_id, tenant_id, is_latest])
+  case_entity Case   @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  tenant      Tenant @relation(fields: [tenant_id], references: [id])
+
   // UNIQUE constraint: guarantees one version_number per case+tenant combination.
   // This is the database-level safety net for concurrent ESR generation.
   // Even if the advisory lock is bypassed, the DB will reject the duplicate insert.
   @@unique([case_id, tenant_id, version_number])
+  @@index([case_id, tenant_id, is_latest])
   @@map("eligibility_reports")
 }
 
 model EligibilityReportLender {
-  id                 Int      @id @default(autoincrement())
-  esr_id             Int
-  tenant_lender_id   Int?
-  lender_id          String?
+  id               Int     @id @default(autoincrement())
+  esr_id           Int
+  tenant_lender_id Int?
+  lender_id        String?
 
-  lender_name        String
-  product_type       String
+  lender_name          String
+  product_type         String
   product_display_name String?
-  best_scheme_name   String?
-  is_eligible        Boolean
+  best_scheme_name     String?
+  is_eligible          Boolean
 
-  eligible_amount    Float?
-  roi                Float?
-  tenure_months      Int?
-  emi                Float?
-  ltv                Float?
-  foir               Float?
-  
+  eligible_amount Float?
+  roi             Float?
+  tenure_months   Int?
+  emi             Float?
+  ltv             Float?
+  foir            Float?
+
   remarks            String?
   rejection_reasons  Json?
   scheme_evaluations Json?
 
-  created_at         DateTime @default(now())
+  created_at DateTime @default(now())
 
-  esr                EligibilityReport @relation(fields: [esr_id], references: [id], onDelete: Cascade)
+  esr EligibilityReport @relation(fields: [esr_id], references: [id], onDelete: Cascade)
 
   @@map("eligibility_report_lenders")
 }
@@ -1193,32 +1202,32 @@ model EligibilityReportLender {
 // --- Vendor Management Models ---
 
 model Vendor {
-  id            Int      @id @default(autoincrement())
-  vendor_id     String   @unique 
-  name          String
-  website       String?
-  api_type      String   
-  role          String   
+  id             Int      @id @default(autoincrement())
+  vendor_id      String   @unique
+  name           String
+  website        String?
+  api_type       String
+  role           String
   contract_start DateTime
   contract_end   DateTime
-  billing_model String   
-  status        String   @default("Active")
-  created_at    DateTime @default(now())
-  updated_at    DateTime @updatedAt
+  billing_model  String
+  status         String   @default("Active")
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
 
-  slabs         VendorSlab[]
+  slabs VendorSlab[]
 
   @@map("vendors")
 }
 
 model VendorSlab {
-  id          Int      @id @default(autoincrement())
-  vendor_id   Int
-  from_calls  Int
-  to_calls    Int?     
-  rate        Float
-  
-  vendor      Vendor   @relation(fields: [vendor_id], references: [id], onDelete: Cascade)
+  id         Int   @id @default(autoincrement())
+  vendor_id  Int
+  from_calls Int
+  to_calls   Int?
+  rate       Float
+
+  vendor Vendor @relation(fields: [vendor_id], references: [id], onDelete: Cascade)
 
   @@map("vendor_slabs")
 }
@@ -1242,19 +1251,19 @@ enum CommissionSpecialSchemeBasis {
 }
 
 model LenderCommissionRule {
-  id               Int            @id @default(autoincrement())
+  id               Int               @id @default(autoincrement())
   tenant_id        Int
   tenant_lender_id Int
   product_type     LenderProductType
   payout_basis     PayoutBasis
   commission_type  CommissionType
-  is_active        Boolean        @default(true)
-  created_at       DateTime       @default(now())
-  updated_at       DateTime       @updatedAt
+  is_active        Boolean           @default(true)
+  created_at       DateTime          @default(now())
+  updated_at       DateTime          @updatedAt
 
-  tenant           Tenant         @relation(fields: [tenant_id], references: [id])
-  tenant_lender    TenantLender   @relation(fields: [tenant_lender_id], references: [id], onDelete: Cascade)
-  
+  tenant        Tenant       @relation(fields: [tenant_id], references: [id])
+  tenant_lender TenantLender @relation(fields: [tenant_lender_id], references: [id], onDelete: Cascade)
+
   volume_slabs     CommissionVolumeSlab[]
   case_count_slabs CommissionCaseCountSlab[]
   special_schemes  CommissionSpecialScheme[]
@@ -1264,55 +1273,55 @@ model LenderCommissionRule {
 }
 
 model CommissionVolumeSlab {
-  id            Int                  @id @default(autoincrement())
-  rule_id       Int
-  from_amount   Float
-  to_amount     Float?               // Use null for "Infinity"
-  percent_rate  Float
+  id           Int    @id @default(autoincrement())
+  rule_id      Int
+  from_amount  Float
+  to_amount    Float? // Use null for "Infinity"
+  percent_rate Float
 
-  rule          LenderCommissionRule @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+  rule LenderCommissionRule @relation(fields: [rule_id], references: [id], onDelete: Cascade)
 
   @@map("commission_volume_slabs")
 }
 
 model CommissionCaseCountSlab {
-  id              Int                  @id @default(autoincrement())
+  id              Int   @id @default(autoincrement())
   rule_id         Int
   from_cases      Int
-  to_cases        Int?                 // Use null for "Infinity"
+  to_cases        Int? // Use null for "Infinity"
   payout_per_case Float
 
-  rule            LenderCommissionRule @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+  rule LenderCommissionRule @relation(fields: [rule_id], references: [id], onDelete: Cascade)
 
   @@map("commission_case_count_slabs")
 }
 
 model CommissionSpecialScheme {
-  id              Int                          @id @default(autoincrement())
-  rule_id         Int
-  scheme_name     String
-  bonus_percent   Float?
-  bonus_per_case  Float?
-  basis           CommissionSpecialSchemeBasis
-  valid_from      DateTime
-  valid_to        DateTime
-  is_active       Boolean                      @default(true)
+  id             Int                          @id @default(autoincrement())
+  rule_id        Int
+  scheme_name    String
+  bonus_percent  Float?
+  bonus_per_case Float?
+  basis          CommissionSpecialSchemeBasis
+  valid_from     DateTime
+  valid_to       DateTime
+  is_active      Boolean                      @default(true)
 
-  rule            LenderCommissionRule         @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+  rule LenderCommissionRule @relation(fields: [rule_id], references: [id], onDelete: Cascade)
 
   @@map("commission_special_schemes")
 }
 
 model AuditLog {
-  id            Int      @id @default(autoincrement())
-  tenant_id     Int
-  user_id       Int
-  action        String
-  description   String?
-  timestamp     DateTime @default(now())
+  id          Int      @id @default(autoincrement())
+  tenant_id   Int
+  user_id     Int
+  action      String
+  description String?
+  timestamp   DateTime @default(now())
 
-  tenant        Tenant   @relation(fields: [tenant_id], references: [id])
-  user          User     @relation(fields: [user_id], references: [id])
+  tenant Tenant @relation(fields: [tenant_id], references: [id])
+  user   User   @relation(fields: [user_id], references: [id])
 
   @@map("audit_logs")
 }
@@ -1320,27 +1329,28 @@ model AuditLog {
 // --- Tenant Lender Contacts (Added to schema to fix db push) ---
 
 model TenantLender {
-  id                 Int      @id @default(autoincrement())
-  tenant_id          Int
-  lender_name        String
-  is_active          Boolean  @default(true)
+  id          Int     @id @default(autoincrement())
+  tenant_id   Int
+  lender_name String
+  is_active   Boolean @default(true)
 
   // Two-layer ESR architecture fields
   // platform_lender_id: links to platform Lender master. null = manual/non-ESR lender.
-  platform_lender_id String?  
+  platform_lender_id String?
   // is_esr_enabled: DSA_ADMIN controlled. Only meaningful when platform_lender_id is set.
   // Platform lender must also be ACTIVE for ESR inclusion.
-  is_esr_enabled     Boolean  @default(false)
+  is_esr_enabled     Boolean @default(false)
 
   created_by_user_id Int?
   created_at         DateTime @default(now())
   updated_at         DateTime @updatedAt
 
-  tenant             Tenant               @relation(fields: [tenant_id], references: [id])
-  platform_lender    Lender?              @relation(fields: [platform_lender_id], references: [id])
-  contacts           TenantLenderContact[]
-  commission_rules   LenderCommissionRule[]
-  proposals          Proposal[]
+  tenant           Tenant                 @relation(fields: [tenant_id], references: [id])
+  platform_lender  Lender?                @relation(fields: [platform_lender_id], references: [id])
+  contacts         TenantLenderContact[]
+  commission_rules LenderCommissionRule[]
+  proposals        Proposal[]
+
   @@map("tenant_lenders")
 }
 
@@ -1358,67 +1368,67 @@ model TenantLenderContact {
   created_at         DateTime @default(now())
   updated_at         DateTime @updatedAt
 
-  lender             TenantLender @relation(fields: [tenant_lender_id], references: [id], onDelete: Cascade)
+  lender TenantLender @relation(fields: [tenant_lender_id], references: [id], onDelete: Cascade)
 
   @@map("tenant_lender_contacts")
 }
 
 model Proposal {
-  id                        Int      @id @default(autoincrement())
-  tenant_id                 Int
-  case_id                   Int
-  lender_id                 String?
-  tenant_lender_id          Int?
-  scheme_id                 Int?
-  case_esr_financial_id     Int?
-  proposal_source_id        Int?
-  child_case_id             Int?
+  id                    Int     @id @default(autoincrement())
+  tenant_id             Int
+  case_id               Int
+  lender_id             String?
+  tenant_lender_id      Int?
+  scheme_id             Int?
+  case_esr_financial_id Int?
+  proposal_source_id    Int?
+  child_case_id         Int?
 
-  proposal_number           String   @unique
-  proposal_status           String   @default("draft")
-  lender_submission_status  String?  @default("draft")
+  proposal_number          String  @unique
+  proposal_status          String  @default("draft")
+  lender_submission_status String? @default("draft")
 
-  requested_amount          Float?
-  eligible_amount           Float?
-  roi_min                   Float?
-  roi_max                   Float?
-  tenure_months             Int?
-  processing_fee            Float?
-  
+  requested_amount Float?
+  eligible_amount  Float?
+  roi_min          Float?
+  roi_max          Float?
+  tenure_months    Int?
+  processing_fee   Float?
+
   loan_purpose              String?
   remarks                   String?
   additional_notes          String?
   preferred_banking_program String?
 
-  submitted_at              DateTime?
-  submitted_by_user_id      Int?
+  submitted_at               DateTime?
+  submitted_by_user_id       Int?
   submitted_payload_snapshot Json?
 
-  created_at                DateTime @default(now())
-  updated_at                DateTime @updatedAt
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
-  created_by_user_id        Int
-  updated_by_user_id        Int
+  created_by_user_id Int
+  updated_by_user_id Int
 
   // Relations
-  tenant                    Tenant        @relation(fields: [tenant_id], references: [id])
-  case                      Case          @relation(fields: [case_id], references: [id])
-  lender                    Lender?       @relation(fields: [lender_id], references: [id])
-  tenant_lender             TenantLender? @relation(fields: [tenant_lender_id], references: [id])
-  documents                 ProposalDocument[]
+  tenant        Tenant             @relation(fields: [tenant_id], references: [id])
+  case          Case               @relation(fields: [case_id], references: [id])
+  lender        Lender?            @relation(fields: [lender_id], references: [id])
+  tenant_lender TenantLender?      @relation(fields: [tenant_lender_id], references: [id])
+  documents     ProposalDocument[]
 
   @@index([tenant_lender_id])
   @@map("proposals")
 }
 
 model ProposalDocument {
-  id            Int      @id @default(autoincrement())
+  id            Int     @id @default(autoincrement())
   proposal_id   Int
   document_id   Int
   document_type String?
 
-  proposal      Proposal @relation(fields: [proposal_id], references: [id], onDelete: Cascade)
-  document      Document @relation(fields: [document_id], references: [id], onDelete: Cascade)
+  proposal Proposal @relation(fields: [proposal_id], references: [id], onDelete: Cascade)
+  document Document @relation(fields: [document_id], references: [id], onDelete: Cascade)
 
   @@unique([proposal_id, document_id])
   @@map("proposal_documents")
@@ -1427,29 +1437,29 @@ model ProposalDocument {
 // ─── Sanction & Disbursement Flow ──────────────────────────────────────────
 
 model CaseSanction {
-  id                   Int      @id @default(autoincrement())
-  tenant_id            Int
-  case_id              Int      @unique
-  
-  // Snapshotted from selection/ESR
-  tenant_lender_id     Int?
-  lender_name          String
-  product_type         String
-  
-  loan_account_number  String
-  sanction_date        DateTime
-  sanctioned_amount    Decimal  @db.Decimal(18, 2)
-  confirmed_roi        Decimal  @db.Decimal(18, 4)
-  processing_fee       Decimal  @db.Decimal(18, 2)
-  
-  remarks              String?
-  created_by_user_id   Int
-  created_at           DateTime @default(now())
-  updated_at           DateTime @updatedAt
+  id        Int @id @default(autoincrement())
+  tenant_id Int
+  case_id   Int @unique
 
-  tenant               Tenant   @relation(fields: [tenant_id], references: [id])
-  case_entity          Case     @relation(fields: [case_id], references: [id])
-  disbursements        Disbursement[]
+  // Snapshotted from selection/ESR
+  tenant_lender_id Int?
+  lender_name      String
+  product_type     String
+
+  loan_account_number String
+  sanction_date       DateTime
+  sanctioned_amount   Decimal  @db.Decimal(18, 2)
+  confirmed_roi       Decimal  @db.Decimal(18, 4)
+  processing_fee      Decimal  @db.Decimal(18, 2)
+
+  remarks            String?
+  created_by_user_id Int
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  tenant        Tenant         @relation(fields: [tenant_id], references: [id])
+  case_entity   Case           @relation(fields: [case_id], references: [id])
+  disbursements Disbursement[]
 
   @@map("case_sanctions")
 }
@@ -1460,33 +1470,34 @@ enum DisbursementStatus {
 }
 
 model Disbursement {
-  id                   Int                @id @default(autoincrement())
-  tenant_id            Int
-  case_id              Int
-  case_sanction_id     Int
-  
-  // Snapshotted from sanction at time of entry
-  tenant_lender_id     Int?
-  lender_name          String
-  product_type         String
-  
-  tranche_number       Int
-  amount               Decimal            @db.Decimal(18, 2)
-  disbursement_date    DateTime
-  next_disbursement_due_date DateTime?
-  
-  status               DisbursementStatus @default(RECORDED)
-  remarks              String?
-  idempotency_key      String?
-  
-  created_by_user_id   Int
-  created_at           DateTime           @default(now())
-  updated_at           DateTime           @updatedAt
+  id               Int @id @default(autoincrement())
+  tenant_id        Int
+  case_id          Int
+  case_sanction_id Int
 
-  tenant               Tenant             @relation(fields: [tenant_id], references: [id])
-  case_entity          Case               @relation(fields: [case_id], references: [id])
-  sanction             CaseSanction       @relation(fields: [case_sanction_id], references: [id])
-  pdd_tasks            PDDTask[]
+  // Snapshotted from sanction at time of entry
+  tenant_lender_id Int?
+  lender_name      String
+  product_type     String
+
+  tranche_number             Int
+  amount                     Decimal   @db.Decimal(18, 2)
+  disbursement_date          DateTime
+  next_disbursement_due_date DateTime?
+
+  status          DisbursementStatus @default(RECORDED)
+  remarks         String?
+  idempotency_key String?
+
+  created_by_user_id Int
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  tenant             Tenant             @relation(fields: [tenant_id], references: [id])
+  case_entity        Case               @relation(fields: [case_id], references: [id])
+  sanction           CaseSanction       @relation(fields: [case_sanction_id], references: [id])
+  pdd_tasks          PDDTask[]
+  commission_ledgers CommissionLedger[]
 
   @@unique([tenant_id, case_id, idempotency_key])
   @@map("disbursements")
@@ -1504,28 +1515,28 @@ enum PDDTaskSource {
 }
 
 model PDDTask {
-  id                   Int           @id @default(autoincrement())
-  tenant_id            Int
-  case_id              Int
-  disbursement_id      Int?
-  
-  document_name        String
-  due_date             DateTime?
-  status               PDDTaskStatus @default(PENDING)
-  source_type          PDDTaskSource @default(MANUAL)
-  
-  collection_date      DateTime?
-  collected_by         String?
-  waiver_reason        String?
-  
-  remarks              String?
-  created_by_user_id   Int
-  created_at           DateTime      @default(now())
-  updated_at           DateTime      @updatedAt
+  id              Int  @id @default(autoincrement())
+  tenant_id       Int
+  case_id         Int
+  disbursement_id Int?
 
-  tenant               Tenant        @relation(fields: [tenant_id], references: [id])
-  case_entity          Case          @relation(fields: [case_id], references: [id])
-  disbursement         Disbursement? @relation(fields: [disbursement_id], references: [id])
+  document_name String
+  due_date      DateTime?
+  status        PDDTaskStatus @default(PENDING)
+  source_type   PDDTaskSource @default(MANUAL)
+
+  collection_date DateTime?
+  collected_by    String?
+  waiver_reason   String?
+
+  remarks            String?
+  created_by_user_id Int
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  tenant       Tenant        @relation(fields: [tenant_id], references: [id])
+  case_entity  Case          @relation(fields: [case_id], references: [id])
+  disbursement Disbursement? @relation(fields: [disbursement_id], references: [id])
 
   @@map("pdd_tasks")
 }
@@ -1540,23 +1551,23 @@ enum OcrStatus {
 }
 
 model SalarySlipOcrResult {
-  id               Int       @id @default(autoincrement())
-  tenant_id        Int
-  customer_id      Int
-  case_id          Int
-  applicant_id     Int
-  document_id      Int?      @unique
+  id           Int  @id @default(autoincrement())
+  tenant_id    Int
+  customer_id  Int
+  case_id      Int
+  applicant_id Int
+  document_id  Int? @unique
 
-  month            String    // e.g. "February" or "02"
-  year             String    // e.g. "2026"
-  ocr_status       OcrStatus @default(PENDING)
-  source           String    @default("OCR") // OCR | MANUAL
-  
-  gross_salary     Float?
-  net_salary       Float?
-  deductions       Float?
-  employer_name    String?
-  employee_name    String?
+  month      String // e.g. "February" or "02"
+  year       String // e.g. "2026"
+  ocr_status OcrStatus @default(PENDING)
+  source     String    @default("OCR") // OCR | MANUAL
+
+  gross_salary  Float?
+  net_salary    Float?
+  deductions    Float?
+  employer_name String?
+  employee_name String?
 
   vendor_name      String?
   vendor_job_id    String?
@@ -1564,15 +1575,223 @@ model SalarySlipOcrResult {
   extracted_json   Json?
   error_message    String?
 
-  created_at       DateTime  @default(now())
-  updated_at       DateTime  @updatedAt
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
-  tenant           Tenant    @relation(fields: [tenant_id], references: [id])
-  customer         Customer  @relation(fields: [customer_id], references: [id])
-  case_entity      Case      @relation(fields: [case_id], references: [id])
-  applicant        Applicant @relation(fields: [applicant_id], references: [id], onDelete: Cascade)
-  document         Document? @relation(fields: [document_id], references: [id])
+  tenant      Tenant    @relation(fields: [tenant_id], references: [id])
+  customer    Customer  @relation(fields: [customer_id], references: [id])
+  case_entity Case      @relation(fields: [case_id], references: [id])
+  applicant   Applicant @relation(fields: [applicant_id], references: [id], onDelete: Cascade)
+  document    Document? @relation(fields: [document_id], references: [id])
 
   @@unique([case_id, applicant_id, month, year])
   @@map("salary_slip_ocr_results")
+}
+
+// ─── Commission Ledger Models ────────────────────────────────────────────────
+
+enum CommissionLedgerStatus {
+  PENDING
+  INVOICED
+  PAID
+  CANCELLED
+}
+
+enum CommissionEntryType {
+  BASE_COMMISSION
+  REVERSAL
+  MANUAL_ADJUSTMENT
+  VOLUME_ADJUSTMENT
+}
+
+model CommissionLedger {
+  id              Int  @id @default(autoincrement())
+  tenant_id       Int
+  case_id         Int
+  disbursement_id Int? // Nullable for manual adjustments
+
+  entry_type     CommissionEntryType @default(BASE_COMMISSION)
+  reversal_of_id Int? // Links to original entry if this is a reversal
+  is_reversed    Boolean             @default(false)
+  reversed_at    DateTime?
+  reversed_by    Int?
+
+  tenant_lender_id Int?
+
+  lender_name  String
+  product_type String
+
+  payout_basis    String
+  commission_type String
+
+  disbursed_amount      Decimal @db.Decimal(18, 2)
+  calculated_commission Decimal @db.Decimal(18, 2)
+
+  // Immutable Snapshots
+  slab_snapshot        Json
+  calculation_snapshot Json
+
+  status  CommissionLedgerStatus @default(PENDING)
+  remarks String?
+
+  created_by_user_id Int
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  tenant         Tenant             @relation(fields: [tenant_id], references: [id])
+  case_entity    Case               @relation(fields: [case_id], references: [id])
+  disbursement   Disbursement?      @relation(fields: [disbursement_id], references: [id])
+  original_entry CommissionLedger?  @relation("LedgerReversals", fields: [reversal_of_id], references: [id])
+  reversals      CommissionLedger[] @relation("LedgerReversals")
+
+  @@index([tenant_id, status])
+  @@index([case_id])
+  @@map("commission_ledgers")
+}
+
+// ----------------------------------------------------------------------
+// SubDSA Payout Module
+// ----------------------------------------------------------------------
+
+model SubDsaPayoutRule {
+  id                  Int     @id @default(autoincrement())
+  tenant_id           Int
+  sub_dsa_user_id     Int     @unique
+  default_payout_rate Float
+  payout_trigger      String
+  tds_applicable      Boolean @default(true)
+
+  overrides        SubDsaLenderOverride[]
+  case_count_slabs SubDsaCaseCountSlab[]
+  special_schemes  SubDsaSpecialScheme[]
+
+  user   User   @relation(fields: [sub_dsa_user_id], references: [id])
+  tenant Tenant @relation(fields: [tenant_id], references: [id])
+
+  @@map("sub_dsa_payout_rules")
+}
+
+model SubDsaLenderOverride {
+  id               Int       @id @default(autoincrement())
+  rule_id          Int
+  tenant_lender_id Int
+  products         String
+  override_rate    Float
+  effective_from   DateTime?
+
+  rule SubDsaPayoutRule @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+
+  @@map("sub_dsa_lender_overrides")
+}
+
+model SubDsaCaseCountSlab {
+  id              Int   @id @default(autoincrement())
+  rule_id         Int
+  from_cases      Int
+  to_cases        Int?
+  payout_per_case Float
+
+  rule SubDsaPayoutRule @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+
+  @@map("sub_dsa_case_count_slabs")
+}
+
+model SubDsaSpecialScheme {
+  id               Int      @id @default(autoincrement())
+  rule_id          Int
+  scheme_name      String
+  basis            String
+  tenant_lender_id Int?
+  products         String?
+  valid_from       DateTime
+  valid_to         DateTime
+  bonus_per_case   Float?
+  bonus_percent    Float?
+  min_case_count   Int?
+  is_active        Boolean  @default(true)
+
+  rule SubDsaPayoutRule @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+
+  @@map("sub_dsa_special_schemes")
+}
+
+enum SubDsaPayoutStatus {
+  DRAFT
+  INVOICE_RAISED
+  UNDER_REVIEW
+  RECONCILED
+  PDD_PENDING
+  PAID
+  REJECTED
+}
+
+model SubDsaPayoutLedger {
+  id                   Int @id @default(autoincrement())
+  tenant_id            Int
+  sub_dsa_user_id      Int
+  case_id              Int
+  commission_ledger_id Int @unique
+
+  dsa_earned_amount Decimal @db.Decimal(18, 2)
+  sub_dsa_payout    Decimal @db.Decimal(18, 2)
+  subvention_amount Decimal @default(0) @db.Decimal(18, 2)
+  adjustment_amount Decimal @default(0) @db.Decimal(18, 2)
+  adjustment_reason String?
+  tds_amount        Decimal @default(0) @db.Decimal(18, 2)
+  net_payable       Decimal @db.Decimal(18, 2)
+
+  status     SubDsaPayoutStatus @default(DRAFT)
+  invoice_id Int?
+  remarks    String?
+
+  // Immutable Snapshots
+  applied_scheme_snapshot Json?
+  calculation_metadata    Json?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  tenant      Tenant                @relation(fields: [tenant_id], references: [id])
+  user        User                  @relation(fields: [sub_dsa_user_id], references: [id])
+  case_entity Case                  @relation(fields: [case_id], references: [id])
+  invoice     SubDsaInvoice?        @relation(fields: [invoice_id], references: [id])
+  history     SubDsaPayoutHistory[]
+
+  @@index([tenant_id, sub_dsa_user_id, status])
+  @@index([invoice_id])
+  @@map("sub_dsa_payout_ledgers")
+}
+
+model SubDsaInvoice {
+  id              Int                @id @default(autoincrement())
+  tenant_id       Int
+  sub_dsa_user_id Int
+  invoice_number  String             @unique
+  month_year      String
+  total_payout    Decimal            @db.Decimal(18, 2)
+  status          SubDsaPayoutStatus @default(INVOICE_RAISED)
+  pdf_url         String?
+  created_at      DateTime           @default(now())
+
+  items SubDsaPayoutLedger[]
+
+  tenant Tenant @relation(fields: [tenant_id], references: [id])
+  user   User   @relation(fields: [sub_dsa_user_id], references: [id])
+
+  @@map("sub_dsa_invoices")
+}
+
+model SubDsaPayoutHistory {
+  id            Int                 @id @default(autoincrement())
+  ledger_id     Int
+  old_status    SubDsaPayoutStatus?
+  new_status    SubDsaPayoutStatus
+  remarks       String?
+  updated_by_id Int
+  updated_at    DateTime            @default(now())
+
+  ledger     SubDsaPayoutLedger @relation(fields: [ledger_id], references: [id], onDelete: Cascade)
+  updated_by User               @relation(fields: [updated_by_id], references: [id])
+
+  @@map("sub_dsa_payout_history")
 }

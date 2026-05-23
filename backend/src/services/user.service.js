@@ -27,6 +27,7 @@ async function createUser(data, currentUser) {
   //
   // DSA_ADMIN can create:
   //   • DSA_ADMIN, DSA_MEMBER         → only within own DSA tenant
+  //   • DSA_ADMIN, DSA_MEMBER, SUB_DSA → only within own DSA tenant
   //
   // ──────────────────────────────────────────────────────────────────────────
 
@@ -61,7 +62,7 @@ async function createUser(data, currentUser) {
     }
 
   } else if (currentUser.role === 'DSA_ADMIN' || currentUser.role === 'CRED2TECH_MEMBER') {
-    const DSA_ADMIN_ALLOWED_ROLES = ['DSA_ADMIN', 'DSA_MEMBER'];
+    const DSA_ADMIN_ALLOWED_ROLES = ['DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA'];
 
     if (currentUser.role === 'DSA_ADMIN' && !DSA_ADMIN_ALLOWED_ROLES.includes(roleExists.name)) {
       throw Object.assign(

@@ -46,8 +46,10 @@ const tenantLenderContactRoutes = require('./routes/tenantLenderContacts.routes'
 const platformLenderRoutes = require('./routes/platformLender.routes');
 const vendorRoutes = require('./routes/vendor.routes');
 const commissionRoutes = require('./routes/lenderCommission.routes');
+const commissionOperationsRoutes = require('./routes/commissionOperations.routes');
 const disbursementRoutes = require('./routes/disbursement.routes');
 const pddRoutes = require('./routes/pdd.routes');
+const subDsaPayoutRoutes = require('./routes/subDsaPayout.routes');
 
 const apiRouter = express.Router();
 
@@ -66,6 +68,7 @@ apiRouter.use('/admin/tenants', adminTenantRoutes);
 apiRouter.use('/admin/vendors', vendorRoutes);
 apiRouter.use('/admin/lenders', adminLenderRoutes);
 apiRouter.use('/lender-commission', commissionRoutes);
+apiRouter.use('/commission-operations', commissionOperationsRoutes);
 apiRouter.use('/external', externalApiRoutes);
 apiRouter.use('/verification', bureauRoutes);
 apiRouter.use('/documents', documentRoutes);
@@ -78,6 +81,7 @@ apiRouter.use('/tenant/lender-contacts', tenantLenderContactRoutes);
 apiRouter.use('/platform-lenders', platformLenderRoutes);
 apiRouter.use('/disbursements', disbursementRoutes);
 apiRouter.use('/pdd-tasks', pddRoutes);
+apiRouter.use('/sub-dsa', subDsaPayoutRoutes);
 
 app.use('/api', apiRouter);
 
@@ -87,7 +91,7 @@ app.use((err, req, res, next) => {
 });
 
 // Seed canonical roles on startup (idempotent — safe to run every restart)
-const CANONICAL_ROLES = ['SUPER_ADMIN', 'CRED2TECH_MEMBER', 'DSA_ADMIN', 'DSA_MEMBER'];
+const CANONICAL_ROLES = ['SUPER_ADMIN', 'CRED2TECH_MEMBER', 'DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA'];
 
 async function seedRolesIfMissing() {
   try {
@@ -109,8 +113,8 @@ seedRolesIfMissing();
 const seedLendersIfMissing = require('./utils/seed_lenders');
 const seedDataMatrix = require('./utils/seed_matrix');
 
-seedLendersIfMissing().then(() => {
-   seedDataMatrix();
-});
+// seedLendersIfMissing().then(() => {
+//    seedDataMatrix();
+// });
 
 module.exports = app;

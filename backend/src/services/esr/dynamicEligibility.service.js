@@ -1,37 +1,17 @@
 const prisma = require('../../../config/db');
 const { updateStage } = require('../case.service');
+const { 
+    parseMoneySafe, 
+    parsePercentSafe, 
+    parseTenureSafe,
+    parseIntegerSafe,
+    parseFoirRuleSafe, 
+    isCriticalParameter 
+} = require('../../utils/esrParsers');
 
 // ---------- HELPER UTILITIES ----------
 
-function toNumber(value) {
-    if (value === undefined || value === null || value === '') return null;
-    let normalized = value;
-    if (typeof value === 'object') {
-        normalized = value.amount || value.value || value.percent || null;
-    }
-    if (typeof normalized === 'string') {
-        normalized = normalized.replace(/,/g, '').replace(/₹/g, '').replace(/%/g, '').replace(/months/gi, '').trim();
-    }
-    const numeric = Number(normalized);
-    return Number.isFinite(numeric) ? numeric : null;
-}
-
-function parsePercent(value) {
-    if (value === undefined || value === null || value === '') return null;
-    let normalized = typeof value === 'object' ? (value.percent !== undefined ? value.percent : value) : value;
-    if (typeof normalized === 'string') {
-        const strVal = normalized.toLowerCase();
-        // E.g. "Max 100% ( Double wammy - 140%)" -> take raw percentage
-        const match = strVal.match(/(\d+(\.\d+)?)%/);
-        if (match) {
-            return Number(match[1]) / 100;
-        }
-        normalized = normalized.replace(/,/g, '').replace(/%/g, '').trim();
-    }
-    const numeric = Number(normalized);
-    if (!Number.isFinite(numeric)) return null;
-    return numeric > 1 ? numeric / 100 : numeric;
-}
+// Legacy helpers removed, relying on esrParsers.js
 
 function getParamMap(parameterValues) {
     const map = {};
@@ -46,11 +26,31 @@ function getParamMap(parameterValues) {
 }
 
 function getParamNumber(paramMap, key) {
-    return toNumber(paramMap[key]);
+    const rawValue = paramMap[key];
+    const res = parseMoneySafe(rawValue);
+    res.key = key; // Attach key for error logging
+    return res;
 }
 
 function getParamPercent(paramMap, key) {
-    return parsePercent(paramMap[key]);
+    const rawValue = paramMap[key];
+    const res = parsePercentSafe(rawValue);
+    res.key = key;
+    return res;
+}
+
+function getParamTenure(paramMap, key) {
+    const rawValue = paramMap[key];
+    const res = parseTenureSafe(rawValue);
+    res.key = key;
+    return res;
+}
+
+function getParamInteger(paramMap, key) {
+    const rawValue = paramMap[key];
+    const res = parseIntegerSafe(rawValue);
+    res.key = key;
+    return res;
 }
 
 function normalizeIncomeMethod(method) {
@@ -109,18 +109,21 @@ function resolveApplicableLtvKey(esr) {
 
 // ------ FOIR PARSER ------
 function parseDynamicFoir(valString, monthlyIncome) {
-    if (!valString) return null;
-    const str = typeof valString === 'object' ? (valString.percent || valString.value || JSON.stringify(valString)) : String(valString);
-    const lowStr = str.toLowerCase();
+    const res = parseFoirRuleSafe(valString);
+    if (!res.ok || res.value === null) return res;
 
-    if (lowStr.includes('<75k') && lowStr.includes('>75k')) {
-        return monthlyIncome >= 75000 ? 0.70 : 0.60;
-    }
-    if (lowStr.includes('max 100%')) {
-        return 1.0;
+    // Handle structured slab arrays
+    if (Array.isArray(res.value)) {
+        for (const slab of res.value) {
+            if (slab.income_min && monthlyIncome < slab.income_min) continue;
+            if (slab.income_max && monthlyIncome > slab.income_max) continue;
+            return { ok: true, value: slab.value, warning: res.warning, error: null };
+        }
+        // Fallback if slab doesn't match
+        return { ok: false, value: null, warning: null, error: "Income does not match FOIR slabs." };
     }
 
-    return parsePercent(str);
+    return res;
 }
 
 
@@ -136,43 +139,74 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const failure_reasons = [];
     const warnings = [];
 
-    // Scheme Matching Method
-    const targetMethod = normalizeIncomeMethod(esr.selected_income_method);
+    const schemeIncomeMethod = normalizeIncomeMethod(scheme.scheme_name);
+    const caseIncomeMethod = normalizeIncomeMethod(esr.income_method);
     let income_method_matched = true;
-    if (targetMethod && scheme.scheme_name !== targetMethod) {
-        income_method_matched = false;
-        // Do not force fail, let it process naturally, merely report flag.
+
+    if (caseIncomeMethod && schemeIncomeMethod) {
+        if (schemeIncomeMethod !== caseIncomeMethod) {
+            income_method_matched = false;
+            isEligible = false;
+            failure_reasons.push(`Scheme income method (${schemeIncomeMethod}) does not match case (${caseIncomeMethod})`);
+        }
     }
 
     const pref = pType === 'hl' ? 'hl' : 'lap';
 
+    // Generic parsing evaluator helper
+    const handleParseResult = (res, paramKey) => {
+        if (!res.ok) {
+            if (isCriticalParameter(paramKey)) {
+                isEligible = false;
+                failure_reasons.push(`Invalid lender configuration for ${paramKey}: ${res.error}`);
+            } else {
+                warnings.push(`Invalid configuration ignored for ${paramKey}: ${res.error}`);
+            }
+        } else if (res.warning) {
+            warnings.push(`Parser warning for ${paramKey}: ${res.warning}`);
+        }
+        
+        // Block missing critical parameters (unless max_loan which can be NO_CAP, NO_CAP yields null but ok=true)
+        if (res.ok && res.value === null && isCriticalParameter(paramKey)) {
+            // max_loan is allowed to be null ONLY if it was explicitly parsed as NO_CAP, which returns value='NO_CAP' then normalized=null.
+            // Wait, parseMoneySafe returns 'NO_CAP' if it was NO CAP. 
+            // So if it's null, it was just missing or empty.
+            if (!(paramKey.includes('_max_loan'))) {
+                isEligible = false;
+                failure_reasons.push(`Missing required lender configuration for ${paramKey}`);
+            }
+        }
+        
+        return res.value === 'NO_CAP' ? null : res.value;
+    };
+
     // A. Bureau Cutoff — use lowest_cibil_score to be conservative (worst applicant in pool)
-    const rawBureau = paramMap['bureau_cutoff'];
+    const bureauRes = getParamInteger(paramMap, 'bureau_cutoff');
+    const bureauCutoff = handleParseResult(bureauRes, 'bureau_cutoff');
+
     // Effective CIBIL is the lowest across all applicants; fall back to primary score if no bureau pulls done
     const effectiveCibil = (lowest_cibil_score !== undefined && lowest_cibil_score !== null)
         ? lowest_cibil_score
         : esr.bureau_score;
 
-    if (rawBureau !== undefined && rawBureau !== null && rawBureau !== '') {
-        const bureauCutoff = toNumber(rawBureau);
-        if (bureauCutoff && (!effectiveCibil || effectiveCibil < bureauCutoff)) {
+    if (bureauCutoff !== null) {
+        if (!effectiveCibil || effectiveCibil < bureauCutoff) {
             isEligible = false;
             failure_reasons.push(effectiveCibil
                 ? `Lowest CIBIL score ${effectiveCibil} is below bureau cutoff ${bureauCutoff}`
                 : "Bureau score missing.");
         }
-    } else if (effectiveCibil === null) {
+    } else if (effectiveCibil === null && isEligible) {
         warnings.push("Bureau score missing, but no cutoff defined.");
     }
 
     // B & C. Min / Max Loan
-    const minLoan = getParamNumber(paramMap, `${pref}_min_loan`);
-    const maxLoanRaw = paramMap[`${pref}_max_loan`];
-    const maxLoan = toNumber(maxLoanRaw);
+    const minLoanRes = getParamNumber(paramMap, `${pref}_min_loan`);
+    const minLoan = handleParseResult(minLoanRes, `${pref}_min_loan`);
 
-    if (maxLoanRaw !== undefined && maxLoanRaw !== null && maxLoan === null) {
-        warnings.push(`Max loan parameter is not numeric: ${typeof maxLoanRaw === 'object' ? JSON.stringify(maxLoanRaw) : maxLoanRaw}`);
-    }
+    const maxLoanRaw = paramMap[`${pref}_max_loan`];
+    const maxLoanRes = getParamNumber(paramMap, `${pref}_max_loan`);
+    const maxLoan = handleParseResult(maxLoanRes, `${pref}_max_loan`);
 
     const reqAmt = esr.requested_loan_amount ? Number(esr.requested_loan_amount) : null;
     if (reqAmt !== null) {
@@ -190,9 +224,21 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
 
     // D. FOIR
     const rawFoir = paramMap[`${pref}_dbr_foir`];
-    let foir_allowed_percent = parseDynamicFoir(rawFoir, esr.selected_monthly_income);
-
     const monthlyIncome = esr.selected_monthly_income || 0;
+    
+    const foirRes = parseDynamicFoir(rawFoir, monthlyIncome);
+    const foir_allowed_percent_value = handleParseResult(foirRes, `${pref}_dbr_foir`);
+
+    let foir_allowed_percent = null;
+    if (foir_allowed_percent_value !== null) {
+        if (typeof foir_allowed_percent_value === 'object' && foir_allowed_percent_value.type === 'conditional_foir') {
+            foir_allowed_percent = foir_allowed_percent_value.base_limit / 100;
+            warnings.push(`Conditional FOIR detected: Base limit is ${(foir_allowed_percent * 100).toFixed(1)}%. Special program '${foir_allowed_percent_value.special_program}' allows up to ${foir_allowed_percent_value.special_limit}% under manual underwriting.`);
+        } else {
+            foir_allowed_percent = foir_allowed_percent_value;
+        }
+    }
+
     const existingObligations = esr.existing_obligations || 0;
     let foir_actual_percent = monthlyIncome > 0 ? (existingObligations / monthlyIncome) : 0;
     let max_eligible_emi = null;
@@ -203,13 +249,14 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
             failure_reasons.push(`FOIR ${(foir_actual_percent * 100).toFixed(1)}% exceeds allowed ${(foir_allowed_percent * 100).toFixed(1)}%`);
         }
         max_eligible_emi = monthlyIncome * foir_allowed_percent - existingObligations;
-    } else if (rawFoir && rawFoir !== '---') {
-        warnings.push(`FOIR parameter could not be parsed numerically: ${typeof rawFoir === 'object' ? JSON.stringify(rawFoir) : rawFoir}`);
     }
 
     // E. Max Age At Maturity
-    const maxAge = getParamNumber(paramMap, 'age_maturity_income');
-    const maxTenureMonths = getParamNumber(paramMap, `${pref}_max_tenure`);
+    const maxAgeRes = getParamInteger(paramMap, 'age_maturity_income');
+    const maxAge = handleParseResult(maxAgeRes, 'age_maturity_income');
+
+    const maxTenureRes = getParamTenure(paramMap, `${pref}_max_tenure`);
+    const maxTenureMonths = handleParseResult(maxTenureRes, `${pref}_max_tenure`);
     if (maxAge !== null && maxTenureMonths !== null && esr.applicant_age) {
         const ageAtMaturity = esr.applicant_age + (maxTenureMonths / 12);
         if (ageAtMaturity > maxAge) {
@@ -220,7 +267,11 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
 
     // F. LTV
     const applicable_ltv_key = resolveApplicableLtvKey(esr);
-    const applicable_ltv_percent = getParamPercent(paramMap, applicable_ltv_key);
+    let applicable_ltv_percent = null;
+    if (applicable_ltv_key) {
+        const ltvRes = getParamPercent(paramMap, applicable_ltv_key);
+        applicable_ltv_percent = handleParseResult(ltvRes, applicable_ltv_key);
+    }
     let max_loan_by_ltv = null;
     let final_eligible_loan_amount = null;
 
@@ -241,18 +292,17 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     }
 
     // G. ROI & PF
-    const roi_min = getParamNumber(paramMap, `${pref}_roi_min`);
-    const roi_max = getParamNumber(paramMap, `${pref}_roi_max`);
-    const pf_min = getParamNumber(paramMap, `${pref}_pf_min`);
-    const pf_max = getParamNumber(paramMap, `${pref}_pf_max`);
+    const roiMinRes = getParamPercent(paramMap, `${pref}_roi_min`);
+    const roi_min = handleParseResult(roiMinRes, `${pref}_roi_min`);
 
-    // H. Warn on Invalid or Missing Configuration Matrix Points
-    Object.keys(paramMap).forEach(k => {
-        const v = paramMap[k];
-        if (v === '---' || v === null || v === '') {
-            warnings.push(`Invalid parameter value: ${k}`);
-        }
-    });
+    const roiMaxRes = getParamPercent(paramMap, `${pref}_roi_max`);
+    const roi_max = handleParseResult(roiMaxRes, `${pref}_roi_max`);
+
+    const pfMinRes = getParamPercent(paramMap, `${pref}_pf_min`);
+    const pf_min = handleParseResult(pfMinRes, `${pref}_pf_min`);
+
+    const pfMaxRes = getParamPercent(paramMap, `${pref}_pf_max`);
+    const pf_max = handleParseResult(pfMaxRes, `${pref}_pf_max`);
 
     const finalEvaluation = {
         scheme_id: scheme.id,

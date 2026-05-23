@@ -11,6 +11,7 @@ import {
   Activity,
   Mail,
   Network,
+  Target,
 } from 'lucide-react';
 
 export const NAV_ITEMS = [
@@ -83,7 +84,7 @@ export const NAV_ITEMS = [
   {
     id: 'dsa-team',
     label: 'Team Management',
-    path: '/users',
+    path: '/team-management',
     icon: Users,
     roles: ['DSA_ADMIN'],
   },
@@ -129,8 +130,43 @@ export const NAV_ITEMS = [
     icon: Activity,
     roles: ['DSA_ADMIN', 'DSA_MEMBER'],
   },
+  {
+    id: 'sales-incentive',
+    label: 'Sales Incentive',
+    path: '/financials/sales-incentive',
+    icon: Target,
+    roles: ['DSA_ADMIN', 'DSA_MEMBER'],
+  },
+  {
+    id: 'lender-commission',
+    label: 'Lender Commission',
+    path: '/financials/lender-commission',
+    icon: Building,
+    roles: ['DSA_ADMIN'],
+  },
+  {
+    id: 'sub-dsa-payout',
+    label: 'Sub DSA Payout',
+    path: '/financials/sub-dsa-payout',
+    icon: Target,
+    roles: ['DSA_ADMIN', 'SUB_DSA'],
+  },
 
-
+  // SUB_DSA Views
+  {
+    id: 'sub-dsa-dashboard',
+    label: 'Dashboard',
+    path: '/',
+    icon: LayoutDashboard,
+    roles: ['SUB_DSA'],
+  },
+  {
+    id: 'sub-dsa-pipeline',
+    label: 'My Pipeline',
+    path: '/customers',
+    icon: Briefcase,
+    roles: ['SUB_DSA'],
+  },
 
   // DSA_MEMBER / Shared Views
   {
@@ -138,7 +174,7 @@ export const NAV_ITEMS = [
     label: 'My Profile',
     path: '/profile',
     icon: User,
-    roles: ['SUPER_ADMIN', 'DSA_ADMIN', 'DSA_MEMBER', 'CRED2TECH_MEMBER'],
+    roles: ['SUPER_ADMIN', 'DSA_ADMIN', 'DSA_MEMBER', 'CRED2TECH_MEMBER', 'SUB_DSA'],
   },
   {
     id: 'my-manager',

@@ -150,35 +150,58 @@ const LenderConfigPage = () => {
       }
    };
 
-   const handleCellBlur = async (schemeId, parameterId, newValue) => {
+   const getDisplayValue = (val) =>
+      typeof val === 'object' && val !== null
+        ? String(val.raw ?? val.normalized ?? val.value ?? '')
+        : String(val ?? '');
+
+   const handleCellBlur = async (schemeId, parameterId, newValue, e) => {
       const key = `${schemeId}_${parameterId}`;
-      if (matrixData[key] === newValue) return; // No change
+      const previousValue = matrixData[key];
+      
+      if (getDisplayValue(previousValue) === String(newValue ?? '')) return; // No change
 
       // Optimistic UI mapping
       setMatrixData(prev => ({ ...prev, [key]: newValue }));
 
       try {
-         await updateSchemeParameter(schemeId, parameterId, newValue);
-         toast.success("Saved");
-      } catch (e) {
-         toast.error("Failed to update cell.");
+         const saved = await updateSchemeParameter(schemeId, parameterId, newValue);
+         setMatrixData(prev => ({ ...prev, [key]: saved.value }));
+         const warningMsg = saved.warning || saved.value?.warning;
+         if (warningMsg) {
+             toast(warningMsg, { icon: '⚠️' });
+         } else {
+             toast.success("Saved");
+         }
+      } catch (eError) {
+         setMatrixData(prev => ({ ...prev, [key]: previousValue }));
+         if (e && e.target) {
+             e.target.value = getDisplayValue(previousValue);
+         }
+         toast.error(eError.response?.data?.error || eError.message || "Failed to update cell.");
       }
    };
 
    const openSlabEditor = (schemeId, paramId, label) => {
       const key = `${schemeId}_${paramId}`;
+      let init = matrixData[key];
+      if (init && typeof init === 'object' && !Array.isArray(init)) {
+          init = init.normalized !== undefined ? init.normalized : (init.value || init);
+      }
+      if (!Array.isArray(init)) init = [];
+
       setSlabModalInfo({
          schemeId,
          parameterId: paramId,
          label: label,
-         initialData: matrixData[key] || []
+         initialData: init
       });
    };
 
    const handleSlabSave = async (structuredData) => {
       const { schemeId, parameterId } = slabModalInfo;
       setSlabModalInfo(null);
-      await handleCellBlur(schemeId, parameterId, structuredData);
+      await handleCellBlur(schemeId, parameterId, structuredData, null);
    };
 
    const addScheme = async () => {
@@ -344,7 +367,8 @@ const LenderConfigPage = () => {
                                     </td>
 
                                     {schemes.map(sch => {
-                                       const val = matrixData[`${sch.id}_${p.id}`] || '';
+                                       const val = matrixData[`${sch.id}_${p.id}`] ?? '';
+                                       const slabArr = Array.isArray(val) ? val : (val && Array.isArray(val.normalized) ? val.normalized : []);
                                        return (
                                           <td key={sch.id} className="p-1 border-r text-center align-middle relative group">
                                              {p.data_type === 'json_slab' ? (
@@ -352,14 +376,14 @@ const LenderConfigPage = () => {
                                                    className="w-full text-xs py-1.5 px-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded border border-blue-200 font-medium transition-colors"
                                                    onClick={() => openSlabEditor(sch.id, p.id, p.parameter_label)}
                                                 >
-                                                   {Array.isArray(val) && val.length > 0 ? `Slab Set (${val.length} rules)` : 'Configure Slabs'}
+                                                   {slabArr.length > 0 ? `Slab Set (${slabArr.length} rules)` : 'Configure Slabs'}
                                                 </button>
                                              ) : (
                                                 <input
                                                    type="text"
                                                    className="w-full h-full p-2 text-sm text-center bg-transparent border-0 ring-1 ring-transparent focus:ring-blue-500 focus:bg-white rounded transition-all focus:outline-none placeholder-gray-300"
-                                                   defaultValue={typeof val === 'object' ? JSON.stringify(val) : val}
-                                                   onBlur={(e) => handleCellBlur(sch.id, p.id, p.data_type === 'integer' ? parseInt(e.target.value) || 0 : p.data_type === 'boolean' ? e.target.value === 'true' : e.target.value)}
+                                                   defaultValue={getDisplayValue(val)}
+                                                   onBlur={(e) => handleCellBlur(sch.id, p.id, e.target.value, e)}
                                                    placeholder="---"
                                                 />
                                              )}
