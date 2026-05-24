@@ -254,16 +254,16 @@ const CalcBreakdownPanel = ({ evaluations, monthlyIncome }) => {
       {open && (
         <div style={{ marginTop: 10, borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)' }}>
           {evaluations.length > 1 && (
-            <div style={{ display: 'flex', background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)', overflowX: 'auto', whiteSpace: 'nowrap' }}>
               {evaluations.map((e, i) => (
                 <button key={i} onClick={() => setActiveScheme(i)} style={{
-                  flex: 1, padding: '8px 6px', fontSize: 11, fontWeight: 600,
+                  flex: '0 0 auto', padding: '8px 12px', fontSize: 11, fontWeight: 600,
                   border: 'none', cursor: 'pointer',
                   background: activeScheme === i ? 'var(--primary)' : 'transparent',
                   color: activeScheme === i ? '#fff' : 'var(--text-secondary)',
                 }}>
                   {e.scheme_name}
-                  <span style={{ marginLeft: 4, fontSize: 9, padding: '1px 5px', borderRadius: 10,
+                  <span style={{ marginLeft: 6, fontSize: 9, padding: '2px 6px', borderRadius: 10,
                     background: e.is_eligible ? '#9AE6B4' : '#FED7D7',
                     color: e.is_eligible ? '#22543D' : '#C53030' }}>
                     {e.is_eligible ? '✓' : '✕'}
@@ -294,7 +294,7 @@ const CalcBreakdownPanel = ({ evaluations, monthlyIncome }) => {
               ))}
             </div>
             <div style={{ marginTop: 10, padding: '8px 12px', background: '#1A202C', borderRadius: 8,
-              fontSize: 10, color: '#A0AEC0', fontFamily: 'monospace', lineHeight: 1.8 }}>
+              fontSize: 10, color: '#A0AEC0', fontFamily: 'monospace', lineHeight: 1.8, wordBreak: 'break-word', whiteSpace: 'normal' }}>
               <div style={{ color: '#68D391', fontWeight: 700, marginBottom: 4 }}>📐 Calculation Trace</div>
               <div>Max EMI = Income ({formatDynamicCurrency(monthlyIncome)}) × FOIR ({fmtPct(ev.foir_allowed_percent)}) − Obligations = {ev.max_eligible_emi != null ? formatDynamicCurrency(Math.max(0, ev.max_eligible_emi)) : '—'}</div>
               <div>Max Loan LTV = {ev.max_loan_by_ltv != null ? formatDynamicCurrency(ev.max_loan_by_ltv) : '—'}</div>
