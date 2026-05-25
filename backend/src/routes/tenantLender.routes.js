@@ -13,7 +13,7 @@ router.use(authenticate);
 
 // ── Lenders ──────────────────────────────────────────────────────────────────
 // Both roles can LIST (DSA_MEMBER needs it for Send to Other Lender modal)
-router.get('/',     requireRole('DSA_ADMIN', 'DSA_MEMBER'), ctrl.list);
+router.get('/',     requireRole('DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA'), ctrl.list);
 
 // Only DSA_ADMIN can mutate
 router.post('/',    requireRole('DSA_ADMIN'), ctrl.create);

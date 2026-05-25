@@ -1,5 +1,6 @@
 const prisma = require('../../../config/db');
 const { updateStage } = require('../case.service');
+const EsrTraceLogger = require('./esrTraceLogger');
 const { 
     parseMoneySafe, 
     parsePercentSafe, 
@@ -35,43 +36,65 @@ function toDisplayRoi(value) {
 
 // Legacy helpers removed, relying on esrParsers.js
 
+// ------ SAFE PARAM VALUE RESOLVER ------
+// Unwraps Prisma JSON-stored parameter objects so parsers always receive
+// a plain string/number, never [object Object].
+function resolveRawParamValue(value) {
+    if (value === undefined || value === null) return null;
+    if (typeof value !== 'object') return value; // Already a primitive string/number
+
+    // Unwrap Prisma normalizeParameter() output: { raw, normalized, type }
+    if (value.raw !== undefined) return value.raw;
+
+    // Fallback: prefer .normalized if .raw is absent
+    if (value.normalized !== undefined && value.normalized !== null) return value.normalized;
+
+    // Last resort: stringify to prevent [object Object] poisoning parsers
+    try { return JSON.stringify(value); } catch { return null; }
+}
+
 function getParamMap(parameterValues) {
     const map = {};
     if (!Array.isArray(parameterValues)) return map;
     parameterValues.forEach(pv => {
         const key = pv.parameter?.parameter_key || pv.parameter_key;
         if (key) {
-            map[key] = pv.value;
+            // Always resolve to a raw scalar — parsers must never receive objects
+            map[key] = resolveRawParamValue(pv.value);
         }
     });
     return map;
 }
 
 function getParamNumber(paramMap, key) {
-    const rawValue = paramMap[key];
+    const rawValue = resolveRawParamValue(paramMap[key]);
     const res = parseMoneySafe(rawValue);
-    res.key = key; // Attach key for error logging
+    res.key = key;
+    res.raw = rawValue;
     return res;
 }
 
 function getParamPercent(paramMap, key) {
-    const rawValue = paramMap[key];
+    const rawValue = resolveRawParamValue(paramMap[key]);
     const res = parsePercentSafe(rawValue);
     res.key = key;
+    res.raw = rawValue;
     return res;
 }
 
 function getParamTenure(paramMap, key) {
-    const rawValue = paramMap[key];
+    const rawValue = resolveRawParamValue(paramMap[key]);
     const res = parseTenureSafe(rawValue);
     res.key = key;
+    res.raw = rawValue;
     return res;
 }
 
 function getParamInteger(paramMap, key) {
-    const rawValue = paramMap[key];
+    const rawValue = resolveRawParamValue(paramMap[key]);
     const res = parseIntegerSafe(rawValue);
     res.key = key;
+    res.raw = rawValue;
     return res;
 }
 
@@ -138,8 +161,8 @@ function parseDynamicFoir(valString, monthlyIncome) {
     // Handle structured slab arrays
     if (Array.isArray(res.value)) {
         for (const slab of res.value) {
-            if (slab.income_min && monthlyIncome < slab.income_min) continue;
-            if (slab.income_max && monthlyIncome > slab.income_max) continue;
+            if (slab.income_min !== undefined && monthlyIncome < slab.income_min) continue;
+            if (slab.income_max !== undefined && monthlyIncome > slab.income_max) continue;
             return { ok: true, value: slab.value, warning: res.warning, error: null };
         }
         // Fallback if slab doesn't match
@@ -151,38 +174,65 @@ function parseDynamicFoir(valString, monthlyIncome) {
 
 
 // ------ RESOLVE SCHEME-SPECIFIC PRIMARY INCOME ------
-function getSchemePrimaryIncome(schemeName, esr) {
+function getSchemePrimaryIncome(schemeName, esr, paramMap) {
     const name = (schemeName || '').toUpperCase();
     if (name.includes('SALARIED')) {
-        // Salaried: use Salary Slip net income or fallback to selected_monthly_income
-        return Number(esr.salaried_income) || Number(esr.selected_monthly_income) || 0;
+        const baseSalary  = Number(esr.salaried_income) || Number(esr.selected_monthly_income) || 0;
+        const incentives  = Number(esr.salaried_incentive_income) || 0;
+        const otherIncome = Number(esr.salaried_other_income) || 0;
+        return baseSalary + incentives + otherIncome;
     }
     if (name.includes('BANKING') || name.includes('ABB')) {
-        // Banking Surrogate: Take max of avg bank credit monthly income vs 10% of Average Bank Balance
+        const abb = Number(esr.bank_avg_balance) || 0;
+        const rawMultiplier = paramMap['banking_abb_multiplier'];
+        const multiplierRes = parseIntegerSafe(rawMultiplier);
+        const abbMultiplier = (multiplierRes.ok && multiplierRes.value !== null) ? multiplierRes.value : 2;
+
         const creditIncome = Number(esr.banking_income) || Number(esr.bank_monthly_income) || 0;
-        const abbSurrogate = (Number(esr.bank_avg_balance) || 0) * 0.10;
+        const abbSurrogate  = abb * abbMultiplier;
         return Math.max(creditIncome, abbSurrogate) || Number(esr.selected_monthly_income) || 0;
     }
     if (name.includes('GST')) {
-        // GST Turnover: Average monthly turnover * Industry margin (fall back to 10% standard margin if missing)
-        const turnover = Number(esr.gst_avg_monthly_sales) || 0;
-        const margin = Number(esr.gst_industry_margin) || 10;
-        const calculatedGstIncome = turnover * (margin / 100);
+        let turnover = Number(esr.gst_avg_monthly_sales) || 0;
+        let margin = Number(esr.gst_industry_margin) || 0.10;
+        if (margin > 1) margin = margin / 100;
+
+        if (turnover > 0 && esr.selected_monthly_income > 0 && turnover > esr.selected_monthly_income * 12) {
+            console.warn(`[ESR INCOME] GST turnover ${turnover} looks like annual figure (> 12x monthly income). Dividing by 12.`);
+            turnover = turnover / 12;
+        }
+        const calculatedGstIncome = turnover * margin;
         return calculatedGstIncome || Number(esr.gst_income) || Number(esr.selected_monthly_income) || 0;
     }
     if (name.includes('NET PROFIT') || name.includes('NPM')) {
-        // Net Profit Method (NPM): PAT + Depreciation + Interest/Finance Cost addback monthly
-        const npmIncome = ((Number(esr.itr_pat) || 0) + (Number(esr.itr_depreciation) || 0) + (Number(esr.itr_finance_cost) || 0)) / 12;
-        return npmIncome || Number(esr.net_profit_income) || Number(esr.selected_monthly_income) || 0;
+        const pat          = Number(esr.itr_pat) || 0;
+        const depr         = Number(esr.itr_depreciation) || 0;
+        const financeCost  = Number(esr.itr_finance_cost) || 0;
+        const remuneration = Number(esr.itr_remuneration) || 0;
+
+        const rawDeprFraction = paramMap['npm_depreciation_fraction'];
+        const deprFractionRes = parsePercentSafe(rawDeprFraction);
+        const deprFraction = (deprFractionRes.ok && deprFractionRes.value !== null) ? deprFractionRes.value : (2 / 3);
+
+        const depreciationAddback = depr * deprFraction;
+
+        return (pat + depreciationAddback + financeCost + remuneration) / 12
+            || Number(esr.net_profit_income)
+            || Number(esr.selected_monthly_income)
+            || 0;
     }
     if (name.includes('GRP') || name.includes('GROSS RECEIPT')) {
-        // Gross Receipt: Gross receipts * 50% business margin standard monthly
         const grossReceipts = Number(esr.itr_gross_receipts) || 0;
-        const calculatedGrpIncome = (grossReceipts * 0.50) / 12;
-        return calculatedGrpIncome || Number(esr.selected_monthly_income) || 0;
+        
+        const rawGrpMult = paramMap['grp_annual_receipts_multiplier'];
+        const grpMultRes = parseIntegerSafe(rawGrpMult);
+        const grpMultiplier = (grpMultRes.ok && grpMultRes.value !== null) ? grpMultRes.value : 4;
+
+        return (grossReceipts * grpMultiplier) / 12
+            || Number(esr.selected_monthly_income)
+            || 0;
     }
     if (name.includes('NET WORTH') || name.includes('NWM')) {
-        // Net Worth Method: fallback driven asset-surrogate monthly income
         return Number(esr.selected_monthly_income) || 0;
     }
     return Number(esr.selected_monthly_income) || 0;
@@ -190,29 +240,23 @@ function getSchemePrimaryIncome(schemeName, esr) {
 
 // ------ OPTIONAL INCOME COMPOSITION ENGINE ------
 function calculateComposedIncome({ schemeName, esr, incomeEntries, paramMap }) {
-    const primaryIncome = getSchemePrimaryIncome(schemeName, esr);
+    const primaryIncome = getSchemePrimaryIncome(schemeName, esr, paramMap);
 
     const getBoolParam = (key, defaultVal = false) => {
         const raw = paramMap[key];
         if (raw === undefined || raw === null) return defaultVal;
-        if (typeof raw === 'object') {
-            if (raw.normalized !== undefined && raw.normalized !== null) return !!raw.normalized;
-            return String(raw.raw || '').toLowerCase().includes('yes');
-        }
-        return String(raw).toLowerCase().includes('yes') || raw === 'true' || raw === true;
+        const str = String(raw).toLowerCase().trim();
+        return str.includes('yes') || str === 'true' || raw === true;
     };
 
     const getPercentParam = (key, defaultVal = 0) => {
         const raw = paramMap[key];
         if (raw === undefined || raw === null) return defaultVal;
-        if (typeof raw === 'object') {
-            if (raw.normalized !== undefined && raw.normalized !== null) return Number(raw.normalized);
-            const rawStr = String(raw.raw || '');
-            const match = rawStr.match(/(\d+)%/);
-            return match ? parseInt(match[1]) / 100 : defaultVal;
-        }
-        const match = String(raw).match(/(\d+)%/);
-        return match ? parseInt(match[1]) / 100 : (Number(raw) || defaultVal);
+        const str = String(raw).trim();
+        const match = str.match(/(\d+(\.\d+)?)%/);
+        if (match) return parseFloat(match[1]) / 100;
+        const num = Number(raw);
+        return Number.isFinite(num) ? (num > 1 ? num / 100 : num) : defaultVal;
     };
 
     const eligRentalBank = getBoolParam('elig_rental_bank', true);
@@ -362,11 +406,8 @@ function calculateAgeBasedTenureLimit(applicants, paramMap, warnings, policyWarn
     const getIntParam = (key, defaultVal = null) => {
         const raw = paramMap[key];
         if (raw === undefined || raw === null) return defaultVal;
-        if (typeof raw === 'object') {
-            if (raw.normalized !== undefined && raw.normalized !== null) return Number(raw.normalized);
-            return Number(raw.raw) || defaultVal;
-        }
-        return Number(raw) || defaultVal;
+        const num = Number(raw);
+        return Number.isFinite(num) ? num : defaultVal;
     };
 
     const ageMaturityIncome = getIntParam('age_maturity_income', 60);
@@ -447,10 +488,14 @@ function applyConditionalUnderwritingRelaxations(evaluation, conditionalFlags, p
 
 
 // ------ EVALUATE SCHEME ------
-function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest_cibil_score, incomeEntries, applicants, obligationsList }) {
+function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest_cibil_score, incomeEntries, applicants, obligationsList, logger }) {
     console.log(`\n[ESR ENGINE] Evaluating Scheme: ${scheme.scheme_name} | Lender: ${lender.name} | Product: ${product.product_type}`);
     const paramMap = getParamMap(scheme.parameter_values);
     console.log(`[ESR ENGINE] Parsed Parameter Map:`, JSON.stringify(paramMap, null, 2));
+
+    // Start scheme trace block
+    logger?.startSchemeTrace(lender.name, scheme.scheme_name);
+    logger?.traceStep('PARAMETER MAP', Object.keys(paramMap).map(k => `${k}: ${paramMap[k]}`).join('\n'));
 
     const pType = (esr.product_type || '').toLowerCase();
 
@@ -500,6 +545,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     // A. Bureau Cutoff
     const bureauRes = getParamInteger(paramMap, 'bureau_cutoff');
     const bureauCutoff = handleParseResult(bureauRes, 'bureau_cutoff');
+    logger?.traceParser('parseIntegerSafe', 'bureau_cutoff', bureauRes.raw, bureauRes);
 
     const effectiveCibil = (lowest_cibil_score !== undefined && lowest_cibil_score !== null)
         ? lowest_cibil_score
@@ -511,9 +557,17 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
             failure_reasons.push(effectiveCibil
                 ? `Lowest CIBIL score ${effectiveCibil} is below bureau cutoff ${bureauCutoff}`
                 : "Bureau score missing.");
+            logger?.traceFailure('CIBIL_REJECT', effectiveCibil
+                ? `Lowest CIBIL ${effectiveCibil} < Bureau Cutoff ${bureauCutoff}`
+                : 'Bureau score missing');
+        } else {
+            logger?.traceStep('BUREAU CHECK', `PASS — Effective CIBIL ${effectiveCibil} >= Cutoff ${bureauCutoff}`);
         }
     } else if (effectiveCibil === null && isEligible) {
         warnings.push("Bureau score missing, but no cutoff defined.");
+        logger?.traceWarning('Bureau score missing but no cutoff configured');
+    } else {
+        logger?.traceStep('BUREAU CHECK', `No bureau cutoff configured — Effective CIBIL: ${effectiveCibil ?? 'N/A'}`);
     }
 
     // B & C. Min / Max Loan Limits
@@ -527,26 +581,60 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const incomeComposition = calculateComposedIncome({ schemeName: scheme.scheme_name, esr, incomeEntries, paramMap });
     const composedIncome = incomeComposition.total_eligible_income;
 
+    logger?.traceStep('STEP 1-2 — INCOME COMPOSITION', [
+        `Primary Income:       ₹${(incomeComposition.primary_income || 0).toLocaleString()}`,
+        `Rental (Bank):        ₹${(incomeComposition.rental_bank || 0).toLocaleString()}`,
+        `Agri Income:          ₹${(incomeComposition.agri_income || 0).toLocaleString()}`,
+        `Other Income:         ₹${(incomeComposition.other_income || 0).toLocaleString()}`,
+        `Total Eligible:       ₹${composedIncome.toLocaleString()}`,
+        `Breakdown:            ${JSON.stringify(incomeComposition.breakdown || {})}`,
+    ].join('\n'));
+
     if (composedIncome <= 0) {
         isEligible = false;
         failure_reasons.push("Composed eligible income is 0 or missing.");
+        logger?.traceFailure('INCOME_REJECT', 'Composed eligible income is zero or missing');
     }
 
     // 2. Resolve Allowed FOIR limit
     const rawFoir = paramMap[`${pref}_dbr_foir`];
     const foirRes = parseDynamicFoir(rawFoir, composedIncome);
     const foir_allowed_percent_value = handleParseResult(foirRes, `${pref}_dbr_foir`);
+    logger?.traceParser('parseDynamicFoir', `${pref}_dbr_foir`, rawFoir, foirRes);
 
     let foir_allowed_percent = null;
     let conditionalFlags = null;
+    let skip_foir_check = false;
     if (foir_allowed_percent_value !== null) {
         if (typeof foir_allowed_percent_value === 'object' && foir_allowed_percent_value.type === 'conditional_foir') {
-            foir_allowed_percent = foir_allowed_percent_value.base_limit / 100;
+            const isDoubleWhammy = esr.double_whammy_flag === true;
+            if (isDoubleWhammy) {
+                foir_allowed_percent = foir_allowed_percent_value.special_limit / 100;
+                warnings.push(`Double Whammy activated — FOIR limit set to ${foir_allowed_percent_value.special_limit}%.`);
+            } else {
+                foir_allowed_percent = foir_allowed_percent_value.base_limit / 100;
+            }
             conditionalFlags = foir_allowed_percent_value;
-            warnings.push(`Conditional FOIR: Base limit ${foir_allowed_percent_value.base_limit}%. Special program '${foir_allowed_percent_value.special_program}' allows up to ${foir_allowed_percent_value.special_limit}% under manual underwriting.`);
+        } else if (typeof foir_allowed_percent_value === 'object' && foir_allowed_percent_value.type === 'no_dbr') {
+            skip_foir_check = true;
+            warnings.push("No DBR policy configured. FOIR validation skipped.");
         } else {
             foir_allowed_percent = foir_allowed_percent_value;
         }
+    }
+
+    logger?.traceStep('STEP 3 — FOIR RESOLUTION', [
+        `Raw FOIR Param:       "${rawFoir ?? 'N/A'}"`,
+        `FOIR Allowed %:       ${foir_allowed_percent !== null ? (foir_allowed_percent * 100).toFixed(2) + '%' : 'N/A'}`,
+        `Skip FOIR Check:      ${skip_foir_check}`,
+        `Conditional Flags:    ${conditionalFlags ? JSON.stringify(conditionalFlags) : 'None'}`,
+    ].join('\n'));
+
+    // GUARD: FOIR must be resolvable (unless No DBR)
+    if (!skip_foir_check && foir_allowed_percent === null) {
+        isEligible = false;
+        failure_reasons.push(`FOIR/DBR not configured or could not be resolved for this scheme.`);
+        logger?.traceFailure('CONFIG_MISSING', `FOIR = null and skip_foir_check = false — cannot underwrite`);
     }
 
     // 3. Resolve Net Obligations with dynamic exclusions
@@ -555,9 +643,18 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const netObligationsResult = calculateNetObligations(obligationsList, exclusionMonths, warnings, policyWarnings, obligationExclusionNotes);
     const netObligations = netObligationsResult.net_obligations;
 
+    logger?.traceStep('STEP 4 — NET OBLIGATIONS', [
+        `Obligation Rule:      "${rawObligationRule ?? 'N/A'}"`,
+        `Exclusion Months:     ${exclusionMonths ?? 'None'}`,
+        `Total Obligations:    ${obligationsList.length}`,
+        `Excluded:             ${(netObligationsResult.excluded || []).map(o => `${o.lender_name || 'Unknown'} ${o.loan_type || ''} EMI:₹${(o.emi_per_month || 0).toLocaleString()}`).join('; ') || 'None'}`,
+        `Net Obligations EMI:  ₹${netObligations.toLocaleString()}`,
+    ].join('\n'));
+
     // 4. Resolve final tenure used (Lender max tenure vs age-based restrictions)
     const maxTenureRes = getParamTenure(paramMap, `${pref}_max_tenure`);
     const maxTenureMonths = handleParseResult(maxTenureRes, `${pref}_max_tenure`);
+    logger?.traceParser('parseTenureSafe', `${pref}_max_tenure`, maxTenureRes.raw, maxTenureRes);
     const ageBasedLimit = calculateAgeBasedTenureLimit(applicants, paramMap, warnings, policyWarnings);
 
     let final_tenure_used = maxTenureMonths || 0;
@@ -565,14 +662,42 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         final_tenure_used = Math.min(final_tenure_used, ageBasedLimit);
     }
 
+    logger?.traceStep('STEP 5 — TENURE RESOLUTION', [
+        `Lender Max Tenure:    ${maxTenureMonths ?? 'N/A'} months`,
+        `Age-Based Limit:      ${ageBasedLimit !== null && ageBasedLimit !== Infinity ? ageBasedLimit + ' months' : 'No restriction'}`,
+        `Final Tenure Used:    ${final_tenure_used} months`,
+    ].join('\n'));
+
     // 5. Resolve underwriting ROI (roi_max preferred, fallback to roi_min)
     const roiMinRes = getParamPercent(paramMap, `${pref}_roi_min`);
     const roi_min = handleParseResult(roiMinRes, `${pref}_roi_min`);
+    logger?.traceParser('parsePercentSafe', `${pref}_roi_min`, roiMinRes.raw, roiMinRes);
 
     const roiMaxRes = getParamPercent(paramMap, `${pref}_roi_max`);
     const roi_max = handleParseResult(roiMaxRes, `${pref}_roi_max`);
+    logger?.traceParser('parsePercentSafe', `${pref}_roi_max`, roiMaxRes.raw, roiMaxRes);
 
     const underwriting_roi_used = roi_max || roi_min || 0;
+
+    logger?.traceStep('STEP 6 — ROI RESOLUTION', [
+        `ROI Min:              ${toDisplayRoi(roi_min) ?? 'N/A'}%`,
+        `ROI Max:              ${toDisplayRoi(roi_max) ?? 'N/A'}%`,
+        `Underwriting ROI:     ${toDisplayRoi(underwriting_roi_used)}% (roi_max preferred)`,
+    ].join('\n'));
+
+    // GUARD: ROI must be > 0 for any meaningful loan calculation
+    if (underwriting_roi_used <= 0) {
+        isEligible = false;
+        failure_reasons.push(`No valid ROI configured for this scheme. Cannot calculate loan eligibility.`);
+        logger?.traceFailure('CONFIG_MISSING', `ROI = 0 — scheme cannot be underwritten`);
+    }
+
+    // GUARD: Tenure must be > 0
+    if (final_tenure_used <= 0) {
+        isEligible = false;
+        failure_reasons.push(`No valid tenure configured for this scheme. Cannot calculate loan eligibility.`);
+        logger?.traceFailure('CONFIG_MISSING', `Tenure = 0 months — scheme cannot be underwritten`);
+    }
 
     const pfMinRes = getParamPercent(paramMap, `${pref}_pf_min`);
     const pf_min = handleParseResult(pfMinRes, `${pref}_pf_min`);
@@ -582,52 +707,154 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
 
     // 6. Calculate Maximum Eligible EMI
     let maximum_eligible_emi = 0;
-    if (foir_allowed_percent !== null && composedIncome > 0) {
+    if (!skip_foir_check && foir_allowed_percent !== null && composedIncome > 0) {
         maximum_eligible_emi = Math.max(0, (composedIncome * foir_allowed_percent) - netObligations);
+        logger?.traceFormula(
+            'STEP 7 — ELIGIBLE EMI CAPACITY',
+            '(FOIR% × Income) − Obligations',
+            `(${(foir_allowed_percent * 100).toFixed(1)}% × ₹${composedIncome.toLocaleString()}) − ₹${netObligations.toLocaleString()}`,
+            `₹${maximum_eligible_emi.toLocaleString()}`
+        );
+    } else if (skip_foir_check) {
+        maximum_eligible_emi = Infinity;
+        logger?.traceStep('STEP 7 — ELIGIBLE EMI CAPACITY', 'No DBR policy — EMI capacity is UNCAPPED');
+    } else {
+        logger?.traceWarning('STEP 7 — ELIGIBLE EMI CAPACITY: Could not calculate (missing FOIR% or income)');
     }
 
-    // 7. Reverse-Calculate Maximum Eligible Loan Amount
-    let eligible_loan_amount = 0;
-    if (maximum_eligible_emi > 0 && underwriting_roi_used > 0 && final_tenure_used > 0) {
-        eligible_loan_amount = calculateMaxLoanAmount(maximum_eligible_emi, underwriting_roi_used, final_tenure_used);
-    }
-
-    // Cap by scheme max loan limit first
-    if (maxLoan !== null && eligible_loan_amount > maxLoan) {
-        eligible_loan_amount = maxLoan;
+    // 7. Calculate FOIR-based Maximum Eligible Loan Amount
+    let foir_based_eligible_loan_amount = 0;
+    if (skip_foir_check) {
+        const rawMonthsMult = paramMap['no_dbr_months_multiplier'];
+        const monthsMultRes = parseIntegerSafe(rawMonthsMult);
+        const monthsMultiplier = (monthsMultRes.ok && monthsMultRes.value !== null) ? monthsMultRes.value : 60;
+        foir_based_eligible_loan_amount = composedIncome * monthsMultiplier;
+        logger?.traceFormula(
+            'STEP 8 — FOIR-BASED LOAN ELIGIBILITY (No DBR)',
+            'Income × Months Multiplier (No DBR policy)',
+            `₹${composedIncome.toLocaleString()} × ${monthsMultiplier} months`,
+            `₹${foir_based_eligible_loan_amount.toLocaleString()}`
+        );
+    } else if (maximum_eligible_emi > 0 && underwriting_roi_used > 0 && final_tenure_used > 0) {
+        foir_based_eligible_loan_amount = calculateMaxLoanAmount(maximum_eligible_emi, underwriting_roi_used, final_tenure_used);
+        logger?.traceFormula(
+            'STEP 8 — FOIR-BASED LOAN ELIGIBILITY',
+            'Reverse EMI: EMI, ROI, Tenure → Loan Amount',
+            `EMI=₹${maximum_eligible_emi.toLocaleString()} | ROI=${toDisplayRoi(underwriting_roi_used)}% | Tenure=${final_tenure_used}m`,
+            `₹${foir_based_eligible_loan_amount.toLocaleString()}`
+        );
+    } else {
+        logger?.traceWarning('STEP 8 — FOIR-BASED LOAN: Could not calculate (zero EMI capacity, ROI or tenure)');
     }
 
     // 8. Resolve LTV and Max Loan by LTV based on estimated capacity before LTV cap
-    const applicable_ltv_key = resolveApplicableLtvKey(esr.product_type, esr.property_type, esr.occupancy_type, eligible_loan_amount);
+    const temp_loan_amt = foir_based_eligible_loan_amount || 0;
+    const applicable_ltv_key = resolveApplicableLtvKey(esr.product_type, esr.property_type, esr.occupancy_type, temp_loan_amt);
+    
     let applicable_ltv_percent = null;
     if (applicable_ltv_key) {
         const ltvRes = getParamPercent(paramMap, applicable_ltv_key);
         applicable_ltv_percent = handleParseResult(ltvRes, applicable_ltv_key);
+        logger?.traceParser('parsePercentSafe', applicable_ltv_key, ltvRes.raw, ltvRes);
     }
-    let max_loan_by_ltv = null;
+    
+    let ltv_based_eligible_loan_amount = null;
     if (applicable_ltv_percent !== null && esr.property_value) {
-        max_loan_by_ltv = Math.round(esr.property_value * applicable_ltv_percent);
-        if (eligible_loan_amount > 0) {
-            eligible_loan_amount = Math.min(eligible_loan_amount, max_loan_by_ltv);
+        ltv_based_eligible_loan_amount = Math.round(esr.property_value * applicable_ltv_percent);
+    }
+
+    logger?.traceStep('STEP 9 — LTV EVALUATION', [
+        `Property Value:       ${esr.property_value ? '₹' + esr.property_value.toLocaleString() : 'N/A'}`,
+        `Property Type:        ${esr.property_type || 'N/A'}`,
+        `Occupancy:            ${esr.occupancy_type || 'N/A'}`,
+        `LTV Param Key:        ${applicable_ltv_key || 'N/A'}`,
+        `LTV %:                ${applicable_ltv_percent !== null ? (applicable_ltv_percent * 100).toFixed(0) + '%' : 'N/A'}`,
+        `LTV Eligible Loan:    ${ltv_based_eligible_loan_amount !== null ? '₹' + ltv_based_eligible_loan_amount.toLocaleString() : 'N/A'}`,
+    ].join('\n'));
+
+    // --- NWM Cap: NET WORTH × LOAN% ---
+    let nwm_cap = null;
+    if ((scheme.scheme_name || '').toUpperCase().includes('NET WORTH') || 
+        (scheme.scheme_name || '').toUpperCase().includes('NWM')) {
+        const netWorth = Number(esr.net_worth) || 0;
+        const rawNwmPct = paramMap['nwm_loan_percent'];
+        const nwmPctRes = parsePercentSafe(rawNwmPct);
+        const nwmPct = (nwmPctRes.ok && nwmPctRes.value !== null) ? nwmPctRes.value : 0.15;
+
+        if (netWorth > 0) {
+            nwm_cap = Math.round(netWorth * nwmPct);
+            logger?.traceFormula(
+                'STEP 9B — NWM CAP',
+                'Net Worth × Loan%',
+                `₹${netWorth.toLocaleString()} × ${(nwmPct * 100).toFixed(0)}%`,
+                `₹${nwm_cap.toLocaleString()}`
+            );
         } else {
-            eligible_loan_amount = max_loan_by_ltv;
+            warnings.push('Net Worth not provided — NWM cap cannot be applied. Eligibility is FOIR/LTV-limited only.');
         }
     }
 
+    // 9. Calculate final eligibility — safe candidate-based MIN (avoids 0/null collapsing the result)
+    // FOIR-based: null means No DBR (uncapped), 0 means calculation failed
+    // LTV-based: null means no property or no LTV configured
+    // maxLoan: null means no lender cap
+    const eligibilityCandidates = [
+        foir_based_eligible_loan_amount,
+        ltv_based_eligible_loan_amount,
+        maxLoan,
+        nwm_cap
+    ].filter(v => v !== null && v !== undefined && Number.isFinite(v) && v > 0);
+
+    let final_eligible_loan_amount = eligibilityCandidates.length > 0
+        ? Math.min(...eligibilityCandidates)
+        : 0;
+
+    logger?.traceFormula(
+        'STEP 10 — FINAL ELIGIBILITY',
+        'MIN of valid candidates: [FOIR Eligibility, LTV Eligibility, Product Max Loan]',
+        `Candidates: [${[
+            foir_based_eligible_loan_amount !== null ? '₹' + foir_based_eligible_loan_amount?.toLocaleString() : 'No Cap (No DBR)',
+            ltv_based_eligible_loan_amount !== null ? '₹' + ltv_based_eligible_loan_amount?.toLocaleString() : 'N/A (no property/LTV)',
+            maxLoan !== null ? '₹' + maxLoan?.toLocaleString() : 'No Cap'
+        ].join(', ')}]`,
+        `₹${final_eligible_loan_amount.toLocaleString()}`
+    );
+
     // Scheme eligibility checks
-    if (minLoan !== null && eligible_loan_amount < minLoan) {
+    if (minLoan !== null && final_eligible_loan_amount < minLoan) {
         isEligible = false;
-        failure_reasons.push(`Maximum eligible loan ₹${eligible_loan_amount.toLocaleString()} is below lender minimum ₹${minLoan.toLocaleString()}`);
+        failure_reasons.push(`Maximum eligible loan ₹${final_eligible_loan_amount.toLocaleString()} is below lender minimum ₹${minLoan.toLocaleString()}`);
+        logger?.traceFailure('MIN_LOAN_REJECT', `Eligible ₹${final_eligible_loan_amount.toLocaleString()} < Lender Min ₹${minLoan.toLocaleString()}`);
     }
 
     // Proposed EMI for final eligible amount
     let proposed_emi = 0;
-    if (eligible_loan_amount > 0 && underwriting_roi_used > 0 && final_tenure_used > 0) {
-        proposed_emi = calculateEMI(eligible_loan_amount, underwriting_roi_used, final_tenure_used);
+    if (final_eligible_loan_amount > 0 && underwriting_roi_used > 0 && final_tenure_used > 0) {
+        proposed_emi = calculateEMI(final_eligible_loan_amount, underwriting_roi_used, final_tenure_used);
     }
 
     // Correct Underwriting FOIR Formula: FOIR = (Existing Obligations + Proposed EMI) / Eligible Monthly Income
     let foir_actual_percent = composedIncome > 0 ? ((netObligations + proposed_emi) / composedIncome) : 0;
+
+    logger?.traceFormula(
+        'FOIR ACTUAL',
+        '(Existing Obligations + Proposed EMI) / Eligible Monthly Income',
+        `(₹${netObligations.toLocaleString()} + ₹${proposed_emi.toLocaleString()}) / ₹${composedIncome.toLocaleString()}`,
+        `${(foir_actual_percent * 100).toFixed(2)}%`
+    );
+
+    // --- MANUAL OVERRIDE (LIP / LOW LTV / MANUAL SCHEMES) ---
+    const manual_eligible_loan_amount = Number(esr.manual_eligible_loan_amount) || null;
+    const manual_proposed_emi = Number(esr.manual_proposed_emi) || null;
+
+    if (manual_eligible_loan_amount !== null && manual_eligible_loan_amount > 0) {
+        isEligible = true;
+        failure_reasons.length = 0; // Clear failures
+        warnings.push(`Manual Eligibility Override applied: System calculation bypassed.`);
+        final_eligible_loan_amount = manual_eligible_loan_amount;
+        if (manual_proposed_emi !== null) proposed_emi = manual_proposed_emi;
+        logger?.traceStep('MANUAL OVERRIDE', `Override applied. Loan: ₹${final_eligible_loan_amount}, EMI: ₹${proposed_emi}`);
+    }
 
     const finalEvaluation = {
         scheme_id: scheme.id,
@@ -639,11 +866,13 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         policy_warnings: policyWarnings,
         applicable_ltv_key,
         applicable_ltv_percent,
-        max_loan_by_ltv,
-        final_eligible_loan_amount: eligible_loan_amount,
-        eligible_loan_amount,
+        max_loan_by_ltv: ltv_based_eligible_loan_amount,
+        foir_based_eligible_loan_amount,
+        ltv_based_eligible_loan_amount,
+        final_eligible_loan_amount,
+        eligible_loan_amount: final_eligible_loan_amount, // for backwards compatibility
         proposed_emi,
-        maximum_eligible_emi,
+        maximum_eligible_emi: maximum_eligible_emi === Infinity ? null : maximum_eligible_emi,
         final_tenure_used,
         underwriting_roi_used: toDisplayRoi(underwriting_roi_used),
         roi_min: toDisplayRoi(roi_min),
@@ -657,12 +886,13 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         eligible_income_breakdown: incomeComposition.breakdown,
         weighted_other_income: composedIncome - incomeComposition.primary_income,
         foir_breakdown: {
+            skip_foir_check,
             composed_income: composedIncome,
             net_obligations: netObligations,
             proposed_emi: proposed_emi,
             foir_allowed_percent: foir_allowed_percent,
             foir_actual_percent: foir_actual_percent,
-            maximum_eligible_emi: maximum_eligible_emi
+            maximum_eligible_emi: maximum_eligible_emi === Infinity ? null : maximum_eligible_emi
         },
         conditional_underwriting_flags: conditionalFlags,
         manual_review_required: !!conditionalFlags || policyWarnings.length > 0,
@@ -672,6 +902,13 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
 
     // Apply conditional policy relaxations extensible plug-in
     applyConditionalUnderwritingRelaxations(finalEvaluation, conditionalFlags, paramMap);
+
+    // Final trace — pass/fail decision
+    if (isEligible) {
+        logger?.traceSuccess(`ELIGIBLE — ₹${final_eligible_loan_amount.toLocaleString()} @ ${toDisplayRoi(underwriting_roi_used)}% ROI for ${final_tenure_used}m`);
+    } else {
+        failure_reasons.forEach(r => logger?.traceFailure('INELIGIBLE', r));
+    }
 
     console.log(`[ESR ENGINE] Final Evaluation for ${scheme.scheme_name}:`, JSON.stringify(finalEvaluation, null, 2));
     return finalEvaluation;
@@ -834,6 +1071,22 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
 
     const lenderResults = [];
 
+    // Initialize ESR Trace Logger
+    const logger = new EsrTraceLogger();
+    logger.startTrace(case_id, esr.case_entity?.tenant_id, esr.product_type, {
+        'Selected Monthly Income': `₹${(esr.selected_monthly_income || 0).toLocaleString()}`,
+        'Property Value': esr.property_value ? `₹${esr.property_value.toLocaleString()}` : 'N/A',
+        'Property Type': esr.property_type || 'N/A',
+        'Occupancy': esr.occupancy_type || 'N/A',
+        'Product Type': esr.product_type,
+        'Income Method': esr.selected_income_method || 'N/A',
+        'Primary CIBIL': primary_cibil ?? 'N/A',
+        'Lowest CIBIL': lowest_cibil ?? 'N/A',
+        'Total Obligations': obligationsList.length,
+        'Total EMI': `₹${obligationsList.reduce((s, o) => s + (o.emi_per_month || 0), 0).toLocaleString()}`,
+        'Lenders Evaluated': lenders.length,
+    });
+
     // 3. Evaluate Config Matrix — iterate ALL products per lender, not just [0]
     for (const lender of lenders) {
         if (lender.products.length === 0) {
@@ -867,7 +1120,8 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
                     lowest_cibil_score: lowest_cibil,
                     incomeEntries,
                     applicants,
-                    obligationsList
+                    obligationsList,
+                    logger
                 });
 
                 if (propertyMissing && evalOutput.is_eligible) {
@@ -972,6 +1226,9 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
 
         lenderResults.push(lenderRes);
     }
+
+    // Flush trace log after all lender evaluations are complete
+    logger.flushTrace();
 
     // Sort Lenders
     lenderResults.sort((a, b) => {

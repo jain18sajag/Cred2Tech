@@ -216,6 +216,14 @@ function parseFoirRuleSafe(value, strictMode = false) {
     
     strVal = String(strVal).toLowerCase().trim();
 
+    // Support "No DBR" / "No FOIR"
+    if (strVal.includes('no dbr') || strVal.includes('no foir')) {
+        return createResult(true, {
+            type: 'no_dbr',
+            skip_foir_check: true
+        });
+    }
+
     // Support conditional underwriting structures: e.g. "Max 100% ( Double wammy - 140%)"
     const conditionalRegex = /(?:max\s+)?(\d+)%\s*\(\s*(double\s+wh?ammy)\s*-\s*(\d+)%\s*\)/i;
     const condMatch = strVal.match(conditionalRegex);
@@ -249,7 +257,7 @@ function parseFoirRuleSafe(value, strictMode = false) {
         if (minThresh === maxThresh) {
             const slab = [
                 { income_max: minThresh, value: pct1 },
-                { income_min: maxThresh + 1, value: pct2 }
+                { income_min: maxThresh, value: pct2 }
             ];
             return createResult(true, slab, "Legacy slab string dynamically converted");
         }
@@ -276,6 +284,8 @@ function normalizeParameter(key, rawValue) {
         result = parseFoirRuleSafe(rawValue, true);
         if (result.ok && result.value && result.value.type === 'conditional_foir') {
             type = 'conditional_foir';
+        } else if (result.ok && result.value && result.value.type === 'no_dbr') {
+            type = 'no_dbr';
         } else {
             type = Array.isArray(result.value) ? 'slab' : 'percent';
         }

@@ -115,7 +115,7 @@ const AppRouter = () => (
             <Route
               path="/customers"
               element={
-                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER']}>
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA']}>
                   <CustomersListPage />
                 </ProtectedRoute>
               }
@@ -123,7 +123,7 @@ const AppRouter = () => (
             <Route
               path="/customers/add"
               element={
-                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER']}>
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA']}>
                   <AddCustomerWizardPage />
                 </ProtectedRoute>
               }
@@ -131,7 +131,7 @@ const AppRouter = () => (
             <Route
               path="/customers/salaried/add"
               element={
-                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER']}>
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA']}>
                   <AddSalariedCustomerWizardPage />
                 </ProtectedRoute>
               }
@@ -139,7 +139,7 @@ const AppRouter = () => (
             <Route
               path="/customers/:customer_id"
               element={
-                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN']}>
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA']}>
                   <CustomerProfilePage />
                 </ProtectedRoute>
               }
@@ -149,7 +149,7 @@ const AppRouter = () => (
             <Route
               path="/cases/:id/income-summary"
               element={
-                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN']}>
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA']}>
                   <IncomeSummaryPage />
                 </ProtectedRoute>
               }
@@ -157,7 +157,7 @@ const AppRouter = () => (
             <Route
               path="/cases/:id"
               element={
-                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN']}>
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA']}>
                   <CaseDetailPage />
                 </ProtectedRoute>
               }
@@ -165,7 +165,7 @@ const AppRouter = () => (
             <Route
               path="/cases/:id/bureau-obligations"
               element={
-                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN']}>
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA']}>
                   <BureauObligationsPage />
                 </ProtectedRoute>
               }
@@ -173,7 +173,7 @@ const AppRouter = () => (
             <Route
               path="/cases/:id/esr"
               element={
-                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN']}>
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA']}>
                   <EsrPage />
                 </ProtectedRoute>
               }
@@ -181,7 +181,7 @@ const AppRouter = () => (
             <Route
               path="/cases/:id/proposals/:pid"
               element={
-                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN']}>
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA']}>
                   <ProposalPage />
                 </ProtectedRoute>
               }

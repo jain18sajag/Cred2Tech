@@ -9,7 +9,7 @@ const { authenticate } = require('../middleware/auth.middleware');
 const { requireRole } = require('../middleware/role.middleware');
 
 router.use(authenticate);
-router.use(requireRole('DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN'));
+router.use(requireRole('DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA'));
 
 // ── Income Summary  (/api/cases/:id/income-summary) ──────────────────────────
 router.get('/income-summary',             incomeCtrl.getSummary);

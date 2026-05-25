@@ -74,7 +74,14 @@ const parameterMasterConfig = [
   { key: 'dbr_agri_itr', label: 'DBR - Agricultural Income ITR - 100%', category: 'DBR/FOIR % Calculation' },
   { key: 'existing_obligation', label: 'Existing Obligation', category: 'DBR/FOIR % Calculation' },
 
-  // New parameters from seed_parameters.js
+  // ── Excel Multipliers & Policy Fractions ──────────────────────────────────
+  { key: 'banking_abb_multiplier',       label: 'ABB Income Multiplier (Banking)',       category: 'Eligibility Calculation' },
+  { key: 'no_dbr_months_multiplier',     label: 'No-DBR Income Multiplier (months)',     category: 'Eligibility Calculation' },
+  { key: 'grp_annual_receipts_multiplier', label: 'GRP Annual Receipts Multiplier',      category: 'Eligibility Calculation' },
+  { key: 'npm_depreciation_fraction',    label: 'NPM Depreciation Addback Fraction',     category: 'Eligibility Calculation' },
+  { key: 'nwm_loan_percent',             label: 'Net Worth → Max Loan % (NWM)',          category: 'Eligibility Calculation' },
+
+  // Legacy parameters from seed_parameters.js
   { key: 'min_loan_hl', label: 'Min Loan (HL)', category: 'LOAN RANGE PARAMETERS' },
   { key: 'max_loan_hl', label: 'Max Loan (HL)', category: 'LOAN RANGE PARAMETERS' },
   { key: 'min_loan_lap', label: 'Min Loan (LAP)', category: 'LOAN RANGE PARAMETERS' },
@@ -129,6 +136,10 @@ const valueData = {
     hl_max_tenure: { SAL: '300 Months', default: '240 Months' },
     hl_dbr_foir: { SAL: '<75k -60%, >75k - 70%', default: 'Max 100% ( Double wammy - 140%)' },
 
+    banking_abb_multiplier: { default: '2' },
+    no_dbr_months_multiplier: { default: '60' },
+    npm_depreciation_fraction: { default: '66.67%' },
+
     hl_ltv_residential: { default: '0' },
     hl_ltv_upto_30: { default: '90%' },
     hl_ltv_30_75: { default: '80%' },
@@ -167,9 +178,15 @@ const valueData = {
     lap_max_tenure: { default: '180 Months' },
     lap_dbr_foir: { SAL: '<75k -60%, >75k - 70%', default: 'Max 100% ( Double wammy - 140%)' },
 
+    banking_abb_multiplier: { default: '2' },
+    no_dbr_months_multiplier: { default: '60' },
+    grp_annual_receipts_multiplier: { default: '4' },
+    npm_depreciation_fraction: { default: '66.67%' },
+    nwm_loan_percent: { default: '15%' },
+
     lap_ltv_res_self: { default: '70%' },
-    lap_ltv_res_rented: { default: '70%' },
-    lap_ltv_res_vacant: { default: '70%' },
+    lap_ltv_res_rented: { SAL: '65%', default: '70%' },
+    lap_ltv_res_vacant: { SAL: '60%', default: '70%' },
     lap_ltv_com_self: { default: '70%' },
     lap_ltv_com_rented: { default: '70%' },
     lap_ltv_com_vacant: { default: '70%' },
@@ -179,8 +196,8 @@ const valueData = {
     lap_ltv_mix_self: { default: '70%' },
     lap_ltv_mix_rented: { default: '70%' },
     lap_ltv_mix_vacant: { default: '70%' },
-    lap_ltv_plot_self: { default: '40%' },
-    lap_ltv_plot_rented: { default: '40%' },
+    lap_ltv_plot_self: { SAL: '60%', default: '40%' },
+    lap_ltv_plot_rented: { SAL: '65%', default: '40%' },
     lap_ltv_plot_vacant: { default: '40%' },
     lap_ltv_special: { default: '50%' },
 

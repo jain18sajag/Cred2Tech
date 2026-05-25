@@ -227,17 +227,17 @@ const CalcBreakdownPanel = ({ evaluations, monthlyIncome }) => {
 
   const steps = [
     { label: 'Monthly Income Used', value: formatDynamicCurrency(monthlyIncome), icon: '💰', color: '#2B6CB0', bg: '#EBF8FF', note: 'Selected income method monthly figure' },
-    { label: 'FOIR Allowed', value: fmtPct(ev.foir_allowed_percent), icon: '📊', color: '#276749', bg: '#F0FFF4', note: 'Max permissible obligation %' },
+    { label: 'FOIR Allowed', value: ev.foir_breakdown?.skip_foir_check ? 'No DBR' : fmtPct(ev.foir_allowed_percent), icon: '📊', color: '#276749', bg: '#F0FFF4', note: ev.foir_breakdown?.skip_foir_check ? 'FOIR Validation Skipped' : 'Max permissible obligation %' },
     { label: 'FOIR Actual', value: fmtPct(ev.foir_actual_percent), icon: '📉',
-      color: ev.foir_actual_percent > ev.foir_allowed_percent ? '#C53030' : '#276749',
-      bg: ev.foir_actual_percent > ev.foir_allowed_percent ? '#FFF5F5' : '#F0FFF4',
+      color: (!ev.foir_breakdown?.skip_foir_check && ev.foir_actual_percent > ev.foir_allowed_percent) ? '#C53030' : '#276749',
+      bg: (!ev.foir_breakdown?.skip_foir_check && ev.foir_actual_percent > ev.foir_allowed_percent) ? '#FFF5F5' : '#F0FFF4',
       note: 'Current EMI ÷ income' },
-    { label: 'Max Eligible EMI', value: ev.max_eligible_emi != null ? formatDynamicCurrency(Math.max(0, ev.max_eligible_emi)) : '—', icon: '🏦', color: '#744210', bg: '#FFFBF0', note: '(FOIR% × Income) − Existing EMI' },
+    { label: 'Underwriting Capacity', value: ev.foir_based_eligible_loan_amount != null ? formatDynamicCurrency(ev.foir_based_eligible_loan_amount) : (ev.foir_breakdown?.skip_foir_check ? 'No Cap' : '—'), icon: '🏦', color: '#744210', bg: '#FFFBF0', note: 'Based on FOIR & Obligations' },
     { label: 'LTV Applied', value: ev.applicable_ltv_percent != null ? `${(ev.applicable_ltv_percent * 100).toFixed(0)}%` : '—', icon: '🏠', color: '#553C9A', bg: '#FAF5FF', note: `Key: ${ev.applicable_ltv_key || '—'}` },
-    { label: 'Max Loan by LTV', value: ev.max_loan_by_ltv != null ? formatDynamicCurrency(ev.max_loan_by_ltv) : '—', icon: '🔢', color: '#2C7A7B', bg: '#E6FFFA', note: 'Property Value × LTV%' },
+    { label: 'LTV Allowed', value: ev.ltv_based_eligible_loan_amount != null ? formatDynamicCurrency(ev.ltv_based_eligible_loan_amount) : (ev.max_loan_by_ltv != null ? formatDynamicCurrency(ev.max_loan_by_ltv) : '—'), icon: '🔢', color: '#2C7A7B', bg: '#E6FFFA', note: 'Property Value × LTV%' },
     { label: 'Final Eligible Loan', value: ev.final_eligible_loan_amount != null ? formatDynamicCurrency(ev.final_eligible_loan_amount) : '—', icon: '✅',
       color: ev.is_eligible ? '#276749' : '#C53030', bg: ev.is_eligible ? '#F0FFF4' : '#FFF5F5',
-      note: ev.is_eligible ? 'Min(requested, LTV cap)' : 'Failed eligibility', highlight: true },
+      note: ev.is_eligible ? 'Min(Capacity, LTV, Max Loan)' : 'Failed eligibility', highlight: true },
   ];
 
   return (

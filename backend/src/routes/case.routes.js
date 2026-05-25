@@ -6,7 +6,7 @@ const { requireRole } = require('../middleware/role.middleware');
 
 // Apply authentication and RBAC to all case routes
 router.use(authenticate);
-router.use(requireRole('DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN'));
+router.use(requireRole('DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA'));
 
 // ─── Sanction & Disbursement Flow ──────────────────────────────────────────
 const sanctionController = require('../controllers/sanction.controller');

@@ -6,7 +6,7 @@ const { requireRole } = require('../middleware/role.middleware');
 
 // Apply authentication and RBAC to all customer routes
 router.use(authenticate);
-router.use(requireRole('DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN'));
+router.use(requireRole('DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA'));
 
 // GET /customers/check-existing-by-pan
 router.get('/check-existing-by-pan', customerController.checkCustomer);

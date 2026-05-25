@@ -51,9 +51,11 @@ const DashboardPage = () => {
           const res = await fetch('http://localhost:3000/analytics/dsa-performance', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
           const analytics = await res.json();
           setUsers(analytics || []);
-        } else {
+        } else if (['DSA_ADMIN', 'DSA_MEMBER'].includes(user.role)) {
           const data = await getUsers();
           setUsers(Array.isArray(data) ? data : data.users || []);
+        } else {
+          setUsers([]);
         }
       } catch {
         setUsers([]);

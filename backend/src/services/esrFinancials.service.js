@@ -311,6 +311,30 @@ async function extractEsrFinancials(case_id, tenant_id = null) {
             }
         }
 
+        // --- Incentive income: separate OCR field or manual entries ---
+        const INCENTIVE_TYPES = new Set(['incentive', 'bonus', 'variable pay', 'performance bonus']);
+        const OTHER_ELIGIBLE_TYPES = new Set(['other eligible income', 'other income']);
+
+        let totalIncentiveMonthly = 0;
+        let totalOtherEligibleMonthly = 0;
+
+        for (const applicant of caseRecord.applicants) {
+            // Read incentive from OCR slip if available
+            const completedSlips = applicant.salary_ocr_results || [];
+            for (const slip of completedSlips) {
+                const incentiveVal = toNum(slip.incentive_amount) || toNum(slip.bonus_amount) || 0;
+                totalIncentiveMonthly += incentiveVal; // assumed monthly on slip
+            }
+
+            // Read from manual income entries
+            for (const entry of (applicant.income_entries || [])) {
+                const type = (entry.income_type || '').toLowerCase();
+                const monthly = (toNum(entry.annual_amount) || 0) / 12;
+                if (INCENTIVE_TYPES.has(type)) totalIncentiveMonthly += monthly;
+                if (OTHER_ELIGIBLE_TYPES.has(type)) totalOtherEligibleMonthly += monthly;
+            }
+        }
+
         if (hasSalariedData && totalSalariedMonthly > 0) {
             salaried_income = totalSalariedMonthly;
             if (hasOcrData && hasManualData) salaried_income_source = 'MIXED';
@@ -398,6 +422,8 @@ async function extractEsrFinancials(case_id, tenant_id = null) {
             salaried_income,
             salaried_income_source,
             salaried_slip_count,
+            salaried_incentive_income: totalIncentiveMonthly > 0 ? totalIncentiveMonthly : null,
+            salaried_other_income: totalOtherEligibleMonthly > 0 ? totalOtherEligibleMonthly : null,
 
             selected_income_method,
             selected_monthly_income,
@@ -477,7 +503,7 @@ function _parseGstIndustryType(raw_gst_data) {
 }
 
 function _parseItrFromRaw(analytics_payload) {
-    const result = { itr_pat: null, itr_depreciation: null, itr_finance_cost: null, itr_gross_receipts: null };
+    const result = { itr_pat: null, itr_depreciation: null, itr_finance_cost: null, itr_gross_receipts: null, itr_remuneration: null };
     try {
         const rawItr = typeof analytics_payload === 'string' ? JSON.parse(analytics_payload) : analytics_payload;
         const actualItr = rawItr?.result || rawItr;
@@ -492,6 +518,10 @@ function _parseItrFromRaw(analytics_payload) {
                 ?? toNum(latestPL.revenueFromOperations)
                 ?? toNum(latestPL.saleOfServices)
                 ?? toNum(latestPL.saleOfGoods);
+            result.itr_remuneration = toNum(latestPL.partnerRemuneration)
+                ?? toNum(latestPL.directorRemuneration)
+                ?? toNum(latestPL.remuneration)
+                ?? null;
         }
     } catch (e) {
         console.warn('[ESR Extraction] ITR raw parse failed:', e.message);

@@ -1123,6 +1123,23 @@ model CaseEsrFinancials {
   extraction_status String    @default("PENDING") // "PENDING" | "COMPLETED" | "FAILED"
   extracted_at      DateTime? // timestamp of last successful extraction
 
+  // ── NPM (Net Profit Method) Addbacks ──────────────────────────────────────
+  itr_remuneration          Float?
+
+  // ── Double Whammy Flag ────────────────────────────────────────────────────
+  double_whammy_flag        Boolean  @default(false)
+
+  // ── Net Worth Method (NWM) Inputs ─────────────────────────────────────────
+  net_worth                 Float?
+
+  // ── Salaried Income Components ────────────────────────────────────────────
+  salaried_incentive_income Float?
+  salaried_other_income     Float?
+
+  // ── Manual Eligibility Overrides (LIP / Low LTV / Manual) ────────────────
+  manual_eligible_loan_amount Float?
+  manual_proposed_emi         Float?
+
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 

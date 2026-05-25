@@ -5,7 +5,7 @@ const { authenticate } = require('../middleware/auth.middleware');
 const { requireRole } = require('../middleware/role.middleware');
 
 router.use(authenticate);
-router.use(requireRole('DSA_ADMIN', 'DSA_MEMBER'));
+router.use(requireRole('DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA'));
 
 router.post('/send', otpController.send);
 router.post('/verify', otpController.verify);
