@@ -50,6 +50,7 @@ const commissionOperationsRoutes = require('./routes/commissionOperations.routes
 const disbursementRoutes = require('./routes/disbursement.routes');
 const pddRoutes = require('./routes/pdd.routes');
 const subDsaPayoutRoutes = require('./routes/subDsaPayout.routes');
+const dashboardRoutes = require('./routes/dashboard.routes');
 
 const apiRouter = express.Router();
 
@@ -82,6 +83,7 @@ apiRouter.use('/platform-lenders', platformLenderRoutes);
 apiRouter.use('/disbursements', disbursementRoutes);
 apiRouter.use('/pdd-tasks', pddRoutes);
 apiRouter.use('/sub-dsa', subDsaPayoutRoutes);
+apiRouter.use('/dashboard', dashboardRoutes);
 
 app.use('/api', apiRouter);
 
