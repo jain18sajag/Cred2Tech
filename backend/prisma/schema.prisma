@@ -1099,8 +1099,10 @@ model CaseEsrFinancials {
   gst_industry_type     String?
   gst_industry_margin   Float?
 
-  bank_avg_balance    Float?
-  bank_monthly_income Float?
+  bank_avg_balance        Float?
+  bank_total_credits      Float?
+  bank_avg_monthly_credit Float?
+  bank_monthly_income     Float?
 
   net_profit_income Float?
   gst_income        Float?

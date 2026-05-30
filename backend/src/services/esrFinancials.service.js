@@ -146,7 +146,7 @@ async function extractEsrFinancials(case_id, tenant_id = null) {
         // ── 2. GST EXTRACTION ───────────────────────────────────────────────────
         let gst_avg_monthly_sales = null;
         let gst_industry_type = null;
-        const gst_industry_margin = 0.10; // Intentional: bank-approved placeholder for all MSME GST income
+        let gst_industry_margin = 0.10; // fallback default only
 
         const gstReq = pickBestRecord(caseRecord.gst_requests);
 
@@ -161,9 +161,10 @@ async function extractEsrFinancials(case_id, tenant_id = null) {
             gst_avg_monthly_sales = _parseGstFromRaw(gstReq.raw_gst_data);
         }
 
-        // Industry type (informational only — does not affect margin in current design)
+        // Industry type
         if (gstReq?.raw_gst_data) {
             gst_industry_type = _parseGstIndustryType(gstReq.raw_gst_data);
+            gst_industry_margin = resolveGstIndustryMargin(gst_industry_type);
         }
 
         // ── 3. ITR EXTRACTION ───────────────────────────────────────────────────
@@ -174,21 +175,23 @@ async function extractEsrFinancials(case_id, tenant_id = null) {
 
         const itrReq = pickBestRecord(caseRecord.itr_analytics);
 
-        if (itrReq?.net_profit_latest_year != null) {
-            // PRIMARY: structured snapshot column
-            itr_pat           = toNum(itrReq.net_profit_latest_year);
-            itr_gross_receipts = toNum(itrReq.gross_receipts_latest_year);
-        } else if (itrReq?.analytics_payload) {
+        if (itrReq?.analytics_payload) {
             // FALLBACK: parse raw analytics payload
             const parsed = _parseItrFromRaw(itrReq.analytics_payload);
             itr_pat            = parsed.itr_pat;
             itr_depreciation   = parsed.itr_depreciation;
             itr_finance_cost   = parsed.itr_finance_cost;
             itr_gross_receipts = parsed.itr_gross_receipts;
+        } else if (itrReq?.net_profit_latest_year != null) {
+            // PRIMARY: structured snapshot column
+            itr_pat           = toNum(itrReq.net_profit_latest_year);
+            itr_gross_receipts = toNum(itrReq.gross_receipts_latest_year);
         }
 
         // ── 4. BANK EXTRACTION ──────────────────────────────────────────────────
         let bank_avg_balance = null;
+        let bank_avg_monthly_credit = null;
+        let bank_total_credits = null;
 
         const bankReq = pickBestRecord(caseRecord.bank_statements);
 
@@ -200,10 +203,14 @@ async function extractEsrFinancials(case_id, tenant_id = null) {
         if (bankReq?.avg_bank_balance_latest_year != null) {
             // PRIMARY: structured snapshot column
             bank_avg_balance = Number(bankReq.avg_bank_balance_latest_year);
+            bank_avg_monthly_credit = bankReq.bank_avg_monthly_credit ? Number(bankReq.bank_avg_monthly_credit) : null;
+            bank_total_credits = bankReq.bank_total_credits ? Number(bankReq.bank_total_credits) : null;
         } else if (rawBankPayload) {
             // FALLBACK: parse raw vendor payload and update request record snapshot fields
             const fySnapshot = extractBankFySnapshot(rawBankPayload);
             bank_avg_balance = fySnapshot.latest;
+            bank_avg_monthly_credit = fySnapshot.avg_monthly_credit;
+            bank_total_credits = fySnapshot.total_credits;
 
             // Optional: Persist derived fields back to bankReq if they were missing
             if (bank_avg_balance && bankReq.id) {
@@ -343,27 +350,42 @@ async function extractEsrFinancials(case_id, tenant_id = null) {
         }
 
         // ── 7. INCOME METHOD DERIVATION ─────────────────────────────────────────
-        // All values represent monthly income for uniform FOIR calculation.
-        // Formula logic is intentional (bank-approved; not to be changed arbitrarily).
+        // Calculate normalized monthly income for each valid method.
+        // These normalized values are persisted so method-specific schemes don't have to guess.
 
-        const net_profit_income = (itr_pat !== null)
-            ? (itr_pat + (2 / 3 * (itr_depreciation || 0)) + (itr_finance_cost || 0)) / 12
-            : null;
+        let normalized_salaried = salaried_income || 0;
+        
+        let normalized_gst = 0;
+        if (gst_avg_monthly_sales !== null) {
+            normalized_gst = gst_avg_monthly_sales * (gst_industry_margin || 0.10);
+            console.log(`[ESR Extraction] GST Income - Type: ${gst_industry_type || 'UNKNOWN'}, Margin: ${gst_industry_margin}, AvgSales: ${gst_avg_monthly_sales}, MonthlyIncome: ${normalized_gst}`);
+        }
 
-        const gst_income = (gst_avg_monthly_sales !== null && gst_avg_monthly_sales > 0)
-            ? gst_avg_monthly_sales * gst_industry_margin
-            : null;
+        let normalized_net_profit = 0;
+        if (itr_pat !== null) {
+            const deprAddback = (itr_depreciation || 0) * 0.6667;
+            const npmAnnual = itr_pat + deprAddback + (itr_finance_cost || 0);
+            normalized_net_profit = Math.max(0, npmAnnual / 12);
+        }
 
-        const banking_income = (bank_avg_balance !== null && bank_avg_balance > 0)
-            ? bank_avg_balance / 2
-            : null;
+        let normalized_banking = 0;
+        if (bank_avg_balance !== null || bank_avg_monthly_credit !== null) {
+            const abbIncome = (bank_avg_balance || 0) * 2;
+            const creditIncome = bank_avg_monthly_credit || 0;
+            normalized_banking = Math.max(abbIncome, creditIncome);
+        }
 
-        // Eligible income methods and their derived values
+        let normalized_grp = 0;
+        if (itr_gross_receipts !== null) {
+            normalized_grp = (itr_gross_receipts * 0.08) / 12; // Default 8% margin
+        }
+
         const incomeCandidates = {
-            SALARIED:   salaried_income,
-            GST:        gst_income,
-            BANKING:    banking_income,
-            NET_PROFIT: net_profit_income
+            SALARIED:   normalized_salaried,
+            GST:        normalized_gst, 
+            BANKING:    normalized_banking,
+            NET_PROFIT: normalized_net_profit,
+            GRP:        normalized_grp
         };
 
         let selected_income_method = null;
@@ -385,7 +407,7 @@ async function extractEsrFinancials(case_id, tenant_id = null) {
         }
 
         // ── 8. DERIVED BANK MONTHLY (for snapshot completeness) ─────────────────
-        const bank_monthly_income = banking_income;
+        const bank_monthly_income = normalized_banking;
 
         // ── 9. UPSERT ────────────────────────────────────────────────────────────
         const now = new Date();
@@ -413,13 +435,16 @@ async function extractEsrFinancials(case_id, tenant_id = null) {
             gst_industry_margin,
 
             bank_avg_balance,
-            bank_monthly_income,
+            bank_total_credits,
+            bank_avg_monthly_credit,
+            
+            bank_monthly_income: normalized_banking || null,
 
-            net_profit_income,
-            gst_income,
-            banking_income,
+            net_profit_income: normalized_net_profit || null,
+            gst_income: normalized_gst || null,
+            banking_income: normalized_banking || null,
 
-            salaried_income,
+            salaried_income: normalized_salaried || null,
             salaried_income_source,
             salaried_slip_count,
             salaried_incentive_income: totalIncentiveMonthly > 0 ? totalIncentiveMonthly : null,
@@ -490,13 +515,46 @@ function _parseGstFromRaw(raw_gst_data) {
     return null;
 }
 
+function resolveGstIndustryMargin(industryType) {
+    const text = String(industryType || '').toLowerCase();
+
+    if (text.includes('manufactur') || text.includes('factory')) return 0.07;
+    if (text.includes('retail')) return 0.05;
+    if (text.includes('wholesale')) return 0.04;
+    if (text.includes('special')) return 0.03;
+    if (text.includes('service') || text.includes('supplier of service')) return 0.15;
+
+    return 0.10; // fallback only when industry cannot be identified
+}
+
 function _parseGstIndustryType(raw_gst_data) {
     try {
         const rawGst = typeof raw_gst_data === 'string' ? JSON.parse(raw_gst_data) : raw_gst_data;
+        
+        let nature = null;
+        let constitution = null;
+        
+        // 1. Try Entity Details block (often used in legacy JSON)
         const entityBlock = rawGst?.data?.find(x => x['Entity Details'])?.['Entity Details'];
-        const firstEntity = entityBlock ? Object.values(entityBlock)[0] : null;
-        const nature = firstEntity?.gstinDetails?.natureOfBusinessActivities;
-        return Array.isArray(nature) ? nature.join(', ') : (nature || null);
+        if (entityBlock) {
+            const firstEntity = Object.values(entityBlock)[0];
+            nature = firstEntity?.gstinDetails?.natureOfBusinessActivities;
+            constitution = firstEntity?.gstinDetails?.constitutionOfBusiness;
+        }
+
+        // 2. Direct keys from modern/flattened JSON
+        if (!nature) {
+            nature = rawGst?.natureOfBusinessActivities || rawGst?.natureOfBusiness || rawGst?.industryType;
+        }
+        if (!constitution) {
+            constitution = rawGst?.constitutionOfBusiness;
+        }
+
+        const natureStr = Array.isArray(nature) ? nature.join(', ') : (nature || '');
+        const constitutionStr = constitution || '';
+        
+        const combined = [natureStr, constitutionStr].filter(Boolean).join(' | ');
+        return combined || null;
     } catch {
         return null;
     }
@@ -506,25 +564,70 @@ function _parseItrFromRaw(analytics_payload) {
     const result = { itr_pat: null, itr_depreciation: null, itr_finance_cost: null, itr_gross_receipts: null, itr_remuneration: null };
     try {
         const rawItr = typeof analytics_payload === 'string' ? JSON.parse(analytics_payload) : analytics_payload;
-        const actualItr = rawItr?.result || rawItr;
-        const itrKey = actualItr?.iTR || actualItr?.ITR;
-        const plArray = itrKey?.profitAndLossStatement?.profitAndLossStatement || [];
-        const latestPL = latestByYear(plArray);
-        if (latestPL) {
-            result.itr_pat            = toNum(latestPL.profitAfterTax);
-            result.itr_depreciation   = toNum(latestPL.depreciationAndAmortization) ?? toNum(latestPL.depreciationAndAmortisation);
-            result.itr_finance_cost   = toNum(latestPL.financeCost);
-            result.itr_gross_receipts = toNum(latestPL.receiptsFromProfession)
-                ?? toNum(latestPL.revenueFromOperations)
-                ?? toNum(latestPL.saleOfServices)
-                ?? toNum(latestPL.saleOfGoods);
-            result.itr_remuneration = toNum(latestPL.partnerRemuneration)
-                ?? toNum(latestPL.directorRemuneration)
-                ?? toNum(latestPL.remuneration)
-                ?? null;
+        
+        let latestItr = null;
+        
+        // 1. Year-indexed structure (e.g., {"2024-2025": [{ "json": { "ITR": ... } }]})
+        const yearIndexedRoot = rawItr?.data || rawItr;
+        if (yearIndexedRoot && typeof yearIndexedRoot === 'object' && !yearIndexedRoot.result && !yearIndexedRoot.iTR && !yearIndexedRoot.ITR) {
+            const years = Object.keys(yearIndexedRoot).filter(k => k.match(/^\d{4}-\d{4}$/)).sort().reverse();
+            if (years.length > 0) {
+                const yearData = yearIndexedRoot[years[0]];
+                if (Array.isArray(yearData) && yearData.length > 0) {
+                    latestItr = yearData[0].json?.ITR || yearData[0].json?.iTR || yearData[0].json;
+                }
+            }
+        } 
+        
+        // 2. Legacy flat structure
+        if (!latestItr) {
+             latestItr = rawItr?.result || rawItr;
         }
-    } catch (e) {
-        console.warn('[ESR Extraction] ITR raw parse failed:', e.message);
+
+        if (latestItr) {
+            const itr3 = latestItr.ITR3 || latestItr.iTR3 || latestItr.ITR?.ITR3 || latestItr.ITR?.iTR3;
+            if (itr3) {
+                const pl = itr3.PARTA_PL || itr3.PartA_PL;
+                if (pl) {
+                    result.itr_pat = toNum(pl.TaxProvAppr?.ProfitAfterTax) 
+                                  ?? toNum(pl.TaxProvAppr?.ProprietorAccBalTrf) 
+                                  ?? toNum(pl.PBT);
+                    result.itr_depreciation = toNum(pl.DebitsToPL?.DepreciationAmort) ?? toNum(pl.DebitsToPL?.Depreciation);
+                    result.itr_finance_cost = toNum(pl.DebitsToPL?.InterestExpdrtDtls?.InterestExpdr) ?? toNum(pl.DebitsToPL?.Interest);
+                    result.itr_remuneration = toNum(pl.DebitsToPL?.RemunerationToPartners) ?? toNum(pl.DebitsToPL?.Remuneration);
+                }
+                const trading = itr3.TradingAccount || itr3.PartA_Trading;
+                if (trading) {
+                    result.itr_gross_receipts = toNum(trading.TotRevenueFrmOperations) 
+                                             ?? toNum(trading.SalesGrossReceiptsTotal)
+                                             ?? toNum(trading.TardingAccTotCred)
+                                             ?? toNum(trading.GrossRcptFromProfession);
+                }
+            } else {
+                // ITR4 / generic fallback
+                const bp = latestItr.ITR4?.ScheduleBP || latestItr.iTR4?.ScheduleBP || latestItr.ITR?.ITR4?.ScheduleBP || latestItr.ITR?.iTR4?.ScheduleBP;
+                if (bp) {
+                    result.itr_pat = toNum(bp.NetProfit) ?? toNum(bp.NetProfitAfterTax);
+                    result.itr_gross_receipts = toNum(bp.GrossReceipts) ?? toNum(bp.GrossTurnover);
+                }
+            }
+        }
+
+        // Global fallback if everything above fails
+        if (result.itr_pat === null) {
+            const generalInfo = latestItr?.ITR1 || latestItr?.ITR2 || latestItr;
+            result.itr_pat = toNum(generalInfo?.profitAfterTax) ?? toNum(generalInfo?.PBT) ?? null;
+        }
+        if (result.itr_gross_receipts === null) {
+            const generalInfo = latestItr?.ITR1 || latestItr?.ITR2 || latestItr;
+            result.itr_gross_receipts = toNum(generalInfo?.receiptsFromProfession)
+                                     ?? toNum(generalInfo?.revenueFromOperations)
+                                     ?? toNum(generalInfo?.saleOfServices)
+                                     ?? toNum(generalInfo?.saleOfGoods);
+        }
+
+    } catch (err) {
+        console.error(`[ESR] Error parsing raw ITR:`, err.message);
     }
     return result;
 }

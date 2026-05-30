@@ -1,10 +1,33 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const prisma = require('../config/db');
 
 const app = express();
 
-app.use(cors());
+// Secure backend HTTP headers using Helmet (with CSP disabled for API-frontend routing compatibility)
+// TODO: Review and enable CSP policies in production if client hosts scripts directly
+app.use(helmet({ contentSecurityPolicy: false }));
+
+// CORS Policy Lockdown using env variables
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000').split(',');
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    const isAllowed = allowedOrigins.some(o => {
+      const allowedUrl = o.trim();
+      return origin === allowedUrl || (allowedUrl.includes('localhost') && origin.includes('localhost'));
+    });
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      callback(new Error('Blocked by CORS: Origin not allowed'));
+    }
+  },
+  credentials: true
+}));
+
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
@@ -52,7 +75,58 @@ const pddRoutes = require('./routes/pdd.routes');
 const subDsaPayoutRoutes = require('./routes/subDsaPayout.routes');
 const dashboardRoutes = require('./routes/dashboard.routes');
 
+// Rate Limiting Middlewares
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 300, // Limit each IP to 300 requests per 15 mins
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests from this IP, please try again after 15 minutes.' }
+});
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // Limit each IP to 5 attempts per 15 mins
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts from this IP, please try again after 15 minutes.' }
+});
+
+const otpSendLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  max: 3, // Limit each IP to 3 requests per 10 mins
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many OTP requests from this IP, please try again after 10 minutes.' }
+});
+
+const otpVerifyLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  max: 5, // Limit each IP to 5 attempts per 10 mins
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many OTP verification attempts from this IP, please try again after 10 minutes.' }
+});
+
+const uploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // Limit each IP to 20 uploads per 15 mins
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many file uploads from this IP, please try again after 15 minutes.' }
+});
+
 const apiRouter = express.Router();
+
+// Apply global rate limiting to all API requests
+apiRouter.use(globalLimiter);
+
+// Specific rate limiters for sensitive endpoints
+apiRouter.use('/auth/login', loginLimiter);
+apiRouter.use('/otp/send', otpSendLimiter);
+apiRouter.use('/otp/verify', otpVerifyLimiter);
+apiRouter.use('/documents/upload', uploadLimiter);
+apiRouter.use('/cases/:caseId/applicants/:applicantId/salary-slips', uploadLimiter);
 
 apiRouter.use('/auth', authRoutes);
 apiRouter.use('/users', userRoutes);

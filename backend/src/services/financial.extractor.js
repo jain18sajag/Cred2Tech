@@ -96,12 +96,48 @@ function extractGstDetails(rawGstData) {
 
         const dataRows = rows.filter(x => !String(x.Month || '').toLowerCase().includes('total'));
         if (dataRows.length > 0) {
-            const total = dataRows.reduce((s, r) => s + (Number(r['Taxable Value']) || 0), 0);
-            result.turnover_latest_year  = total;
-            result.financial_year_latest = 'FY (aggregated)';
-            result.avg_monthly_turnover  = total / 12;
-            result.months_filed_12m      = dataRows.filter(r => Number(r['Taxable Value']) > 0).length;
-            result.nil_return_months     = dataRows.filter(r => !(Number(r['Taxable Value']) > 0)).length;
+            const fyTotals = {};
+            const fyCounts = {};
+            const fyNilMonths = {};
+
+            for (const r of dataRows) {
+                const monthYear = r.Month; // e.g., 'Apr-2023' or '04-2023'
+                if (!monthYear) continue;
+
+                let year, month;
+                const parts = monthYear.split('-');
+                if (parts.length === 2) {
+                    if (!isNaN(parts[0])) {
+                        month = parseInt(parts[0], 10);
+                        year = parseInt(parts[1], 10);
+                    } else {
+                        const mStr = parts[0].substring(0,3);
+                        const monthMap = { Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12 };
+                        month = monthMap[mStr] || 1;
+                        year = parseInt(parts[1], 10);
+                    }
+                }
+                if (!Number.isFinite(year)) continue;
+
+                const fyStart = month >= 4 ? year : year - 1;
+                const fyKey = `FY ${fyStart}-${String(fyStart + 1).slice(2)}`;
+
+                const sales = Number(r['Taxable Value']) || 0;
+                fyTotals[fyKey] = (fyTotals[fyKey] || 0) + sales;
+                fyCounts[fyKey] = (fyCounts[fyKey] || 0) + 1;
+                if (!fyNilMonths[fyKey]) fyNilMonths[fyKey] = 0;
+                if (sales <= 0) fyNilMonths[fyKey]++;
+            }
+
+            const sortedFYs = Object.keys(fyTotals).sort().reverse();
+            if (sortedFYs.length > 0) {
+                const latestFy = sortedFYs[0];
+                result.turnover_latest_year  = fyTotals[latestFy];
+                result.financial_year_latest = latestFy;
+                result.avg_monthly_turnover  = fyTotals[latestFy] / 12; // Standardize division by 12
+                result.months_filed_12m      = fyCounts[latestFy] - fyNilMonths[latestFy];
+                result.nil_return_months     = fyNilMonths[latestFy];
+            }
         }
     }
 
@@ -143,15 +179,55 @@ function extractItrDetails(analyticsData) {
         return Number.isFinite(y) ? `FY ${y}-${String(y + 1).slice(2)}` : String(yearStr);
     };
 
-    const extractRow = (row) => {
-        if (!row) return { pat: null, receipts: null };
-        const pat = toNum(row.profitAfterTax);
-        const receipts = toNum(row.receiptsFromProfession)
-            ?? toNum(row.revenueFromOperations)
-            ?? toNum(row.saleOfServices)
-            ?? toNum(row.saleOfGoods)
-            ?? toNum(row.grossTotalIncome);
-        return { pat, receipts };
+    const extractRow = (row, rawYearNode = null) => {
+        if (!row) return { pat: null, receipts: null, depreciation: null, finance_cost: null };
+        let pat = null;
+        let receipts = null;
+        let depreciation = null;
+        let finance_cost = null;
+
+        // Try extracting from raw year node if it exists (for ITR3)
+        let itr3 = null;
+        if (rawYearNode && rawYearNode.json) {
+            itr3 = rawYearNode.json.ITR?.ITR3 || rawYearNode.json.ITR?.iTR3 || rawYearNode.json.ITR3 || rawYearNode.json.iTR3;
+        }
+
+        if (itr3) {
+            const pl = itr3.PARTA_PL || itr3.PartA_PL;
+            if (pl) {
+                pat = toNum(pl.TaxProvAppr?.ProfitAfterTax) 
+                    ?? toNum(pl.TaxProvAppr?.ProprietorAccBalTrf) 
+                    ?? toNum(pl.PBT);
+                    
+                depreciation = toNum(pl.DebitsToPL?.DepreciationAmort)
+                    ?? toNum(pl.DebitsToPL?.Depreciation);
+                    
+                finance_cost = toNum(pl.DebitsToPL?.InterestExpdrtDtls?.InterestExpdr)
+                    ?? toNum(pl.DebitsToPL?.Interest);
+            }
+            
+            // Do NOT use TotProfBusGain as gross receipts. Use Trading Account or Sales.
+            const trading = itr3.TradingAccount || itr3.PartA_Trading;
+            if (trading) {
+                receipts = toNum(trading.TotRevenueFrmOperations)
+                    ?? toNum(trading.SalesGrossReceiptsTotal)
+                    ?? toNum(trading.TardingAccTotCred)
+                    ?? toNum(trading.GrossRcptFromProfession);
+            }
+        }
+
+        // Fallback for flat/legacy rows (e.g. ITR-4 or legacy parser output)
+        if (pat === null) {
+            pat = toNum(row.profitAfterTax) ?? toNum(row.PBT);
+        }
+        if (receipts === null) {
+            receipts = toNum(row.receiptsFromProfession)
+                ?? toNum(row.revenueFromOperations)
+                ?? toNum(row.saleOfServices)
+                ?? toNum(row.saleOfGoods);
+        }
+
+        return { pat, receipts, depreciation, finance_cost };
     };
 
     // Try to get filing status from return summary
@@ -162,15 +238,31 @@ function extractItrDetails(analyticsData) {
         return match?.filingStatus || match?.status || 'Filed';
     };
 
+    // Find raw nodes matching the years if available
+    const findRawYearNode = (year) => {
+        if (!analyticsData || typeof analyticsData !== 'object') return null;
+        for (const [k, v] of Object.entries(analyticsData)) {
+            if (k.includes(String(year)) && Array.isArray(v) && v.length > 0) {
+                return v[0];
+            }
+        }
+        return null;
+    };
+
     if (sorted.length > 0) {
-        const { pat, receipts } = extractRow(sorted[0]);
+        const rawNode = findRawYearNode(sorted[0].year);
+        const { pat, receipts, depreciation, finance_cost } = extractRow(sorted[0], rawNode);
         result.net_profit_latest_year    = pat;
         result.gross_receipts_latest_year = receipts;
+        // In memory for ESR, not strictly mapped to schema unless exist
+        result.depreciation_latest_year  = depreciation;
+        result.finance_cost_latest_year  = finance_cost;
         result.financial_year_latest     = fyLabel(sorted[0].year);
         result.filing_status_latest      = getFilingStatus(sorted[0].year);
     }
     if (sorted.length > 1) {
-        const { pat, receipts } = extractRow(sorted[1]);
+        const rawNode = findRawYearNode(sorted[1].year);
+        const { pat, receipts } = extractRow(sorted[1], rawNode);
         result.net_profit_previous_year    = pat;
         result.gross_receipts_previous_year = receipts;
         result.financial_year_previous     = fyLabel(sorted[1].year);

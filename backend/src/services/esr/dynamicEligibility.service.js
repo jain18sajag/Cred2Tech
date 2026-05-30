@@ -173,9 +173,14 @@ function parseDynamicFoir(valString, monthlyIncome) {
 }
 
 
-// ------ RESOLVE SCHEME-SPECIFIC PRIMARY INCOME ------
-function getSchemePrimaryIncome(schemeName, esr, paramMap) {
+function getSchemePrimaryIncome(schemeName, esr, paramMap, warnings = []) {
     const name = (schemeName || '').toUpperCase();
+    
+    const failMissing = (methodName, missingParam) => {
+        warnings.push(`[ESR INCOME] ${methodName} calculation failed (Missing: ${missingParam}). Scheme requires method-specific data and will not fallback.`);
+        return 0; // Return 0 so FOIR fails, marking it ineligible/manual review
+    };
+
     if (name.includes('SALARIED')) {
         const baseSalary  = Number(esr.salaried_income) || Number(esr.selected_monthly_income) || 0;
         const incentives  = Number(esr.salaried_incentive_income) || 0;
@@ -188,21 +193,38 @@ function getSchemePrimaryIncome(schemeName, esr, paramMap) {
         const multiplierRes = parseIntegerSafe(rawMultiplier);
         const abbMultiplier = (multiplierRes.ok && multiplierRes.value !== null) ? multiplierRes.value : 2;
 
-        const creditIncome = Number(esr.banking_income) || Number(esr.bank_monthly_income) || 0;
+        const creditIncome = Number(esr.bank_avg_monthly_credit) || Number(esr.bank_total_credits) / 12 || 0;
         const abbSurrogate  = abb * abbMultiplier;
-        return Math.max(creditIncome, abbSurrogate) || Number(esr.selected_monthly_income) || 0;
+        
+        let calcVal = 0;
+        const policy = (paramMap['banking_income_policy'] || 'MAX_OF_BOTH').toUpperCase();
+        
+        if (policy === 'ABB_MULTIPLIER') {
+            calcVal = abbSurrogate;
+        } else if (policy === 'AVG_MONTHLY_CREDIT') {
+            calcVal = creditIncome;
+        } else {
+            // MAX_OF_BOTH default
+            calcVal = Math.max(creditIncome, abbSurrogate);
+        }
+
+        if (calcVal > 0) return calcVal;
+        return failMissing('Banking', 'bank_avg_balance/credits');
     }
     if (name.includes('GST')) {
         let turnover = Number(esr.gst_avg_monthly_sales) || 0;
-        let margin = Number(esr.gst_industry_margin) || 0.10;
-        if (margin > 1) margin = margin / 100;
-
-        if (turnover > 0 && esr.selected_monthly_income > 0 && turnover > esr.selected_monthly_income * 12) {
-            console.warn(`[ESR INCOME] GST turnover ${turnover} looks like annual figure (> 12x monthly income). Dividing by 12.`);
-            turnover = turnover / 12;
+        
+        let marginRes = parsePercentSafe(paramMap['gst_industry_margin']);
+        let margin = (marginRes.ok && marginRes.value !== null) ? marginRes.value : null;
+        
+        if (margin === null) {
+            warnings.push(`[ESR INCOME] GST Industry Margin missing from config. Defaulting to 10%.`);
+            margin = 0.10;
         }
+
         const calculatedGstIncome = turnover * margin;
-        return calculatedGstIncome || Number(esr.gst_income) || Number(esr.selected_monthly_income) || 0;
+        if (calculatedGstIncome > 0) return calculatedGstIncome;
+        return failMissing('GST', 'gst_avg_monthly_sales');
     }
     if (name.includes('NET PROFIT') || name.includes('NPM')) {
         const pat          = Number(esr.itr_pat) || 0;
@@ -216,31 +238,38 @@ function getSchemePrimaryIncome(schemeName, esr, paramMap) {
 
         const depreciationAddback = depr * deprFraction;
 
-        return (pat + depreciationAddback + financeCost + remuneration) / 12
-            || Number(esr.net_profit_income)
-            || Number(esr.selected_monthly_income)
-            || 0;
+        const calcVal = (pat + depreciationAddback + financeCost + remuneration) / 12;
+        // Even if PAT is negative, if the total is positive, it can be valid. 
+        if (calcVal > 0 || pat !== 0 || depr !== 0) { 
+            return Math.max(0, calcVal);
+        }
+        return failMissing('Net Profit', 'ITR Data');
     }
     if (name.includes('GRP') || name.includes('GROSS RECEIPT')) {
         const grossReceipts = Number(esr.itr_gross_receipts) || 0;
         
-        const rawGrpMult = paramMap['grp_annual_receipts_multiplier'];
-        const grpMultRes = parseIntegerSafe(rawGrpMult);
-        const grpMultiplier = (grpMultRes.ok && grpMultRes.value !== null) ? grpMultRes.value : 4;
-
-        return (grossReceipts * grpMultiplier) / 12
-            || Number(esr.selected_monthly_income)
-            || 0;
+        // Add ambiguity warning for GRP
+        warnings.push(`[ESR INCOME] GRP Method multiplier ambiguity: Ensure 'grp_annual_receipts_multiplier' is properly configured.`);
+        
+        const rawGrpMult = paramMap['grp_annual_receipts_multiplier'] || paramMap['grp_industry_margin'];
+        
+        // User requested: Do not parse as percent. Parse it as a numeric multiplier: 4 means 4x.
+        const parsedMult = parseFloat(rawGrpMult);
+        let grpMultiplier = Number.isFinite(parsedMult) ? parsedMult : 4.0; // fallback to 4x if missing/invalid
+        
+        // Return 0 for primary income to bypass FOIR, we will calculate loan eligibility directly later
+        return 0;
     }
     if (name.includes('NET WORTH') || name.includes('NWM')) {
-        return Number(esr.selected_monthly_income) || 0;
+        // NWM logic is handled directly inside evaluateDynamicSchemeEligibility
+        return 0;
     }
     return Number(esr.selected_monthly_income) || 0;
 }
 
 // ------ OPTIONAL INCOME COMPOSITION ENGINE ------
-function calculateComposedIncome({ schemeName, esr, incomeEntries, paramMap }) {
-    const primaryIncome = getSchemePrimaryIncome(schemeName, esr, paramMap);
+function calculateComposedIncome({ schemeName, esr, incomeEntries, paramMap, warnings = [] }) {
+    const primaryIncome = getSchemePrimaryIncome(schemeName, esr, paramMap, warnings);
 
     const getBoolParam = (key, defaultVal = false) => {
         const raw = paramMap[key];
@@ -578,19 +607,98 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const maxLoan = handleParseResult(maxLoanRes, `${pref}_max_loan`);
 
     // 1. Compose eligible income (Rental, agricultural, and other incomes are strictly optional)
-    const incomeComposition = calculateComposedIncome({ schemeName: scheme.scheme_name, esr, incomeEntries, paramMap });
-    const composedIncome = incomeComposition.total_eligible_income;
+    const isNwmMethod = (scheme.scheme_name || '').toUpperCase().includes('NET WORTH') || (scheme.scheme_name || '').toUpperCase().includes('NWM');
+    const isGrpMethod = (scheme.scheme_name || '').toUpperCase().includes('GRP') || (scheme.scheme_name || '').toUpperCase().includes('GROSS RECEIPT');
 
-    logger?.traceStep('STEP 1-2 — INCOME COMPOSITION', [
-        `Primary Income:       ₹${(incomeComposition.primary_income || 0).toLocaleString()}`,
-        `Rental (Bank):        ₹${(incomeComposition.rental_bank || 0).toLocaleString()}`,
-        `Agri Income:          ₹${(incomeComposition.agri_income || 0).toLocaleString()}`,
-        `Other Income:         ₹${(incomeComposition.other_income || 0).toLocaleString()}`,
-        `Total Eligible:       ₹${composedIncome.toLocaleString()}`,
-        `Breakdown:            ${JSON.stringify(incomeComposition.breakdown || {})}`,
-    ].join('\n'));
+    let composedIncome = 0;
+    let incomeComposition = { breakdown: [], primary_income: 0, total_eligible_income: 0 };
+    
+    if (isNwmMethod) {
+        const npmMonthlyIncome = (
+            (Number(esr.itr_pat) || 0)
+            + ((Number(esr.itr_depreciation) || 0) * (2 / 3))
+            + (Number(esr.itr_finance_cost) || 0)
+            + (Number(esr.director_remuneration) || 0)
+            + (Number(esr.director_interest_on_loan) || 0)
+        ) / 12;
 
-    if (composedIncome <= 0) {
+        const propertyValue = Number(esr.property_value) || 0;
+        const propertyIncomeMonthly = (propertyValue * 0.03) / 12;
+
+        const financialAssetsValue = Number(esr.shares_mf_fd_value) || Number(esr.financial_assets_value) || Number(esr.liquid_assets_value) || Number(esr.net_worth_liquid_assets) || 0;
+        const financialAssetIncomeMonthly = (financialAssetsValue * 0.05) / 12;
+
+        const rentalBankMonthly = Number(esr.rental_bank_income) || Number(esr.rental_income_bank) || 0;
+        const eligibleRentalMonthly = rentalBankMonthly * 0.70;
+
+        const agriMonthly = Number(esr.agricultural_income) || Number(esr.agri_income) || 0;
+        const agriFactor = esr.agri_ownership_proof_available ? 1.00 : 0.50;
+        const eligibleAgriMonthly = agriMonthly * agriFactor;
+
+        composedIncome = npmMonthlyIncome + propertyIncomeMonthly + financialAssetIncomeMonthly + eligibleRentalMonthly + eligibleAgriMonthly;
+        incomeComposition = {
+            primary_income: npmMonthlyIncome,
+            total_eligible_income: composedIncome,
+            breakdown: [
+                { source: 'NPM Component', amount: npmMonthlyIncome },
+                { source: 'Property Add-on', amount: propertyIncomeMonthly },
+                { source: 'Financial Asset Add-on', amount: financialAssetIncomeMonthly },
+                { source: 'Eligible Rental Bank', amount: eligibleRentalMonthly },
+                { source: 'Eligible Agri', amount: eligibleAgriMonthly }
+            ]
+        };
+        
+        logger?.traceStep('NWM INCOME BUILD-UP', [
+            `NPM Monthly Income:           ₹${npmMonthlyIncome.toLocaleString()}`,
+            `Property Value Add-on @3%/12: ₹${propertyIncomeMonthly.toLocaleString()}`,
+            `Financial Asset Add-on @5%/12: ₹${financialAssetIncomeMonthly.toLocaleString()}`,
+            `Eligible Rental Bank @70%:    ₹${eligibleRentalMonthly.toLocaleString()}`,
+            `Eligible Agri @${agriFactor * 100}%:           ₹${eligibleAgriMonthly.toLocaleString()}`,
+            `Total NWM Monthly Income:     ₹${composedIncome.toLocaleString()}`,
+        ].join('\n'));
+
+        // Customer Selection Gate
+        const cibil = effectiveCibil || 0;
+        let customerSelectionPass = false;
+        let requiredIncome = 0;
+        if (cibil >= 770 && composedIncome >= 150000) {
+            customerSelectionPass = true;
+            requiredIncome = 150000;
+        } else if (cibil >= 750 && composedIncome >= 300000) {
+            customerSelectionPass = true;
+            requiredIncome = 300000;
+        } else {
+            requiredIncome = cibil >= 770 ? 150000 : 300000;
+        }
+        
+        logger?.traceStep('NWM CUSTOMER SELECTION', [
+            `CIBIL:              ${cibil}`,
+            `Required threshold: ₹${requiredIncome.toLocaleString()}`,
+            `Actual NWM income:  ₹${composedIncome.toLocaleString()}`,
+            `Result:             ${customerSelectionPass ? 'PASS' : 'FAIL'}`,
+            ...(customerSelectionPass ? [] : ['Reason:             NWM_CUSTOMER_SELECTION_FAILED'])
+        ].join('\n'));
+
+        if (!customerSelectionPass) {
+            isEligible = false;
+            failure_reasons.push("NWM_CUSTOMER_SELECTION_FAILED");
+            logger?.traceFailure('INCOME_REJECT', `NWM Customer Selection failed (CIBIL ${cibil}, Income ₹${composedIncome.toLocaleString()})`);
+        }
+    } else {
+        incomeComposition = calculateComposedIncome({ schemeName: scheme.scheme_name, esr, incomeEntries, paramMap, warnings });
+        composedIncome = incomeComposition.total_eligible_income;
+
+        logger?.traceStep('STEP 1-2 — INCOME COMPOSITION', [
+            `Primary Income:       ₹${(incomeComposition.primary_income || 0).toLocaleString()}`,
+            `Rental (Bank):        ₹${(incomeComposition.rental_bank || 0).toLocaleString()}`,
+            `Agri Income:          ₹${(incomeComposition.agri_income || 0).toLocaleString()}`,
+            `Other Income:         ₹${(incomeComposition.other_income || 0).toLocaleString()}`,
+            `Total Eligible:       ₹${composedIncome.toLocaleString()}`,
+            `Breakdown:            ${JSON.stringify(incomeComposition.breakdown || {})}`,
+        ].join('\n'));
+    }
+
+    if (composedIncome <= 0 && !isGrpMethod && !isNwmMethod) {
         isEligible = false;
         failure_reasons.push("Composed eligible income is 0 or missing.");
         logger?.traceFailure('INCOME_REJECT', 'Composed eligible income is zero or missing');
@@ -605,6 +713,12 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     let foir_allowed_percent = null;
     let conditionalFlags = null;
     let skip_foir_check = false;
+    
+    // GRP bypasses FOIR entirely
+    if (isGrpMethod) {
+        skip_foir_check = true;
+    }
+    
     if (foir_allowed_percent_value !== null) {
         if (typeof foir_allowed_percent_value === 'object' && foir_allowed_percent_value.type === 'conditional_foir') {
             const isDoubleWhammy = esr.double_whammy_flag === true;
@@ -722,9 +836,30 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         logger?.traceWarning('STEP 7 — ELIGIBLE EMI CAPACITY: Could not calculate (missing FOIR% or income)');
     }
 
-    // 7. Calculate FOIR-based Maximum Eligible Loan Amount
+    // 7. Calculate FOIR-based Maximum Eligible Loan Amount (or Method-based direct loan amount)
     let foir_based_eligible_loan_amount = 0;
-    if (skip_foir_check) {
+
+    if (isGrpMethod) {
+        const grossReceipts = Number(esr.itr_gross_receipts) || 0;
+        const rawGrpMult = paramMap['grp_annual_receipts_multiplier'] || paramMap['grp_industry_margin'];
+        const parsedMult = parseFloat(rawGrpMult);
+        const grpMultiplier = Number.isFinite(parsedMult) ? parsedMult : 4.0;
+        
+        const iciciExposure = Number(esr.icici_exposure) || 0;
+        
+        foir_based_eligible_loan_amount = Math.max(0, (grossReceipts * grpMultiplier) - iciciExposure);
+        
+        logger?.traceFormula(
+            'STEP 8 — GRP DIRECT LOAN ELIGIBILITY',
+            '(Gross Receipts × Multiplier) − ICICI Exposure',
+            `(₹${grossReceipts.toLocaleString()} × ${grpMultiplier}) − ₹${iciciExposure.toLocaleString()}`,
+            `₹${foir_based_eligible_loan_amount.toLocaleString()}`
+        );
+        isEligible = foir_based_eligible_loan_amount > 0;
+        if (!isEligible) {
+             failure_reasons.push("GRP eligibility is 0 (Gross receipts * Multiplier <= Exposure).");
+        }
+    } else if (skip_foir_check) {
         const rawMonthsMult = paramMap['no_dbr_months_multiplier'];
         const monthsMultRes = parseIntegerSafe(rawMonthsMult);
         const monthsMultiplier = (monthsMultRes.ok && monthsMultRes.value !== null) ? monthsMultRes.value : 60;
@@ -798,24 +933,34 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     // FOIR-based: null means No DBR (uncapped), 0 means calculation failed
     // LTV-based: null means no property or no LTV configured
     // maxLoan: null means no lender cap
+    const requested_loan = Number(esr.requested_loan_amount) || null;
+
     const eligibilityCandidates = [
         foir_based_eligible_loan_amount,
         ltv_based_eligible_loan_amount,
         maxLoan,
-        nwm_cap
+        nwm_cap,
+        requested_loan
     ].filter(v => v !== null && v !== undefined && Number.isFinite(v) && v > 0);
 
     let final_eligible_loan_amount = eligibilityCandidates.length > 0
         ? Math.min(...eligibilityCandidates)
         : 0;
 
+    // Strict constraint: if FOIR was required (not null for No DBR) but resulted in 0 (failed/missing data),
+    // then final eligibility MUST be 0. It cannot borrow LTV or requested loan amounts.
+    if (foir_based_eligible_loan_amount === 0) {
+        final_eligible_loan_amount = 0;
+    }
+
     logger?.traceFormula(
         'STEP 10 — FINAL ELIGIBILITY',
-        'MIN of valid candidates: [FOIR Eligibility, LTV Eligibility, Product Max Loan]',
+        'MIN of valid candidates: [FOIR Eligibility, LTV Eligibility, Product Max Loan, Requested Loan, NWM Cap]',
         `Candidates: [${[
             foir_based_eligible_loan_amount !== null ? '₹' + foir_based_eligible_loan_amount?.toLocaleString() : 'No Cap (No DBR)',
             ltv_based_eligible_loan_amount !== null ? '₹' + ltv_based_eligible_loan_amount?.toLocaleString() : 'N/A (no property/LTV)',
-            maxLoan !== null ? '₹' + maxLoan?.toLocaleString() : 'No Cap'
+            maxLoan !== null ? '₹' + maxLoan?.toLocaleString() : 'No Product Cap',
+            requested_loan !== null ? '₹' + requested_loan?.toLocaleString() : 'No Requested Cap'
         ].join(', ')}]`,
         `₹${final_eligible_loan_amount.toLocaleString()}`
     );

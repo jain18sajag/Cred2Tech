@@ -8,18 +8,14 @@ async function loginUser(email, password) {
     include: { role: true, tenant: true },
   });
 
-  if (!user) {
+  // Safe placeholder hash to reduce timing differences for non-existing users
+  const placeholderHash = "$2b$10$abcdefghijklmnopqrstuvwxyzaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const hashToCompare = user ? user.password_hash : placeholderHash;
+  const isPasswordValid = await comparePassword(password, hashToCompare);
+
+  // Return generic error for wrong email, wrong password, or inactive/deactivated user
+  if (!user || !isPasswordValid || user.status !== 'ACTIVE') {
     throw new Error('Invalid email or password');
-  }
-
-  const isPasswordValid = await comparePassword(password, user.password_hash);
-
-  if (!isPasswordValid) {
-    throw new Error('Invalid email or password');
-  }
-
-  if (user.status !== 'ACTIVE') {
-    throw new Error('User account is not active');
   }
 
   const loginTime = new Date();

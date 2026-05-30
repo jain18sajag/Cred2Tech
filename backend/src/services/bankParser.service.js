@@ -15,7 +15,14 @@ const toNum = (v) => {
  * Priority: raw_retrieve_response > raw_download_response
  */
 function extractBankFySnapshot(rawPayload) {
-    const result = { latest: null, previous: null, fy_latest: null, fy_previous: null };
+    const result = { 
+        latest: null, 
+        previous: null, 
+        fy_latest: null, 
+        fy_previous: null,
+        avg_monthly_credit: null,
+        total_credits: null 
+    };
     if (!rawPayload) return result;
 
     const rawBank = typeof rawPayload === 'string' ? JSON.parse(rawPayload) : rawPayload;
@@ -88,6 +95,18 @@ function extractBankFySnapshot(rawPayload) {
     // Final fallback for single value fields if no monthly breakdown was found
     if (result.latest === null) {
         result.latest = toNum(overview?.averageDailyBalance) ?? toNum(rawBank?.summary?.avgEodBalance) ?? null;
+    }
+
+    // Extract average monthly credit and total credits from overview or account level
+    const accountLevel = rawBank?.accountLevelAnalysis ?? rawBank?.result?.[0]?.accountLevelAnalysis ?? rawBank?.result?.accountLevelAnalysis ?? [];
+    const firstAccount = Array.isArray(accountLevel) ? accountLevel[0] : null;
+
+    if (firstAccount) {
+        result.avg_monthly_credit = toNum(firstAccount.avgMonthlyCredit || firstAccount.averageMonthlyCredit);
+        result.total_credits = toNum(firstAccount.totalCreditAmount || firstAccount.totalCredits);
+    } else if (overview) {
+        result.avg_monthly_credit = toNum(overview.averageMonthlyCredit || overview.avgMonthlyCredit);
+        result.total_credits = toNum(overview.totalCreditAmount || overview.totalCredits);
     }
 
     return result;
