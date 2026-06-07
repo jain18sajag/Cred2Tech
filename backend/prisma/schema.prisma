@@ -2006,3 +2006,509 @@ model SalesIncentiveLedger {
 
   @@map("sales_incentive_ledgers")
 }
+// ----------------------------------------------------------------------
+// Missing tables added from second PostgreSQL backup
+// Existing models/columns above were preserved without removal.
+// ----------------------------------------------------------------------
+
+model AdminAuditLog {
+  id          BigInt   @id @default(autoincrement())
+  admin_id    BigInt?
+  admin_name  String?  @db.VarChar(120)
+  admin_email String?  @db.VarChar(255)
+  action      String   @db.VarChar(60)
+  target_type String?  @db.VarChar(40)
+  target_id   String?  @db.VarChar(80)
+  details     Json?
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([action], map: "idx_audit_action")
+  @@index([admin_id], map: "idx_audit_admin")
+  @@index([created_at], map: "idx_audit_created")
+  @@map("admin_audit_log")
+}
+
+model Admin {
+  id                  BigInt    @id @default(autoincrement())
+  email               String    @unique @db.VarChar(255)
+  password_hash       String    @db.VarChar(255)
+  full_name           String    @db.VarChar(100)
+  phone               String?   @db.VarChar(15)
+  role                String?   @default("ADMIN") @db.VarChar(50)
+  permissions         String[]  @default([])
+  status              String?   @default("ACTIVE") @db.VarChar(20)
+  created_at          DateTime? @default(now()) @db.Timestamp(6)
+  updated_at          DateTime? @default(now()) @db.Timestamp(6)
+  last_login_at       DateTime? @db.Timestamp(6)
+  login_count         Int?      @default(0)
+  tokens_valid_from   DateTime? @db.Timestamptz(6)
+  must_change_password Boolean? @default(false)
+  admin_code          String?   @unique @db.VarChar(20)
+
+  @@map("admins")
+}
+
+model Agent {
+  id                     BigInt    @id @default(autoincrement())
+  employee_id            String    @unique @db.VarChar(20)
+  full_name              String    @db.VarChar(100)
+  email                  String    @unique @db.VarChar(255)
+  phone                  String    @unique @db.VarChar(15)
+  password_hash          String    @db.VarChar(255)
+  region                 String?   @db.VarChar(100)
+  expertise              String[]  @default([])
+  availability           String?   @default("AVAILABLE") @db.VarChar(20)
+  certifications         String[]  @default([])
+  gender                 String?   @db.VarChar(20)
+  status                 String?   @default("PENDING") @db.VarChar(20)
+  approval_status        String?   @default("PENDING") @db.VarChar(20)
+  approved_by            BigInt?
+  approved_at            DateTime? @db.Timestamp(6)
+  rejection_reason       String?
+  created_at             DateTime? @default(now()) @db.Timestamp(6)
+  updated_at             DateTime? @default(now()) @db.Timestamp(6)
+  last_login_at          DateTime? @db.Timestamp(6)
+  login_count            Int?      @default(0)
+  reset_token_hash       String?   @db.VarChar(255)
+  reset_token_expires_at DateTime? @db.Timestamptz(6)
+  tokens_valid_from      DateTime? @db.Timestamptz(6)
+
+  activity_logs        AgentActivityLog[]
+  availability_logs    AgentAvailabilityLog[]
+  assigned_scheme_cases SchemeCase[] @relation("SchemeCaseAssignedAgent")
+  closed_scheme_cases   SchemeCase[] @relation("SchemeCaseClosedByAgent")
+
+  @@index([approval_status], map: "idx_agents_approval_status")
+  @@index([employee_id], map: "idx_agents_employee_id")
+  @@index([status], map: "idx_agents_status")
+  @@map("agents")
+}
+
+model AgentActivityLog {
+  id            BigInt   @id @default(autoincrement())
+  agent_id      BigInt
+  activity_type String   @db.VarChar(50)
+  case_id       BigInt?
+  details       Json?
+  ip_address    String?  @db.Inet
+  user_agent    String?
+  created_at    DateTime? @default(now()) @db.Timestamp(6)
+
+  agent       Agent       @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+  case_entity SchemeCase? @relation(fields: [case_id], references: [id], onDelete: Cascade)
+
+  @@index([agent_id], map: "idx_agent_activity_agent_id")
+  @@map("agent_activity_log")
+}
+
+model AgentAvailabilityLog {
+  id         BigInt   @id @default(autoincrement())
+  agent_id   BigInt
+  status     String   @db.VarChar(20)
+  changed_at DateTime @default(now()) @db.Timestamptz(6)
+
+  agent Agent @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+
+  @@index([agent_id, changed_at], map: "idx_avail_log_agent_time")
+  @@map("agent_availability_log")
+}
+
+model AiUsageLog {
+  id                 BigInt   @id @default(autoincrement())
+  session_id         String?  @db.VarChar(64)
+  msme_user_id       BigInt?
+  business_id        BigInt?
+  stage              String   @db.VarChar(40)
+  model_name         String   @map("model") @db.VarChar(60)
+  prompt_tokens      Int      @default(0)
+  cached_tokens      Int      @default(0)
+  completion_tokens  Int      @default(0)
+  total_tokens       Int      @default(0)
+  cost_usd           Decimal  @default(0) @db.Decimal(14, 6)
+  schemes_count      Int      @default(0)
+  system_fingerprint String?  @db.VarChar(80)
+  elapsed_ms         Int?
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([created_at], map: "idx_ai_usage_created")
+  @@index([model_name], map: "idx_ai_usage_model")
+  @@index([session_id], map: "idx_ai_usage_session")
+  @@index([msme_user_id], map: "idx_ai_usage_user")
+  @@map("ai_usage_log")
+}
+
+model CaseDocumentRequest {
+  id                   BigInt    @id @default(autoincrement())
+  case_id              BigInt
+  msme_user_id         BigInt
+  document_name        String    @db.VarChar(500)
+  description          String?
+  requested_by_agent_id BigInt?
+  requested_at         DateTime? @default(now()) @db.Timestamptz(6)
+  status               String?   @default("PENDING") @db.VarChar(50)
+  uploaded_document_id BigInt?
+  fulfilled_at         DateTime? @db.Timestamptz(6)
+
+  case_entity       SchemeCase    @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  uploaded_document CaseDocument? @relation(fields: [uploaded_document_id], references: [id])
+
+  @@map("case_document_requests")
+}
+
+model CaseDocument {
+  id                       BigInt    @id @default(autoincrement())
+  case_id                  BigInt
+  file_name                String    @db.VarChar(500)
+  file_type                String?   @db.VarChar(200)
+  file_size                BigInt?
+  file_url                 String?
+  storage_path             String?
+  document_tag             String?   @default("") @db.VarChar(255)
+  uploaded_by_agent_id     BigInt?
+  uploaded_by_msme_user_id BigInt?
+  uploaded_at              DateTime? @default(now()) @db.Timestamptz(6)
+
+  case_entity          SchemeCase            @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  fulfillment_requests CaseDocumentRequest[]
+
+  @@map("case_documents")
+}
+
+model MsmeBusiness {
+  id                                   BigInt    @id @default(autoincrement())
+  user_id                              BigInt
+  is_primary                           Boolean?  @default(false)
+  has_paid                             Boolean?  @default(false)
+  payment_id                           String?   @db.VarChar(100)
+  pan_number                           String?   @db.VarChar(20)
+  pan_verified                         Boolean?  @default(false)
+  gstin                                String?   @db.VarChar(20)
+  gstin_verified                       Boolean?  @default(false)
+  gstin_status                         String?
+  constitution_of_business             String?
+  legal_name_of_business               String?
+  trade_name_of_business               String?
+  principal_address                    String?
+  principal_city                       String?
+  principal_state                      String?
+  principal_district                   String?
+  principal_pincode                    String?   @db.VarChar(20)
+  director_names                       String?
+  annual_turnover_range                String?
+  annual_turnover_lakhs                Decimal?  @default(0) @db.Decimal(15, 2)
+  taxpayer_type                        String?
+  registration_date                    String?
+  centre_jurisdiction                  String?
+  state_jurisdiction                   String?
+  nature_of_business_activities        String?
+  einvoicing_status                    String?
+  nature_of_core_business              String?
+  business_type                        String?   @db.VarChar(50)
+  business_sector                      String?   @db.VarChar(50)
+  enterprise_category                  String?   @db.VarChar(50)
+  years_in_operation                   Int?      @default(0)
+  state                                String?
+  udyam_number                         String?   @db.VarChar(50)
+  udyam_verified                       Boolean?  @default(false)
+  udyam_registered                     Boolean?
+  investment_in_plant_machinery_lakhs  Decimal?  @db.Decimal(15, 2)
+  investment_in_equipment_lakhs        Decimal?  @db.Decimal(15, 2)
+  is_startup                           Boolean?
+  is_export_oriented                   Boolean?  @default(false)
+  is_women_led                         Boolean?  @default(false)
+  total_employees                      Int?      @default(0)
+  women_employees                      Int?      @default(0)
+  pwd_employees                        Int?      @default(0)
+  is_incorporated                      Boolean?  @default(false)
+  is_first_generation_entrepreneur     Boolean?  @default(false)
+  has_patent                           Boolean?  @default(false)
+  is_innovation_focused                Boolean?  @default(false)
+  has_rd_facility                      Boolean?  @default(false)
+  business_stage                       String?   @db.VarChar(50)
+  benefit_focus                        String?   @db.VarChar(50)
+  registration_number                  String?   @db.VarChar(50)
+  business_plan_ready                  Boolean?  @default(false)
+  already_registered_schemes           String[]  @default([])
+  years_domicile_in_state              Decimal?  @db.Decimal(5, 2)
+  is_in_notified_area                  Boolean?  @default(false)
+  created_at                           DateTime? @default(now()) @db.Timestamp(6)
+  updated_at                           DateTime? @default(now()) @db.Timestamp(6)
+
+  user MsmeUser @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id], map: "idx_msme_businesses_user_id")
+  @@map("msme_businesses")
+}
+
+model MsmeOtpVerification {
+  mobile      String    @id @db.VarChar(15)
+  otp         String    @db.VarChar(10)
+  expires_at  DateTime  @db.Timestamp(6)
+  verified    Boolean?  @default(false)
+  verified_at DateTime? @db.Timestamp(6)
+  created_at  DateTime? @default(now()) @db.Timestamp(6)
+
+  @@map("msme_otp_verifications")
+}
+
+model MsmePayment {
+  id                  BigInt    @id @default(autoincrement())
+  user_id             BigInt
+  razorpay_order_id   String?   @unique @db.VarChar(100)
+  razorpay_payment_id String?   @db.VarChar(100)
+  razorpay_signature  String?
+  amount              Decimal   @db.Decimal(12, 2)
+  currency            String    @default("INR") @db.VarChar(10)
+  status              String    @default("PENDING") @db.VarChar(20)
+  payment_for         String    @db.VarChar(50)
+  metadata            Json?     @default("{}")
+  paid_at             DateTime? @db.Timestamp(6)
+  failure_reason      String?
+  created_at          DateTime? @default(now()) @db.Timestamp(6)
+  updated_at          DateTime? @default(now()) @db.Timestamp(6)
+
+  user MsmeUser @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("msme_payments")
+}
+
+model MsmePricing {
+  id           BigInt    @id @default(autoincrement())
+  service_type String    @unique @db.VarChar(50)
+  amount       Decimal   @db.Decimal(12, 2)
+  currency     String    @default("INR") @db.VarChar(10)
+  is_active    Boolean?  @default(true)
+  created_at   DateTime? @default(now()) @db.Timestamp(6)
+  updated_at   DateTime? @default(now()) @db.Timestamp(6)
+
+  @@map("msme_pricing")
+}
+
+model MsmeUser {
+  id                                  BigInt    @id @default(autoincrement())
+  mobile_number                       String    @unique @db.VarChar(15)
+  otp_verified                        Boolean?  @default(false)
+  otp_verified_at                     DateTime? @db.Timestamp(6)
+  status                              String?   @default("ACTIVE") @db.VarChar(20)
+  kyc_status                          String?   @default("PENDING") @db.VarChar(20)
+  has_paid                            Boolean?  @default(false)
+  payment_id                          String?   @db.VarChar(100)
+  pan_verified                        Boolean?  @default(false)
+  last_data_refresh_at                DateTime? @db.Timestamp(6)
+  data_refresh_count                  Int?      @default(0)
+  created_at                          DateTime? @default(now()) @db.Timestamp(6)
+  updated_at                          DateTime? @default(now()) @db.Timestamp(6)
+  differently_abled                   Boolean?
+  bpl                                 Boolean?
+  minority                            Boolean?
+  pan_number                          String?   @db.VarChar(10)
+  gstin                               String?   @db.VarChar(15)
+  gstin_verified                      Boolean?  @default(false)
+  constitution_of_business            String?
+  legal_name_of_business              String?
+  trade_name_of_business              String?
+  principal_address                   String?
+  principal_city                      String?
+  principal_state                     String?
+  principal_pincode                   String?
+  business_type                       String?   @db.VarChar(50)
+  sector                              String?   @db.VarChar(100)
+  date_of_incorporation               DateTime? @db.Date
+  msme_type                           String?   @db.VarChar(50)
+  annual_turnover_lakhs               Decimal?  @db.Decimal(15, 2)
+  total_employees                     Int?
+  nature_of_business                  String?
+  udyam_number                        String?   @db.VarChar(20)
+  udyam_verified                      Boolean?  @default(false)
+  principal_district                  String?
+  director_names                      String?
+  annual_turnover_range               String?
+  taxpayer_type                       String?
+  gstin_status                        String?
+  registration_date                   String?
+  centre_jurisdiction                 String?
+  state_jurisdiction                  String?
+  nature_of_business_activities       String?
+  einvoicing_status                   String?
+  nature_of_core_business             String?
+  ekyc_authenticated                  Boolean?  @default(false)
+  aadhar_authenticated                Boolean?  @default(false)
+  udyam_verified_at                   DateTime? @db.Timestamp(6)
+  rural_urban                         String?   @db.VarChar(20)
+  is_ex_serviceman                    Boolean?  @default(false)
+  investment_in_plant_machinery_lakhs Decimal?  @db.Decimal(15, 2)
+  women_employees                     Int?      @default(0)
+  has_existing_loan                   Boolean?  @default(false)
+  is_loan_defaulter                   Boolean?  @default(false)
+  already_availed_subsidy             Boolean?  @default(false)
+  education_level                     String?   @db.VarChar(50)
+  entity_type                         String?   @db.VarChar(50)
+  is_first_generation_entrepreneur    Boolean?  @default(false)
+  is_incorporated                     Boolean?  @default(false)
+  udyam_registered                    Boolean?
+  auth_step                           String?   @default("mobile_verified") @db.VarChar(50)
+  state                               String?   @db.VarChar(100)
+  district                            String?   @db.VarChar(100)
+  city                                String?   @db.VarChar(100)
+  pincode                             String?   @db.VarChar(20)
+  address                             String?
+  caste                               String?   @db.VarChar(50)
+  religion                            String?   @db.VarChar(50)
+  dob                                 DateTime? @db.Date
+  aadhar_number                       String?   @db.VarChar(20)
+  aadhar_verified                     Boolean?  @default(false)
+  business_sector                     String?   @db.VarChar(100)
+  business_category                   String?   @db.VarChar(100)
+  enterprise_category                 String?   @db.VarChar(50)
+  years_in_operation                  Int?
+  refresh_token                       String?
+  refresh_token_expires_at            DateTime? @db.Timestamp(6)
+  device_id                           String?   @db.VarChar(255)
+  fcm_token                           String?
+  last_login_at                       DateTime? @db.Timestamp(6)
+  login_count                         Int?      @default(0)
+  ip_address                          String?   @db.Inet
+  user_agent                          String?
+  location                            String?
+  referrer                            String?   @db.VarChar(500)
+  utm_source                          String?   @db.VarChar(100)
+  utm_medium                          String?   @db.VarChar(100)
+  utm_campaign                        String?   @db.VarChar(100)
+  utm_content                         String?   @db.VarChar(100)
+  utm_term                            String?   @db.VarChar(100)
+  landing_page                        String?   @db.VarChar(500)
+  signup_source                       String?   @db.VarChar(50)
+  verification_method                 String?   @db.VarChar(50)
+  verification_metadata               Json?
+  name                                String?   @db.VarChar(100)
+  email                               String?   @db.VarChar(255)
+  age                                 Int?
+  gender                              String?   @db.VarChar(20)
+  social_category                     String[]  @default([])
+  is_women_led                        Boolean?  @default(false)
+  is_startup                          Boolean?
+  is_export_oriented                  Boolean?  @default(false)
+  years_domicile_in_state             Int?
+  business_stage                      String?   @db.VarChar(50)
+  benefit_focus                       String?   @db.VarChar(50)
+  is_in_notified_area                 Boolean?  @default(false)
+  investment_in_equipment_lakhs       Decimal?  @db.Decimal(15, 2)
+  pwd_employees                       Int?      @default(0)
+  business_plan_ready                 Boolean?  @default(false)
+  already_registered_schemes          String[]  @default([])
+  has_patent                          Boolean?  @default(false)
+  is_innovation_focused               Boolean?  @default(false)
+  has_rd_facility                     Boolean?  @default(false)
+  registration_number                 String?   @db.VarChar(50)
+  gst_registered                      Boolean?  @default(true)
+  annual_income_lakhs                 Decimal?  @db.Decimal(15, 2)
+  active_business_id                  BigInt?
+  msm_code                            String?   @unique @db.VarChar(20)
+
+  businesses   MsmeBusiness[]
+  payments     MsmePayment[]
+  scheme_cases SchemeCase[]
+
+  @@map("msme_users")
+}
+
+model SchemeCaseHistory {
+  id                BigInt    @id @default(autoincrement())
+  case_id           BigInt
+  action            String    @db.VarChar(50)
+  performed_by      BigInt
+  performed_by_type String    @db.VarChar(20)
+  old_value         Json?
+  new_value         Json?
+  notes             String?
+  created_at        DateTime? @default(now()) @db.Timestamp(6)
+
+  case_entity SchemeCase @relation(fields: [case_id], references: [id], onDelete: Cascade)
+
+  @@index([case_id], map: "idx_scheme_case_history_case_id")
+  @@map("scheme_case_history")
+}
+
+model SchemeCase {
+  id                 BigInt    @id @default(autoincrement())
+  case_number        String    @unique @db.VarChar(50)
+  msme_user_id       BigInt
+  scheme_id          String    @db.VarChar(100)
+  scheme_name        String?   @db.VarChar(255)
+  status             String?   @default("NEW") @db.VarChar(30)
+  priority           String?   @default("MEDIUM") @db.VarChar(20)
+  assigned_agent_id  BigInt?
+  assigned_by        BigInt?
+  assigned_at        DateTime? @db.Timestamp(6)
+  application_data   Json?
+  msme_notes         String?
+  agent_notes        String?
+  admin_notes        String?
+  last_contact_at    DateTime? @db.Timestamp(6)
+  contact_count      Int?      @default(0)
+  created_at         DateTime? @default(now()) @db.Timestamp(6)
+  updated_at         DateTime? @default(now()) @db.Timestamp(6)
+  started_at         DateTime? @db.Timestamp(6)
+  completed_at       DateTime? @db.Timestamp(6)
+  closed_at          DateTime? @db.Timestamp(6)
+  closure_reason     String?   @db.VarChar(50)
+  closure_notes      String?
+  closed_by          BigInt?
+
+  msme_user       MsmeUser            @relation(fields: [msme_user_id], references: [id])
+  assigned_agent  Agent?              @relation("SchemeCaseAssignedAgent", fields: [assigned_agent_id], references: [id])
+  closed_by_agent Agent?              @relation("SchemeCaseClosedByAgent", fields: [closed_by], references: [id])
+  activity_logs   AgentActivityLog[]
+  history         SchemeCaseHistory[]
+  documents       CaseDocument[]
+  document_requests CaseDocumentRequest[]
+
+  @@index([assigned_agent_id], map: "idx_scheme_cases_assigned_agent_id")
+  @@index([created_at], map: "idx_scheme_cases_created_at")
+  @@index([msme_user_id], map: "idx_scheme_cases_msme_user_id")
+  @@index([status], map: "idx_scheme_cases_status")
+  @@map("scheme_cases")
+}
+
+model UsdInrRate {
+  rate_date  DateTime @id @db.Date
+  rate       Decimal  @db.Decimal(14, 6)
+  source     String   @default("open.er-api.com") @db.VarChar(40)
+  fetched_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("usd_inr_rates")
+}
+
+model UserEligibilitySnapshot {
+  user_id     String   @db.VarChar(64)
+  session_id  String?  @db.VarChar(64)
+  status      String?  @db.VarChar(32)
+  data        Json     @default("{}")
+  updated_at  DateTime @default(now()) @db.Timestamptz(6)
+  business_id String   @default("0") @db.VarChar(64)
+
+  @@id([user_id, business_id])
+  @@map("user_eligibility_snapshots")
+}
+
+model UserEligibleScheme {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id              String
+  slug                 String
+  scheme_name          String?
+  scheme_level         String?
+  nodal_ministry_name  String?
+  brief_description    String?
+  tags                 Json?
+  scheme_data          Json?
+  match_percentage     Int?      @default(100)
+  is_active            Boolean?  @default(true)
+  is_bookmarked        Boolean?  @default(false)
+  created_at           DateTime? @default(now()) @db.Timestamp(6)
+  updated_at           DateTime? @default(now()) @db.Timestamp(6)
+
+  @@unique([user_id, slug])
+  @@index([user_id], map: "idx_user_eligible_schemes_user_id")
+  @@index([user_id, slug], map: "idx_user_eligible_schemes_user_id_slug")
+  @@map("user_eligible_schemes")
+}
