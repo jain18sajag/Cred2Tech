@@ -2094,8 +2094,8 @@ model AgentActivityLog {
   user_agent    String?
   created_at    DateTime? @default(now()) @db.Timestamp(6)
 
-  agent       Agent       @relation(fields: [agent_id], references: [id], onDelete: Cascade)
-  case_entity SchemeCase? @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  agent       Agent       @relation(map: "agent_activity_log_agent_id_fkey", fields: [agent_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  case_entity SchemeCase? @relation(map: "agent_activity_log_case_id_fkey", fields: [case_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([agent_id], map: "idx_agent_activity_agent_id")
   @@map("agent_activity_log")
@@ -2107,7 +2107,7 @@ model AgentAvailabilityLog {
   status     String   @db.VarChar(20)
   changed_at DateTime @default(now()) @db.Timestamptz(6)
 
-  agent Agent @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+  agent Agent @relation(map: "agent_availability_log_agent_id_fkey", fields: [agent_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([agent_id, changed_at], map: "idx_avail_log_agent_time")
   @@map("agent_availability_log")
@@ -2149,8 +2149,8 @@ model CaseDocumentRequest {
   uploaded_document_id BigInt?
   fulfilled_at         DateTime? @db.Timestamptz(6)
 
-  case_entity       SchemeCase    @relation(fields: [case_id], references: [id], onDelete: Cascade)
-  uploaded_document CaseDocument? @relation(fields: [uploaded_document_id], references: [id])
+  case_entity       SchemeCase    @relation(map: "case_document_requests_case_id_fkey", fields: [case_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  uploaded_document CaseDocument? @relation(map: "case_document_requests_uploaded_document_id_fkey", fields: [uploaded_document_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@map("case_document_requests")
 }
@@ -2168,7 +2168,7 @@ model CaseDocument {
   uploaded_by_msme_user_id BigInt?
   uploaded_at              DateTime? @default(now()) @db.Timestamptz(6)
 
-  case_entity          SchemeCase            @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  case_entity          SchemeCase            @relation(map: "case_documents_case_id_fkey", fields: [case_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   fulfillment_requests CaseDocumentRequest[]
 
   @@map("case_documents")
@@ -2234,7 +2234,7 @@ model MsmeBusiness {
   created_at                           DateTime? @default(now()) @db.Timestamp(6)
   updated_at                           DateTime? @default(now()) @db.Timestamp(6)
 
-  user MsmeUser @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user MsmeUser @relation(map: "msme_businesses_user_id_fkey", fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([user_id], map: "idx_msme_businesses_user_id")
   @@map("msme_businesses")
@@ -2267,7 +2267,7 @@ model MsmePayment {
   created_at          DateTime? @default(now()) @db.Timestamp(6)
   updated_at          DateTime? @default(now()) @db.Timestamp(6)
 
-  user MsmeUser @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user MsmeUser @relation(map: "msme_payments_user_id_fkey", fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@map("msme_payments")
 }
@@ -2423,7 +2423,7 @@ model SchemeCaseHistory {
   notes             String?
   created_at        DateTime? @default(now()) @db.Timestamp(6)
 
-  case_entity SchemeCase @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  case_entity SchemeCase @relation(map: "scheme_case_history_case_id_fkey", fields: [case_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([case_id], map: "idx_scheme_case_history_case_id")
   @@map("scheme_case_history")
@@ -2455,9 +2455,9 @@ model SchemeCase {
   closure_notes      String?
   closed_by          BigInt?
 
-  msme_user       MsmeUser            @relation(fields: [msme_user_id], references: [id])
-  assigned_agent  Agent?              @relation("SchemeCaseAssignedAgent", fields: [assigned_agent_id], references: [id])
-  closed_by_agent Agent?              @relation("SchemeCaseClosedByAgent", fields: [closed_by], references: [id])
+  sme_user       MsmeUser            @relation(map: "scheme_cases_msme_user_id_fkey", fields: [msme_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  assigned_agent  Agent?              @relation("SchemeCaseAssignedAgent", map: "scheme_cases_assigned_agent_id_fkey", fields: [assigned_agent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  closed_by_agent Agent?              @relation("SchemeCaseClosedByAgent", map: "scheme_cases_closed_by_fkey", fields: [closed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   activity_logs   AgentActivityLog[]
   history         SchemeCaseHistory[]
   documents       CaseDocument[]
