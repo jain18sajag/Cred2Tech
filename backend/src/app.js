@@ -5,6 +5,7 @@ const rateLimit = require('express-rate-limit');
 const prisma = require('../config/db');
 
 const app = express();
+app.set('trust proxy', 1); // Trust the reverse proxy for accurate client IPs
 
 // Secure backend HTTP headers using Helmet (with CSP disabled for API-frontend routing compatibility)
 // TODO: Review and enable CSP policies in production if client hosts scripts directly
