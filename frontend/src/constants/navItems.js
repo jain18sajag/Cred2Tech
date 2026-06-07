@@ -89,6 +89,13 @@ export const NAV_ITEMS = [
     roles: ['DSA_ADMIN'],
   },
   {
+    id: 'dsa-wallet',
+    label: 'Wallet & Credits',
+    path: '/wallet',
+    icon: Briefcase,
+    roles: ['DSA_ADMIN', 'DSA_MEMBER'],
+  },
+  {
     id: 'dsa-hierarchy',
     label: 'Hierarchy Management',
     path: '/hierarchy',

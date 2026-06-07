@@ -507,7 +507,7 @@ async function getTopLenders(period, customStart, customEnd, limit = 5) {
       ...Object.keys(sanctionedMap),
       ...Object.keys(disbursedMap),
     ]),
-  ].filter(Boolean);
+  ].filter(name => name && name !== 'null');
 
   return allLenderNames
     .map((name) => ({

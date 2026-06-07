@@ -41,6 +41,7 @@ const SalesIncentivePage = lazy(() => import('../pages/SalesIncentivePage'));
 const LenderCommissionPage = lazy(() => import('../pages/LenderCommissionPage'));
 const SubDsaPayoutPage = lazy(() => import('../pages/SubDsaPayoutPage'));
 const DsaTeamManagementPage = lazy(() => import('../pages/DsaTeamManagementPage'));
+const DsaWalletPage = lazy(() => import('../pages/DsaWalletPage'));
 
 const PageLoader = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -239,6 +240,14 @@ const AppRouter = () => (
               element={
                 <ProtectedRoute allowedRoles={['DSA_ADMIN']}>
                   <DsaTeamManagementPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/wallet"
+              element={
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER']}>
+                  <DsaWalletPage />
                 </ProtectedRoute>
               }
             />

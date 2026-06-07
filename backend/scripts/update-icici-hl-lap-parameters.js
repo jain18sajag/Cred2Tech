@@ -6,20 +6,20 @@ const prisma = new PrismaClient();
 function buildMapping(baseParams) {
     return {
         "HL": {
-            "Salaried": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "300 Months", "age_maturity_income": "60", "hl_dbr_foir": "<75k -60%, >75k - 70%" },
-            "Net Profit Method": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "Max 100% (Double whammy - 140%)", "npm_depreciation_fraction": "66.67%" },
-            "Banking": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "No DBR", "banking_abb_multiplier": "2" },
-            "GST": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "Max 100% (Double whammy - 140%)", "gst_industry_margin": "10%" },
-            "GRP": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "No DBR", "grp_annual_receipts_multiplier": "4" },
-            "Net Worth Method": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "Max 100% (Double whammy - 140%)" },
+            "Salaried": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "300 Months", "age_maturity_income": "60", "hl_dbr_foir": "<75k -60%, >75k - 70%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
+            "Net Profit Method": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "Max 100% (Double whammy - 140%)", "npm_depreciation_fraction": "66.67%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
+            "Banking": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "No DBR", "banking_abb_multiplier": "2", "existing_obligation": "Loan availed in last 12 months to be obligated" },
+            "GST": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "Max 100% (Double whammy - 140%)", "gst_industry_margin": "10%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
+            "GRP": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "No DBR", "grp_annual_receipts_multiplier": "4", "existing_obligation": "No need to obligate any loans" },
+            "Net Worth Method": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "Max 100% (Double whammy - 140%)", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
         },
         "LAP": {
-            "Salaried": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "60", "lap_dbr_foir": "<75k -60%, >75k - 70%" },
-            "Net Profit Method": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "70 - in income >1 lacs, 60 if income < 1 lacs", "lap_dbr_foir": "Max 100% (Double whammy - 140%)", "npm_depreciation_fraction": "66.67%" },
-            "Banking": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "No DBR", "banking_abb_multiplier": "2" },
-            "GST": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "Max 100% (Double whammy - 140%)", "gst_industry_margin": "10%" },
-            "GRP": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "No DBR", "grp_annual_receipts_multiplier": "4" },
-            "Net Worth Method": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "Max 100% (Double whammy - 140%)" },
+            "Salaried": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "60", "lap_dbr_foir": "<75k -60%, >75k - 70%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
+            "Net Profit Method": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "70 - in income >1 lacs, 60 if income < 1 lacs", "lap_dbr_foir": "Max 100% (Double whammy - 140%)", "npm_depreciation_fraction": "66.67%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
+            "Banking": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "No DBR", "banking_abb_multiplier": "2", "existing_obligation": "Loan availed in last 12 months to be obligated" },
+            "GST": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "Max 100% (Double whammy - 140%)", "gst_industry_margin": "10%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
+            "GRP": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "No DBR", "grp_annual_receipts_multiplier": "4", "existing_obligation": "No need to obligate any loans" },
+            "Net Worth Method": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "Max 100% (Double whammy - 140%)", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
         }
     };
 }

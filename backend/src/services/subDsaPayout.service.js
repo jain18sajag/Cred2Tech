@@ -41,6 +41,50 @@ async function upsertPayoutConfig(tenantId, subDsaUserId, body) {
   // Find existing rule
   const existing = await prisma.subDsaPayoutRule.findUnique({ where: { sub_dsa_user_id: subDsaUserId } });
 
+  const parseNum = (val, fallback = 0) => {
+    const parsed = parseFloat(val);
+    return isNaN(parsed) ? fallback : parsed;
+  };
+  const parseIntSafe = (val, fallback = 0) => {
+    const parsed = parseInt(val, 10);
+    return isNaN(parsed) ? fallback : parsed;
+  };
+
+  const payload = {
+    default_payout_rate: parseNum(default_payout_rate, 0),
+    payout_trigger: payout_trigger || 'ON_DSA_RECEIPT',
+    tds_applicable: !!tds_applicable,
+    overrides: {
+      create: (overrides || []).map(o => ({
+        tenant_lender_id: parseIntSafe(o.tenant_lender_id),
+        products: o.products || '',
+        override_rate: parseNum(o.override_rate, 0),
+        effective_from: o.effective_from ? new Date(o.effective_from) : null
+      }))
+    },
+    case_count_slabs: {
+      create: (slabs || []).map(s => ({
+        from_cases: parseIntSafe(s.from_cases, 1),
+        to_cases: s.to_cases ? parseIntSafe(s.to_cases, null) : null,
+        payout_per_case: parseNum(s.payout_per_case, 0)
+      }))
+    },
+    special_schemes: {
+      create: (schemes || []).map(sc => ({
+        scheme_name: sc.scheme_name || 'Bonus Scheme',
+        basis: sc.basis || 'Cases',
+        tenant_lender_id: sc.tenant_lender_id ? parseIntSafe(sc.tenant_lender_id, null) : null,
+        products: sc.products || null,
+        valid_from: sc.valid_from ? new Date(sc.valid_from) : new Date(),
+        valid_to: sc.valid_to ? new Date(sc.valid_to) : new Date(),
+        bonus_per_case: sc.bonus_per_case ? parseNum(sc.bonus_per_case, null) : null,
+        bonus_percent: sc.bonus_percent ? parseNum(sc.bonus_percent, null) : null,
+        min_case_count: sc.min_case_count ? parseIntSafe(sc.min_case_count, null) : null,
+        is_active: sc.is_active !== undefined ? !!sc.is_active : true
+      }))
+    }
+  };
+
   if (existing) {
     // Delete children to replace them
     await prisma.subDsaLenderOverride.deleteMany({ where: { rule_id: existing.id } });
@@ -49,40 +93,7 @@ async function upsertPayoutConfig(tenantId, subDsaUserId, body) {
 
     return prisma.subDsaPayoutRule.update({
       where: { id: existing.id },
-      data: {
-        default_payout_rate: parseFloat(default_payout_rate),
-        payout_trigger,
-        tds_applicable: !!tds_applicable,
-        overrides: {
-          create: overrides.map(o => ({
-            tenant_lender_id: parseInt(o.tenant_lender_id),
-            products: o.products || '',
-            override_rate: parseFloat(o.override_rate),
-            effective_from: o.effective_from ? new Date(o.effective_from) : null
-          }))
-        },
-        case_count_slabs: {
-          create: slabs.map(s => ({
-            from_cases: parseInt(s.from_cases),
-            to_cases: s.to_cases ? parseInt(s.to_cases) : null,
-            payout_per_case: parseFloat(s.payout_per_case)
-          }))
-        },
-        special_schemes: {
-          create: schemes.map(sc => ({
-            scheme_name: sc.scheme_name,
-            basis: sc.basis || 'Cases',
-            tenant_lender_id: sc.tenant_lender_id ? parseInt(sc.tenant_lender_id) : null,
-            products: sc.products || null,
-            valid_from: new Date(sc.valid_from),
-            valid_to: new Date(sc.valid_to),
-            bonus_per_case: sc.bonus_per_case ? parseFloat(sc.bonus_per_case) : null,
-            bonus_percent: sc.bonus_percent ? parseFloat(sc.bonus_percent) : null,
-            min_case_count: sc.min_case_count ? parseInt(sc.min_case_count) : null,
-            is_active: sc.is_active !== undefined ? !!sc.is_active : true
-          }))
-        }
-      },
+      data: payload,
       include: { overrides: true, case_count_slabs: true, special_schemes: true }
     });
   }
@@ -91,38 +102,7 @@ async function upsertPayoutConfig(tenantId, subDsaUserId, body) {
     data: {
       tenant_id: tenantId,
       sub_dsa_user_id: subDsaUserId,
-      default_payout_rate: parseFloat(default_payout_rate),
-      payout_trigger: payout_trigger || 'ON_DSA_RECEIPT',
-      tds_applicable: !!tds_applicable,
-      overrides: {
-        create: overrides.map(o => ({
-          tenant_lender_id: parseInt(o.tenant_lender_id),
-          products: o.products || '',
-          override_rate: parseFloat(o.override_rate),
-          effective_from: o.effective_from ? new Date(o.effective_from) : null
-        }))
-      },
-      case_count_slabs: {
-        create: slabs.map(s => ({
-          from_cases: parseInt(s.from_cases),
-          to_cases: s.to_cases ? parseInt(s.to_cases) : null,
-          payout_per_case: parseFloat(s.payout_per_case)
-        }))
-      },
-      special_schemes: {
-        create: schemes.map(sc => ({
-          scheme_name: sc.scheme_name,
-          basis: sc.basis || 'Cases',
-          tenant_lender_id: sc.tenant_lender_id ? parseInt(sc.tenant_lender_id) : null,
-          products: sc.products || null,
-          valid_from: new Date(sc.valid_from),
-          valid_to: new Date(sc.valid_to),
-          bonus_per_case: sc.bonus_per_case ? parseFloat(sc.bonus_per_case) : null,
-          bonus_percent: sc.bonus_percent ? parseFloat(sc.bonus_percent) : null,
-          min_case_count: sc.min_case_count ? parseInt(sc.min_case_count) : null,
-          is_active: sc.is_active !== undefined ? !!sc.is_active : true
-        }))
-      }
+      ...payload
     },
     include: { overrides: true, case_count_slabs: true, special_schemes: true }
   });

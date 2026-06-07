@@ -29,60 +29,98 @@ async function checkCredits(tenantId, apiCode) {
 }
 
 async function deductCredits({ tenantId, userId, customerId, caseId, apiCode, idempotencyKey }) {
-  // Pull dynamic price hook externally before we drop into isolated transaction (prevents dirty reads on complex join queries)
   const cost = await pricingService.getApiCost(apiCode, tenantId);
 
-  // Start an interactive transaction to guarantee isolation
   return await prisma.$transaction(async (tx) => {
-    const wallet = await tx.tenantWallet.findUnique({
-      where: { tenant_id: tenantId }
-    });
-
-    if (!wallet || wallet.status !== 'ACTIVE') {
-      const error = new Error('Wallet not found or not active');
-      error.status = 402;
-      throw error;
+    const tenant = await tx.tenant.findUnique({ where: { id: tenantId } });
+    const user = await tx.user.findUnique({ where: { id: userId }, include: { role: true } });
+    
+    const isDsaAdmin = ['SUPER_ADMIN', 'DSA_ADMIN'].includes(user.role.name);
+    let employeeAllocationEnabled = process.env.EMPLOYEE_CREDIT_ALLOCATION_ENABLED === 'true';
+    if (tenant.metadata && typeof tenant.metadata === 'object' && tenant.metadata.employee_allocation_enabled !== undefined) {
+      employeeAllocationEnabled = tenant.metadata.employee_allocation_enabled;
     }
 
-    if (wallet.balance < cost) {
-      const error = new Error('Insufficient credits. Please recharge wallet.');
-      error.status = 402;
-      throw error;
-    }
-
-    // Deduct
-    const updatedWallet = await tx.tenantWallet.update({
-      where: { tenant_id: tenantId },
-      data: {
-        balance: {
-          decrement: cost
-        }
-      }
-    });
-
-    // We do a post-update sanity check
-    if (updatedWallet.balance < 0) {
-      // Should never happen natively under strict transactional workflows, but extra safe
-      throw new Error('Concurrency violation: Resulting balance below zero');
-    }
-
-    // Insert Wallet Transaction Ledger
+    let updatedWallet = null;
     let walletTx = null;
-    if (cost > 0) {
-      walletTx = await tx.walletTransaction.create({
+    let employeeWalletTx = null;
+
+    if (employeeAllocationEnabled && !isDsaAdmin) {
+      const empWallet = await tx.employeeWallet.findUnique({
+        where: { tenant_id_user_id: { tenant_id: tenantId, user_id: userId } }
+      });
+      
+      if (!empWallet || empWallet.status !== 'ACTIVE' || empWallet.allocated_balance < cost) {
+        const error = new Error('INSUFFICIENT_EMPLOYEE_CREDITS');
+        error.status = 402;
+        throw error;
+      }
+      
+      const updatedEmpWallet = await tx.employeeWallet.update({
+        where: { id: empWallet.id },
         data: {
-          tenant_id: tenantId,
-          amount: cost,
-          transaction_type: 'DEBIT',
-          reference_type: 'API_CALL',
-          api_code: apiCode,
-          balance_after: updatedWallet.balance,
-          created_by: userId
+          allocated_balance: { decrement: cost },
+          consumed_credits: { increment: cost }
         }
       });
+      
+      if (updatedEmpWallet.allocated_balance < 0) throw new Error('Concurrency violation: Employee balance below zero');
+      
+      if (cost > 0) {
+        employeeWalletTx = await tx.employeeWalletTransaction.create({
+          data: {
+            tenant_id: tenantId,
+            user_id: userId,
+            type: 'DEBIT_USAGE',
+            credits: cost,
+            opening_balance: empWallet.allocated_balance,
+            closing_balance: updatedEmpWallet.allocated_balance,
+            reference_type: 'API_CALL',
+            reference_id: apiCode
+          }
+        });
+      }
+      updatedWallet = { is_employee: true, ...updatedEmpWallet };
+    } else {
+      const wallet = await tx.tenantWallet.findUnique({
+        where: { tenant_id: tenantId }
+      });
+
+      if (!wallet || wallet.status !== 'ACTIVE') {
+        const error = new Error('Wallet not found or not active');
+        error.status = 402;
+        throw error;
+      }
+
+      if (wallet.balance < cost) {
+        const error = new Error('Insufficient credits. Please recharge wallet.');
+        error.status = 402;
+        throw error;
+      }
+
+      updatedWallet = await tx.tenantWallet.update({
+        where: { tenant_id: tenantId },
+        data: {
+          balance: { decrement: cost }
+        }
+      });
+      if (updatedWallet.balance < 0) throw new Error('Concurrency violation: Resulting balance below zero');
+
+      if (cost > 0) {
+        walletTx = await tx.walletTransaction.create({
+          data: {
+            tenant_id: tenantId,
+            amount: cost,
+            transaction_type: 'DEBIT',
+            reference_type: 'API_CALL',
+            api_code: apiCode,
+            balance_after: updatedWallet.balance,
+            created_by: userId
+          }
+        });
+      }
     }
 
-    // Insert Initial API Usage Log (Pending/Success)
     const usageLog = await tx.apiUsageLog.create({
       data: {
         tenant_id: tenantId,
@@ -92,13 +130,14 @@ async function deductCredits({ tenantId, userId, customerId, caseId, apiCode, id
         api_code: apiCode,
         idempotency_key: idempotencyKey,
         credits_used: cost,
-        status: 'SUCCESS' // Optimistically assuming success initially. Wrapper will override.
+        status: 'SUCCESS'
       }
     });
 
-    // Tie WalletTx to UsageLog ideally, or UsageLog reference to WalletTx
     if (walletTx) {
       await tx.apiUsageLog.update({ where: { id: usageLog.id }, data: { reference_id: walletTx.id } });
+    } else if (employeeWalletTx) {
+      await tx.apiUsageLog.update({ where: { id: usageLog.id }, data: { reference_id: employeeWalletTx.id } });
     }
 
     return { updatedWallet, cost, usageLog };
@@ -111,31 +150,69 @@ async function deductCredits({ tenantId, userId, customerId, caseId, apiCode, id
 
 async function refundCredits(tenantId, logId, cost, userId) {
   return await prisma.$transaction(async (tx) => {
-    const updatedWallet = await tx.tenantWallet.update({
-      where: { tenant_id: tenantId },
-      data: {
-        balance: {
-          increment: cost
-        }
-      }
-    });
-
-    if (cost > 0) {
-      await tx.walletTransaction.create({
-        data: {
-          tenant_id: tenantId,
-          amount: cost,
-          transaction_type: 'CREDIT',
-          reference_type: 'REFUND',
-          reference_id: logId,
-          remarks: "System Refund for failed execution",
-          balance_after: updatedWallet.balance,
-          created_by: userId
-        }
-      });
+    const tenant = await tx.tenant.findUnique({ where: { id: tenantId } });
+    const user = await tx.user.findUnique({ where: { id: userId }, include: { role: true } });
+    const isDsaAdmin = ['SUPER_ADMIN', 'DSA_ADMIN'].includes(user.role.name);
+    
+    let employeeAllocationEnabled = process.env.EMPLOYEE_CREDIT_ALLOCATION_ENABLED === 'true';
+    if (tenant.metadata && tenant.metadata.employee_allocation_enabled !== undefined) {
+      employeeAllocationEnabled = tenant.metadata.employee_allocation_enabled;
     }
 
-    // Mark log as REFUNDED accurately
+    let updatedWallet = null;
+
+    if (employeeAllocationEnabled && !isDsaAdmin) {
+      const empWallet = await tx.employeeWallet.findUnique({
+        where: { tenant_id_user_id: { tenant_id: tenantId, user_id: userId } }
+      });
+      if (empWallet) {
+        updatedWallet = await tx.employeeWallet.update({
+          where: { id: empWallet.id },
+          data: {
+            allocated_balance: { increment: cost },
+            consumed_credits: { decrement: cost }
+          }
+        });
+        
+        if (cost > 0) {
+          await tx.employeeWalletTransaction.create({
+            data: {
+              tenant_id: tenantId,
+              user_id: userId,
+              type: 'REFUND_USAGE',
+              credits: cost,
+              opening_balance: empWallet.allocated_balance,
+              closing_balance: updatedWallet.allocated_balance,
+              reference_type: 'API_CALL_REFUND',
+              reference_id: logId.toString()
+            }
+          });
+        }
+      }
+    } else {
+      updatedWallet = await tx.tenantWallet.update({
+        where: { tenant_id: tenantId },
+        data: {
+          balance: { increment: cost }
+        }
+      });
+
+      if (cost > 0) {
+        await tx.walletTransaction.create({
+          data: {
+            tenant_id: tenantId,
+            amount: cost,
+            transaction_type: 'CREDIT',
+            reference_type: 'REFUND',
+            reference_id: logId,
+            remarks: "System Refund for failed execution",
+            balance_after: updatedWallet.balance,
+            created_by: userId
+          }
+        });
+      }
+    }
+
     await tx.apiUsageLog.update({
       where: { id: logId },
       data: { status: 'REFUNDED' }
@@ -283,10 +360,92 @@ async function executePaidApi({ apiCode, tenantId, userId, customerId, caseId, r
   return result;
 }
 
+function calculateCreditsForAmount(amountInr) {
+  // Phase 1: 1 INR = 1 credit
+  return Math.floor(amountInr);
+}
+
+async function creditWalletForRazorpayTopup(topupId, paymentObj, sourceEventId) {
+  return await prisma.$transaction(async (tx) => {
+    const topup = await tx.walletTopupRequest.findUnique({
+      where: { id: topupId },
+    });
+
+    if (!topup) throw new Error("Top-up request not found");
+    if (topup.status === 'CREDITED') return { status: 'ALREADY_CREDITED', topup };
+
+    // Strict validation inside the transactional boundary
+    if (paymentObj.amount !== topup.amount_paise) {
+      throw new Error(`Amount mismatch: expected ${topup.amount_paise}, got ${paymentObj.amount}`);
+    }
+    if (paymentObj.currency !== 'INR' || topup.currency !== 'INR') {
+      throw new Error(`Currency mismatch or not INR: got ${paymentObj.currency}`);
+    }
+    if (paymentObj.status !== 'captured') {
+      throw new Error(`Payment not captured: got ${paymentObj.status}`);
+    }
+
+    const idempotencyKey = `RAZORPAY_PAYMENT:${paymentObj.id}`;
+    const existingTx = await tx.walletTransaction.findUnique({
+      where: { idempotency_key: idempotencyKey }
+    });
+
+    if (existingTx) {
+      if (topup.status !== 'CREDITED') {
+        await tx.walletTopupRequest.update({
+          where: { id: topupId },
+          data: { status: 'CREDITED', credited_at: new Date() }
+        });
+      }
+      return { status: 'ALREADY_CREDITED_IN_LEDGER', topup };
+    }
+
+    const wallet = await tx.tenantWallet.upsert({
+      where: { tenant_id: topup.tenant_id },
+      update: { balance: { increment: topup.credits_to_add } },
+      create: {
+        tenant_id: topup.tenant_id,
+        balance: topup.credits_to_add,
+        status: 'ACTIVE'
+      }
+    });
+
+    await tx.walletTransaction.create({
+      data: {
+        tenant_id: topup.tenant_id,
+        amount: topup.credits_to_add,
+        transaction_type: 'CREDIT',
+        reference_type: 'RAZORPAY_TOPUP',
+        remarks: `Razorpay Topup: ${paymentObj.id}`,
+        balance_after: wallet.balance,
+        created_by: topup.requested_by_user_id,
+        idempotency_key: idempotencyKey
+      }
+    });
+
+    const updatedTopup = await tx.walletTopupRequest.update({
+      where: { id: topupId },
+      data: { 
+        status: 'CREDITED', 
+        credited_at: new Date(),
+        razorpay_payment_id: paymentObj.id
+      }
+    });
+
+    return { status: 'CREDITED', topup: updatedTopup };
+  }, {
+    isolationLevel: 'Serializable',
+    maxWait: 5000,
+    timeout: 10000
+  });
+}
+
 module.exports = {
   getWalletBalance,
   checkCredits,
   deductCredits,
   topupWallet,
-  executePaidApi
+  executePaidApi,
+  calculateCreditsForAmount,
+  creditWalletForRazorpayTopup
 };

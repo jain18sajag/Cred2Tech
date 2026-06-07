@@ -28,6 +28,9 @@ app.use(cors({
   credentials: true
 }));
 
+const webhookRoutes = require('./routes/webhook.routes');
+app.use('/api/webhooks', webhookRoutes);
+
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
@@ -74,6 +77,7 @@ const disbursementRoutes = require('./routes/disbursement.routes');
 const pddRoutes = require('./routes/pdd.routes');
 const subDsaPayoutRoutes = require('./routes/subDsaPayout.routes');
 const dashboardRoutes = require('./routes/dashboard.routes');
+const salesIncentiveRoutes = require('./routes/salesIncentive.routes');
 
 // Rate Limiting Middlewares
 const globalLimiter = rateLimit({
@@ -158,6 +162,7 @@ apiRouter.use('/disbursements', disbursementRoutes);
 apiRouter.use('/pdd-tasks', pddRoutes);
 apiRouter.use('/sub-dsa', subDsaPayoutRoutes);
 apiRouter.use('/dashboard', dashboardRoutes);
+apiRouter.use('/sales-incentives', salesIncentiveRoutes);
 
 app.use('/api', apiRouter);
 
