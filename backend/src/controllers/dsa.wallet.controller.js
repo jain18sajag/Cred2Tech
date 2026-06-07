@@ -170,6 +170,7 @@ async function getWalletSummary(req, res) {
       total_available: (wallet ? wallet.balance : 0) + (employeeAllocations._sum.allocated_balance || 0)
     });
   } catch (error) {
+    console.error('getWalletSummary error:', error);
     res.status(500).json({ error: 'Failed to fetch wallet summary' });
   }
 }
