@@ -46,7 +46,7 @@ async function runBureauCheck({ caseId, applicantId, mobileNumber, firstName, la
     userId: userId,
     clientCode: clientCode,
     requestId: requestId,
-    stan: requestId,
+    stan: stan,
     hash: hash,
     toBeVerifiedData: {
       mobileNumber: mobileNumber,
@@ -58,9 +58,9 @@ async function runBureauCheck({ caseId, applicantId, mobileNumber, firstName, la
 
   console.log("payload", payload);
 
-  // Only inject panNumber for Production Live endpoints, because the Veri5 Sandbox 
-  // rigidly crashes with HTTP 500 when un-mocked PANs are probed.
-  if (panNumber && !baseUrl.includes('sandbox')) {
+  // Inject panNumber. Note: In Veri5 Sandbox, you MUST use their specific test PANs
+  // (like ABCDE1234F) otherwise the sandbox may throw a 500 error.
+  if (panNumber) {
     payload.toBeVerifiedData.panNumber = panNumber;
   }
 
@@ -77,50 +77,47 @@ async function runBureauCheck({ caseId, applicantId, mobileNumber, firstName, la
     responsePayload = data;
 
     // Check robustly for both Sandbox (code 200) and Live (isSuccess/result.status)
-    if (data?.status?.isSuccess || data?.status?.code === 200 || data?.result?.status === 'SUCCESS') {
+    const isApiSuccess = data?.status?.isSuccess === true || data?.result?.status === 'SUCCESS' || (data?.status?.code === 200 && data?.status?.isSuccess !== false);
+    const vData = data?.result?.verifiedData;
+    
+    // Only mark it as a true SUCCESS if we actually received verified data (the score)
+    if (isApiSuccess && vData && vData.ResponseData && vData.ResponseData.data) {
       apiStatus = 'SUCCESS';
-
-      // Map to structured format extracting score
-      // Note from Live payload: verifiedData is inside data.result
-      const vData = data?.result?.verifiedData;
-
-      if (vData && vData.ResponseData && vData.ResponseData.data) {
-        score = vData.ResponseData.data.score?.toString() || null;
-      }
-
+      score = vData.ResponseData.data.score?.toString() || null;
     } else {
       apiStatus = 'FAILED';
+      responsePayload.internal_error = data?.status?.description || "API returned 200 OK but payload did not contain a valid score.";
     }
   } catch (error) {
-    // If real API fails, check if we should fallback to mock to keep the developer flow moving
-    if (process.env.BUREAU_MOCK_FALLBACK === 'true' || (baseUrl && baseUrl.includes('sandbox'))) {
-      console.log(`[Bureau Service] Real API failed (${error.message}), falling back to MOCK SUCCESS for development.`);
-      apiStatus = 'SUCCESS';
-      score = "755"; // Premium mock score
-      responsePayload = {
-        status: { isSuccess: true, code: 200 },
-        result: {
-          status: "SUCCESS",
-          verifiedData: {
-            ResponseData: {
-              data: { score: "755" }
-            }
+    apiStatus = 'FAILED';
+    const is504 = error.response?.status === 504 || error.code === 'ECONNABORTED';
+    responsePayload = {
+      message: is504
+        ? 'Bureau provider gateway timed out (504). The Veri5 sandbox may be slow or your IP may need whitelisting.'
+        : error.message,
+      data: error.response?.data,
+      status: error.response?.status
+    };
+  }
+
+  // If real API fails (either Axios error OR internal JSON error), check if we should fallback to mock
+  if (apiStatus === 'FAILED' && (process.env.BUREAU_MOCK_FALLBACK === 'true' || (baseUrl && baseUrl.includes('sandbox')))) {
+    console.log(`[Bureau Service] Real API failed or returned 500 JSON, falling back to MOCK SUCCESS for development.`);
+    apiStatus = 'SUCCESS';
+    score = "755"; // Premium mock score
+    responsePayload = {
+      status: { isSuccess: true, code: 200 },
+      result: {
+        status: "SUCCESS",
+        verifiedData: {
+          ResponseData: {
+            data: { score: "755" }
           }
-        },
-        mock: true,
-        original_error: error.message
-      };
-    } else {
-      apiStatus = 'FAILED';
-      const is504 = error.response?.status === 504 || error.code === 'ECONNABORTED';
-      responsePayload = {
-        message: is504
-          ? 'Bureau provider gateway timed out (504). The Veri5 sandbox may be slow or your IP may need whitelisting.'
-          : error.message,
-        data: error.response?.data,
-        status: error.response?.status
-      };
-    }
+        }
+      },
+      mock: true,
+      original_error: responsePayload
+    };
   }
 
   // 1. Audit Logging Native (Logs ALL traces regardless of crash)

@@ -17,7 +17,7 @@
 
 const toNum = (v) => {
     if (v === undefined || v === null || v === '') return null;
-    const n = Number(String(v).replace(/,/g, ''));
+    const n = Number(String(v).replace(/[₹,\s%]/g, ''));
     return Number.isFinite(n) ? n : null;
 };
 
@@ -31,115 +31,172 @@ const toNum = (v) => {
  */
 function extractGstDetails(rawGstData) {
     const result = {
-        turnover_latest_year:   null,
+        turnover_latest_year: null,
         turnover_previous_year: null,
-        financial_year_latest:   null,
+        financial_year_latest: null,
         financial_year_previous: null,
-        avg_monthly_turnover:   null,
-        months_filed_12m:       null,
-        nil_return_months:      null,
+        avg_monthly_turnover: null,
+        months_filed_12m: null,
+        nil_return_months: null,
+        _trace: {
+            source: 'Monthly Sales&Purchase.Monthly Sale Summary.data.Taxable Value',
+            source_path: 'data[].Monthly Sales&Purchase[].Monthly Sale Summary[].data[].Taxable Value',
+            available_periods: [],
+            selected_periods: [],
+            selected_months: 0,
+            total_turnover: 0,
+            avg_monthly_turnover: null,
+            skipped_rows: []
+        }
     };
 
     if (!rawGstData) return result;
 
-    // ── Format 1: Overview_Monthly → "Overview of GST Returns" ─────────────────
-    const overviewRows = rawGstData?.Overview_Monthly?.['Overview of GST Returns'];
-    if (Array.isArray(overviewRows)) {
-        const fyTotals = {};
-        const fyMonthsFiled = {};
-        const fyNilMonths = {};
+    const raw = typeof rawGstData === 'string' ? JSON.parse(rawGstData) : rawGstData;
 
-        for (const row of overviewRows) {
-            const monthYear = row['Month Year'];
-            if (!monthYear || monthYear === 'Total') continue;
+    const monthMap = {
+        jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+        jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
+    };
 
-            const parts = monthYear.split('-');
-            if (parts.length !== 2) continue;
-            const month = parts[0];
-            const year = parseInt(parts[1], 10);
-            if (!Number.isFinite(year)) continue;
+    const parseMonthYear = (rawLabel) => {
+        if (!rawLabel || typeof rawLabel !== 'string') return null;
+        const label = rawLabel.replace(/[.,]/g, '').trim();
 
-            const fyStart = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].includes(month) ? year : year - 1;
-            const fyKey = `FY ${fyStart}-${String(fyStart + 1).slice(2)}`;
-
-            const sales = Number(row['Total Value of Sales (A)']) || 0;
-            fyTotals[fyKey] = (fyTotals[fyKey] || 0) + sales;
-
-            // Count months filed vs nil
-            if (!fyMonthsFiled[fyKey]) fyMonthsFiled[fyKey] = 0;
-            if (!fyNilMonths[fyKey]) fyNilMonths[fyKey] = 0;
-            if (sales > 0) fyMonthsFiled[fyKey]++;
-            else fyNilMonths[fyKey]++;
+        let match = label.match(/^([A-Za-z]{3,})[\s\-\/]+(\d{4})$/);
+        if (match) {
+            const month = monthMap[match[1].substring(0, 3).toLowerCase()];
+            const year = Number(match[2]);
+            if (month && Number.isFinite(year)) {
+                return { year, month, label: `${match[1].substring(0, 3)} ${year}` };
+            }
         }
 
-        const sortedFYs = Object.keys(fyTotals).sort().reverse();
-        if (sortedFYs.length > 0) {
-            result.financial_year_latest  = sortedFYs[0];
-            result.turnover_latest_year   = fyTotals[sortedFYs[0]];
-            result.avg_monthly_turnover   = fyTotals[sortedFYs[0]] / 12;
-            result.months_filed_12m       = fyMonthsFiled[sortedFYs[0]] || 0;
-            result.nil_return_months      = fyNilMonths[sortedFYs[0]] || 0;
+        match = label.match(/^(\d{1,2})[\s\-\/](\d{4})$/);
+        if (match) {
+            const month = Number(match[1]);
+            const year = Number(match[2]);
+            if (month >= 1 && month <= 12 && Number.isFinite(year)) {
+                return { year, month, label: `${month}/${year}` };
+            }
         }
-        if (sortedFYs.length > 1) {
-            result.financial_year_previous  = sortedFYs[1];
-            result.turnover_previous_year   = fyTotals[sortedFYs[1]];
+
+        match = label.match(/^(\d{4})[\-\/](\d{1,2})$/);
+        if (match) {
+            const year = Number(match[1]);
+            const month = Number(match[2]);
+            if (month >= 1 && month <= 12 && Number.isFinite(year)) {
+                return { year, month, label: `${month}/${year}` };
+            }
         }
-    }
+        return null;
+    };
 
-    // ── Format 2: Legacy Monthly Sales&Purchase fallback ────────────────────────
-    if (result.turnover_latest_year === null && Array.isArray(rawGstData?.data)) {
-        const monthlyBlock = rawGstData.data.find(x => x['Monthly Sales&Purchase']);
-        const rows = monthlyBlock?.['Monthly Sales&Purchase']
-            ?.find(x => x['Monthly Sale Summary'])
-            ?.['Monthly Sale Summary']
-            ?.find(x => Array.isArray(x.data))?.data || [];
+    const getRowValue = (row, keys) => {
+        if (!row || typeof row !== 'object') return undefined;
+        for (const key of keys) if (row[key] !== undefined) return row[key];
+        return undefined;
+    };
 
-        const dataRows = rows.filter(x => !String(x.Month || '').toLowerCase().includes('total'));
-        if (dataRows.length > 0) {
-            const fyTotals = {};
-            const fyCounts = {};
-            const fyNilMonths = {};
+    const findAllMonthlySaleSummaryRows = (node, out = []) => {
+        if (!node) return out;
 
-            for (const r of dataRows) {
-                const monthYear = r.Month; // e.g., 'Apr-2023' or '04-2023'
-                if (!monthYear) continue;
+        if (Array.isArray(node)) {
+            for (const item of node) findAllMonthlySaleSummaryRows(item, out);
+            return out;
+        }
 
-                let year, month;
-                const parts = monthYear.split('-');
-                if (parts.length === 2) {
-                    if (!isNaN(parts[0])) {
-                        month = parseInt(parts[0], 10);
-                        year = parseInt(parts[1], 10);
-                    } else {
-                        const mStr = parts[0].substring(0,3);
-                        const monthMap = { Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12 };
-                        month = monthMap[mStr] || 1;
-                        year = parseInt(parts[1], 10);
+        if (typeof node !== 'object') return out;
+
+        // ICICI/Signzy GST report shape:
+        // data[] → { "Monthly Sales&Purchase": [ { "Monthly Sale Summary": [ { data: [...] }, ... ] } ] }
+        if (node['Monthly Sales&Purchase'] !== undefined) {
+            const msp = node['Monthly Sales&Purchase'];
+            const mspItems = Array.isArray(msp) ? msp : [msp];
+            for (const item of mspItems) {
+                if (!item || typeof item !== 'object') continue;
+                const summary = item['Monthly Sale Summary'] || item['Monthly Sales Summary'];
+                const summaryItems = Array.isArray(summary) ? summary : (summary ? [summary] : []);
+                for (const summaryItem of summaryItems) {
+                    if (summaryItem && Array.isArray(summaryItem.data)) {
+                        out.push(...summaryItem.data);
+                    }
+                    if (summaryItem && Array.isArray(summaryItem.Data)) {
+                        out.push(...summaryItem.Data);
                     }
                 }
-                if (!Number.isFinite(year)) continue;
-
-                const fyStart = month >= 4 ? year : year - 1;
-                const fyKey = `FY ${fyStart}-${String(fyStart + 1).slice(2)}`;
-
-                const sales = Number(r['Taxable Value']) || 0;
-                fyTotals[fyKey] = (fyTotals[fyKey] || 0) + sales;
-                fyCounts[fyKey] = (fyCounts[fyKey] || 0) + 1;
-                if (!fyNilMonths[fyKey]) fyNilMonths[fyKey] = 0;
-                if (sales <= 0) fyNilMonths[fyKey]++;
-            }
-
-            const sortedFYs = Object.keys(fyTotals).sort().reverse();
-            if (sortedFYs.length > 0) {
-                const latestFy = sortedFYs[0];
-                result.turnover_latest_year  = fyTotals[latestFy];
-                result.financial_year_latest = latestFy;
-                result.avg_monthly_turnover  = fyTotals[latestFy] / 12; // Standardize division by 12
-                result.months_filed_12m      = fyCounts[latestFy] - fyNilMonths[latestFy];
-                result.nil_return_months     = fyNilMonths[latestFy];
             }
         }
+
+        // Also support flattened payloads if a vendor sends the table directly.
+        if (node['Monthly Sale Summary'] !== undefined) {
+            const summary = node['Monthly Sale Summary'];
+            const summaryItems = Array.isArray(summary) ? summary : [summary];
+            for (const summaryItem of summaryItems) {
+                if (summaryItem && Array.isArray(summaryItem.data)) out.push(...summaryItem.data);
+                if (summaryItem && Array.isArray(summaryItem.Data)) out.push(...summaryItem.Data);
+            }
+        }
+
+        for (const value of Object.values(node)) findAllMonthlySaleSummaryRows(value, out);
+        return out;
+    };
+
+    const saleRows = findAllMonthlySaleSummaryRows(raw);
+    if (!Array.isArray(saleRows) || saleRows.length === 0) {
+        result._trace.skipped_rows.push('Monthly Sales&Purchase → Monthly Sale Summary table not found. GST income requires this source as per ICICI policy.');
+        return result;
     }
+
+    const monthlyMap = new Map();
+    for (const row of saleRows) {
+        if (!row || typeof row !== 'object') continue;
+        const rawLabel = getRowValue(row, ['Month', 'month', 'Month Year', 'monthYear', 'Period', 'period']);
+        const parsed = parseMonthYear(rawLabel);
+        if (!parsed) {
+            result._trace.skipped_rows.push(`Invalid GST month label: ${rawLabel || '[blank]'}`);
+            continue;
+        }
+
+        const amount = toNum(getRowValue(row, ['Taxable Value', 'taxable_value', 'taxableValue', 'TaxableValue']));
+        if (amount === null) {
+            result._trace.skipped_rows.push(`Missing taxable value for ${rawLabel}`);
+            continue;
+        }
+
+        const key = `${parsed.year.toString().padStart(4, '0')}-${String(parsed.month).padStart(2, '0')}`;
+        // Deduplicate by month; keep the first Monthly Sale Summary value and ignore other sections.
+        if (!monthlyMap.has(key)) {
+            monthlyMap.set(key, {
+                key,
+                year: parsed.year,
+                month: parsed.month,
+                label: parsed.label,
+                amount
+            });
+        }
+    }
+
+    if (monthlyMap.size === 0) return result;
+
+    const sortedMonths = Array.from(monthlyMap.values())
+        .sort((a, b) => (b.year - a.year) || (b.month - a.month));
+
+    const selectedMonths = sortedMonths.slice(0, 12);
+    const monthsUsed = selectedMonths.length;
+    const totalTurnover = selectedMonths.reduce((sum, row) => sum + row.amount, 0);
+    const avgMonthlyTurnover = monthsUsed > 0 ? totalTurnover / 12 : null;
+
+    result.turnover_latest_year = totalTurnover;
+    result.financial_year_latest = monthsUsed > 0 ? `Rolling ${monthsUsed} months ending ${selectedMonths[0].label}` : null;
+    result.avg_monthly_turnover = avgMonthlyTurnover;
+    result.months_filed_12m = monthsUsed;
+    result.nil_return_months = Math.max(0, 12 - monthsUsed);
+    result._trace.available_periods = sortedMonths.map(r => r.label);
+    result._trace.selected_periods = selectedMonths.map(r => r.label);
+    result._trace.selected_months = monthsUsed;
+    result._trace.total_turnover = totalTurnover;
+    result._trace.avg_monthly_turnover = avgMonthlyTurnover;
 
     return result;
 }
@@ -154,17 +211,123 @@ function extractGstDetails(rawGstData) {
  */
 function extractItrDetails(analyticsData) {
     const result = {
-        net_profit_latest_year:      null,
-        net_profit_previous_year:    null,
-        gross_receipts_latest_year:  null,
+        net_profit_latest_year: null,
+        net_profit_previous_year: null,
+        gross_receipts_latest_year: null,
         gross_receipts_previous_year: null,
-        financial_year_latest:       null,
-        financial_year_previous:     null,
-        filing_status_latest:        null,
-        filing_status_previous:      null,
+        depreciation_latest_year: null,
+        finance_cost_latest_year: null,
+        itr_remuneration_latest_year: null,
+        financial_year_latest: null,
+        financial_year_previous: null,
+        filing_status_latest: null,
+        filing_status_previous: null,
+        _trace: {
+            source: null,
+            pat_path: null,
+            rec_path: null,
+            dep_path: null,
+            fin_path: null,
+            rem_path: null
+        }
     };
 
     if (!analyticsData) return result;
+
+    const toRowNumber = (val) => {
+        if (val === undefined || val === null || val === '') return null;
+        const n = Number(String(val).replace(/[₹,\s%]/g, ''));
+        return Number.isFinite(n) ? n : null;
+    };
+
+    const parseRawItrPayload = (payload) => {
+        const rawResult = {
+            itr_pat: null,
+            itr_depreciation: null,
+            itr_finance_cost: null,
+            itr_gross_receipts: null,
+            itr_remuneration: null,
+            _paths: { pat: null, dep: null, fin: null, rec: null, rem: null },
+            _ignored: []
+        };
+
+        const rawItr = typeof payload === 'string' ? JSON.parse(payload) : payload;
+        if (!rawItr || typeof rawItr !== 'object') return rawResult;
+
+        const yearKeys = Object.keys(rawItr)
+            .filter(k => /^\d{4}-\d{4}$/.test(k))
+            .sort((a, b) => Number(b.slice(0, 4)) - Number(a.slice(0, 4)));
+
+        let latestItr = null;
+        if (yearKeys.length > 0) {
+            const yearData = rawItr[yearKeys[0]];
+            if (Array.isArray(yearData) && yearData.length > 0) {
+                latestItr = yearData[0].json?.ITR || yearData[0].json?.iTR || yearData[0].json;
+            }
+        }
+        if (!latestItr) {
+            latestItr = rawItr?.result || rawItr;
+        }
+
+        if (!latestItr || typeof latestItr !== 'object') return rawResult;
+
+        const itr3 = latestItr.ITR3 || latestItr.iTR3 || latestItr.ITR?.ITR3 || latestItr.ITR?.iTR3;
+        if (itr3) {
+            const pl = itr3.PARTA_PL || itr3.PartA_PL;
+            const plStr = itr3.PARTA_PL ? 'PARTA_PL' : 'PartA_PL';
+            if (pl) {
+                if (pl.TaxProvAppr?.ProfitAfterTax !== undefined) { rawResult.itr_pat = toRowNumber(pl.TaxProvAppr.ProfitAfterTax); rawResult._paths.pat = `ITR.ITR3.${plStr}.TaxProvAppr.ProfitAfterTax`; }
+                else if (pl.TaxProvAppr?.ProprietorAccBalTrf !== undefined) { rawResult.itr_pat = toRowNumber(pl.TaxProvAppr.ProprietorAccBalTrf); rawResult._paths.pat = `ITR.ITR3.${plStr}.TaxProvAppr.ProprietorAccBalTrf`; }
+                else if (pl.PBT !== undefined) { rawResult.itr_pat = toRowNumber(pl.PBT); rawResult._paths.pat = `ITR.ITR3.${plStr}.PBT`; }
+
+                if (pl.DebitsToPL?.DepreciationAmort !== undefined) { rawResult.itr_depreciation = toRowNumber(pl.DebitsToPL.DepreciationAmort); rawResult._paths.dep = `ITR.ITR3.${plStr}.DebitsToPL.DepreciationAmort`; }
+                else if (pl.DebitsToPL?.Depreciation !== undefined) { rawResult.itr_depreciation = toRowNumber(pl.DebitsToPL.Depreciation); rawResult._paths.dep = `ITR.ITR3.${plStr}.DebitsToPL.Depreciation`; }
+
+                if (pl.DebitsToPL?.InterestExpdrtDtls?.InterestExpdr !== undefined) { rawResult.itr_finance_cost = toRowNumber(pl.DebitsToPL.InterestExpdrtDtls.InterestExpdr); rawResult._paths.fin = `ITR.ITR3.${plStr}.DebitsToPL.InterestExpdrtDtls.InterestExpdr`; }
+                else if (pl.DebitsToPL?.Interest !== undefined) { rawResult.itr_finance_cost = toRowNumber(pl.DebitsToPL.Interest); rawResult._paths.fin = `ITR.ITR3.${plStr}.DebitsToPL.Interest`; }
+
+                if (pl.DebitsToPL?.RemunerationToPartners !== undefined) { rawResult.itr_remuneration = toRowNumber(pl.DebitsToPL.RemunerationToPartners); rawResult._paths.rem = `ITR.ITR3.${plStr}.DebitsToPL.RemunerationToPartners`; }
+                else if (pl.DebitsToPL?.Remuneration !== undefined) { rawResult.itr_remuneration = toRowNumber(pl.DebitsToPL.Remuneration); rawResult._paths.rem = `ITR.ITR3.${plStr}.DebitsToPL.Remuneration`; }
+            }
+
+            const trading = itr3.TradingAccount || itr3.PartA_Trading;
+            const tStr = itr3.TradingAccount ? 'TradingAccount' : 'PartA_Trading';
+            if (trading) {
+                if (trading.TotRevenueFrmOperations !== undefined) { rawResult.itr_gross_receipts = toRowNumber(trading.TotRevenueFrmOperations); rawResult._paths.rec = `ITR.ITR3.${tStr}.TotRevenueFrmOperations`; }
+                else if (trading.SalesGrossReceiptsTotal !== undefined) { rawResult.itr_gross_receipts = toRowNumber(trading.SalesGrossReceiptsTotal); rawResult._paths.rec = `ITR.ITR3.${tStr}.SalesGrossReceiptsTotal`; }
+                else if (trading.TardingAccTotCred !== undefined) { rawResult.itr_gross_receipts = toRowNumber(trading.TardingAccTotCred); rawResult._paths.rec = `ITR.ITR3.${tStr}.TardingAccTotCred`; }
+                else if (trading.GrossRcptFromProfession !== undefined) { rawResult.itr_gross_receipts = toRowNumber(trading.GrossRcptFromProfession); rawResult._paths.rec = `ITR.ITR3.${tStr}.GrossRcptFromProfession`; }
+            }
+
+            if (itr3.PartB_TI?.GrossTotalIncome !== undefined) rawResult._ignored.push('GrossTotalIncome ignored for ITR3 business profit.');
+            if (itr3.PartB_TI?.TotalIncome !== undefined) rawResult._ignored.push('TotalIncome ignored for ITR3 business receipts.');
+            if (itr3.ScheduleBP?.TotProfBusGain !== undefined) rawResult._ignored.push('TotProfBusGain not used as gross receipts.');
+        } else {
+            const bp = latestItr.ITR4?.ScheduleBP || latestItr.iTR4?.ScheduleBP || latestItr.ITR?.ITR4?.ScheduleBP || latestItr.ITR?.iTR4?.ScheduleBP;
+            if (bp) {
+                if (bp.NetProfit !== undefined) { rawResult.itr_pat = toRowNumber(bp.NetProfit); rawResult._paths.pat = 'ITR.ITR4.ScheduleBP.NetProfit'; }
+                else if (bp.NetProfitAfterTax !== undefined) { rawResult.itr_pat = toRowNumber(bp.NetProfitAfterTax); rawResult._paths.pat = 'ITR.ITR4.ScheduleBP.NetProfitAfterTax'; }
+
+                if (bp.GrossReceipts !== undefined) { rawResult.itr_gross_receipts = toRowNumber(bp.GrossReceipts); rawResult._paths.rec = 'ITR.ITR4.ScheduleBP.GrossReceipts'; }
+                else if (bp.GrossTurnover !== undefined) { rawResult.itr_gross_receipts = toRowNumber(bp.GrossTurnover); rawResult._paths.rec = 'ITR.ITR4.ScheduleBP.GrossTurnover'; }
+            }
+        }
+
+        if (rawResult.itr_pat === null) {
+            const generalInfo = latestItr?.ITR1 || latestItr?.ITR2 || latestItr;
+            if (generalInfo?.profitAfterTax !== undefined) { rawResult.itr_pat = toRowNumber(generalInfo.profitAfterTax); rawResult._paths.pat = 'ITR.profitAfterTax'; }
+            else if (generalInfo?.PBT !== undefined) { rawResult.itr_pat = toRowNumber(generalInfo.PBT); rawResult._paths.pat = 'ITR.PBT'; }
+        }
+        if (rawResult.itr_gross_receipts === null) {
+            const generalInfo = latestItr?.ITR1 || latestItr?.ITR2 || latestItr;
+            if (generalInfo?.receiptsFromProfession !== undefined) { rawResult.itr_gross_receipts = toRowNumber(generalInfo.receiptsFromProfession); rawResult._paths.rec = 'ITR.receiptsFromProfession'; }
+            else if (generalInfo?.revenueFromOperations !== undefined) { rawResult.itr_gross_receipts = toRowNumber(generalInfo.revenueFromOperations); rawResult._paths.rec = 'ITR.revenueFromOperations'; }
+            else if (generalInfo?.saleOfServices !== undefined) { rawResult.itr_gross_receipts = toRowNumber(generalInfo.saleOfServices); rawResult._paths.rec = 'ITR.saleOfServices'; }
+            else if (generalInfo?.saleOfGoods !== undefined) { rawResult.itr_gross_receipts = toRowNumber(generalInfo.saleOfGoods); rawResult._paths.rec = 'ITR.saleOfGoods'; }
+        }
+
+        return rawResult;
+    };
 
     const actual = analyticsData?.result || analyticsData;
     const itrKey = actual?.iTR || actual?.ITR;
@@ -179,14 +342,14 @@ function extractItrDetails(analyticsData) {
         return Number.isFinite(y) ? `FY ${y}-${String(y + 1).slice(2)}` : String(yearStr);
     };
 
-    const extractRow = (row, rawYearNode = null) => {
-        if (!row) return { pat: null, receipts: null, depreciation: null, finance_cost: null };
-        let pat = null;
-        let receipts = null;
-        let depreciation = null;
-        let finance_cost = null;
+    const parseSummaryRow = (row, rawYearNode = null) => {
+        if (!row) return { pat: null, receipts: null, depreciation: null, finance_cost: null, remuneration: null, pat_path: null, receipts_path: null, depreciation_path: null, finance_cost_path: null, remuneration_path: null };
+        let pat = null; let pat_path = null;
+        let receipts = null; let receipts_path = null;
+        let depreciation = null; let depreciation_path = null;
+        let finance_cost = null; let finance_cost_path = null;
+        let remuneration = null; let remuneration_path = null;
 
-        // Try extracting from raw year node if it exists (for ITR3)
         let itr3 = null;
         if (rawYearNode && rawYearNode.json) {
             itr3 = rawYearNode.json.ITR?.ITR3 || rawYearNode.json.ITR?.iTR3 || rawYearNode.json.ITR3 || rawYearNode.json.iTR3;
@@ -194,79 +357,103 @@ function extractItrDetails(analyticsData) {
 
         if (itr3) {
             const pl = itr3.PARTA_PL || itr3.PartA_PL;
+            const plStr = itr3.PARTA_PL ? 'PARTA_PL' : 'PartA_PL';
             if (pl) {
-                pat = toNum(pl.TaxProvAppr?.ProfitAfterTax) 
-                    ?? toNum(pl.TaxProvAppr?.ProprietorAccBalTrf) 
-                    ?? toNum(pl.PBT);
-                    
-                depreciation = toNum(pl.DebitsToPL?.DepreciationAmort)
-                    ?? toNum(pl.DebitsToPL?.Depreciation);
-                    
-                finance_cost = toNum(pl.DebitsToPL?.InterestExpdrtDtls?.InterestExpdr)
-                    ?? toNum(pl.DebitsToPL?.Interest);
+                if (pl.TaxProvAppr?.ProfitAfterTax !== undefined) { pat = toRowNumber(pl.TaxProvAppr.ProfitAfterTax); pat_path = `ITR3.${plStr}.TaxProvAppr.ProfitAfterTax`; }
+                else if (pl.TaxProvAppr?.ProprietorAccBalTrf !== undefined) { pat = toRowNumber(pl.TaxProvAppr.ProprietorAccBalTrf); pat_path = `ITR3.${plStr}.TaxProvAppr.ProprietorAccBalTrf`; }
+                else if (pl.PBT !== undefined) { pat = toRowNumber(pl.PBT); pat_path = `ITR3.${plStr}.PBT`; }
+
+                if (pl.DebitsToPL?.DepreciationAmort !== undefined) { depreciation = toRowNumber(pl.DebitsToPL.DepreciationAmort); depreciation_path = `ITR3.${plStr}.DebitsToPL.DepreciationAmort`; }
+                else if (pl.DebitsToPL?.Depreciation !== undefined) { depreciation = toRowNumber(pl.DebitsToPL.Depreciation); depreciation_path = `ITR3.${plStr}.DebitsToPL.Depreciation`; }
+
+                if (pl.DebitsToPL?.InterestExpdrtDtls?.InterestExpdr !== undefined) { finance_cost = toRowNumber(pl.DebitsToPL.InterestExpdrtDtls.InterestExpdr); finance_cost_path = `ITR3.${plStr}.DebitsToPL.InterestExpdrtDtls.InterestExpdr`; }
+                else if (pl.DebitsToPL?.Interest !== undefined) { finance_cost = toRowNumber(pl.DebitsToPL.Interest); finance_cost_path = `ITR3.${plStr}.DebitsToPL.Interest`; }
+
+                if (pl.DebitsToPL?.RemunerationToPartners !== undefined) { remuneration = toRowNumber(pl.DebitsToPL.RemunerationToPartners); remuneration_path = `ITR3.${plStr}.DebitsToPL.RemunerationToPartners`; }
+                else if (pl.DebitsToPL?.Remuneration !== undefined) { remuneration = toRowNumber(pl.DebitsToPL.Remuneration); remuneration_path = `ITR3.${plStr}.DebitsToPL.Remuneration`; }
             }
-            
-            // Do NOT use TotProfBusGain as gross receipts. Use Trading Account or Sales.
+
             const trading = itr3.TradingAccount || itr3.PartA_Trading;
+            const tStr = itr3.TradingAccount ? 'TradingAccount' : 'PartA_Trading';
             if (trading) {
-                receipts = toNum(trading.TotRevenueFrmOperations)
-                    ?? toNum(trading.SalesGrossReceiptsTotal)
-                    ?? toNum(trading.TardingAccTotCred)
-                    ?? toNum(trading.GrossRcptFromProfession);
+                if (trading.TotRevenueFrmOperations !== undefined) { receipts = toRowNumber(trading.TotRevenueFrmOperations); receipts_path = `ITR3.${tStr}.TotRevenueFrmOperations`; }
+                else if (trading.SalesGrossReceiptsTotal !== undefined) { receipts = toRowNumber(trading.SalesGrossReceiptsTotal); receipts_path = `ITR3.${tStr}.SalesGrossReceiptsTotal`; }
+                else if (trading.TardingAccTotCred !== undefined) { receipts = toRowNumber(trading.TardingAccTotCred); receipts_path = `ITR3.${tStr}.TardingAccTotCred`; }
+                else if (trading.GrossRcptFromProfession !== undefined) { receipts = toRowNumber(trading.GrossRcptFromProfession); receipts_path = `ITR3.${tStr}.GrossRcptFromProfession`; }
             }
         }
 
-        // Fallback for flat/legacy rows (e.g. ITR-4 or legacy parser output)
         if (pat === null) {
-            pat = toNum(row.profitAfterTax) ?? toNum(row.PBT);
+            if (row.profitAfterTax !== undefined) { pat = toRowNumber(row.profitAfterTax); pat_path = 'summary.profitAfterTax'; }
+            else if (row.PBT !== undefined) { pat = toRowNumber(row.PBT); pat_path = 'summary.PBT'; }
         }
         if (receipts === null) {
-            receipts = toNum(row.receiptsFromProfession)
-                ?? toNum(row.revenueFromOperations)
-                ?? toNum(row.saleOfServices)
-                ?? toNum(row.saleOfGoods);
+            if (row.receiptsFromProfession !== undefined) { receipts = toRowNumber(row.receiptsFromProfession); receipts_path = 'summary.receiptsFromProfession'; }
+            else if (row.revenueFromOperations !== undefined) { receipts = toRowNumber(row.revenueFromOperations); receipts_path = 'summary.revenueFromOperations'; }
+            else if (row.grossReceipts !== undefined) { receipts = toRowNumber(row.grossReceipts); receipts_path = 'summary.grossReceipts'; }
         }
 
-        return { pat, receipts, depreciation, finance_cost };
+        return { pat, receipts, depreciation, finance_cost, remuneration, pat_path, receipts_path, depreciation_path, finance_cost_path, remuneration_path };
     };
 
-    // Try to get filing status from return summary
-    const returnSummary = itrKey?.returnFilingSummary?.returnFilingSummary || [];
-    const getFilingStatus = (year) => {
+    const getFilingStatus = (itrRoot, year) => {
+        const returnSummary = itrRoot?.returnFilingSummary?.returnFilingSummary || [];
         if (!Array.isArray(returnSummary)) return 'Filed';
         const match = returnSummary.find(r => String(r.year || r.assessmentYear || '') === String(year));
         return match?.filingStatus || match?.status || 'Filed';
     };
 
-    // Find raw nodes matching the years if available
     const findRawYearNode = (year) => {
         if (!analyticsData || typeof analyticsData !== 'object') return null;
         for (const [k, v] of Object.entries(analyticsData)) {
-            if (k.includes(String(year)) && Array.isArray(v) && v.length > 0) {
+            if (String(k).includes(String(year)) && Array.isArray(v) && v.length > 0) {
                 return v[0];
             }
         }
         return null;
     };
 
+    const rawParsed = parseRawItrPayload(analyticsData);
+    if (rawParsed.itr_pat !== null || rawParsed.itr_gross_receipts !== null) {
+        result.net_profit_latest_year = rawParsed.itr_pat;
+        result.gross_receipts_latest_year = rawParsed.itr_gross_receipts;
+        result.depreciation_latest_year = rawParsed.itr_depreciation;
+        result.finance_cost_latest_year = rawParsed.itr_finance_cost;
+        result.itr_remuneration_latest_year = rawParsed.itr_remuneration;
+        result._trace.pat_path = rawParsed._paths.pat;
+        result._trace.rec_path = rawParsed._paths.rec;
+        result._trace.dep_path = rawParsed._paths.dep;
+        result._trace.fin_path = rawParsed._paths.fin;
+        result._trace.rem_path = rawParsed._paths.rem;
+        result._trace.source = 'RAW_ITR_JSON';
+    }
+
     if (sorted.length > 0) {
         const rawNode = findRawYearNode(sorted[0].year);
-        const { pat, receipts, depreciation, finance_cost } = extractRow(sorted[0], rawNode);
-        result.net_profit_latest_year    = pat;
-        result.gross_receipts_latest_year = receipts;
-        // In memory for ESR, not strictly mapped to schema unless exist
-        result.depreciation_latest_year  = depreciation;
-        result.finance_cost_latest_year  = finance_cost;
-        result.financial_year_latest     = fyLabel(sorted[0].year);
-        result.filing_status_latest      = getFilingStatus(sorted[0].year);
+        const parsedSummary = parseSummaryRow(sorted[0], rawNode);
+
+        result.net_profit_latest_year = result.net_profit_latest_year ?? parsedSummary.pat;
+        result.gross_receipts_latest_year = result.gross_receipts_latest_year ?? parsedSummary.receipts;
+        result.depreciation_latest_year = result.depreciation_latest_year ?? parsedSummary.depreciation;
+        result.finance_cost_latest_year = result.finance_cost_latest_year ?? parsedSummary.finance_cost;
+        result.itr_remuneration_latest_year = result.itr_remuneration_latest_year ?? parsedSummary.remuneration;
+        result.financial_year_latest = fyLabel(sorted[0].year);
+        result.filing_status_latest = getFilingStatus(itrKey, sorted[0].year);
+
+        result._trace.pat_path = result._trace.pat_path || parsedSummary.pat_path;
+        result._trace.rec_path = result._trace.rec_path || parsedSummary.receipts_path;
+        result._trace.dep_path = result._trace.dep_path || parsedSummary.depreciation_path;
+        result._trace.fin_path = result._trace.fin_path || parsedSummary.finance_cost_path;
+        result._trace.rem_path = result._trace.rem_path || parsedSummary.remuneration_path;
     }
+
     if (sorted.length > 1) {
         const rawNode = findRawYearNode(sorted[1].year);
-        const { pat, receipts } = extractRow(sorted[1], rawNode);
-        result.net_profit_previous_year    = pat;
-        result.gross_receipts_previous_year = receipts;
-        result.financial_year_previous     = fyLabel(sorted[1].year);
-        result.filing_status_previous      = getFilingStatus(sorted[1].year);
+        const parsedSummary = parseSummaryRow(sorted[1], rawNode);
+        result.net_profit_previous_year = parsedSummary.pat;
+        result.gross_receipts_previous_year = parsedSummary.receipts;
+        result.financial_year_previous = fyLabel(sorted[1].year);
+        result.filing_status_previous = getFilingStatus(itrKey, sorted[1].year);
     }
 
     return result;
@@ -283,17 +470,17 @@ function extractItrDetails(analyticsData) {
  */
 function extractBankDetails(rawRetrieveData) {
     const result = {
-        avg_bank_balance_latest_year:   null,
+        avg_bank_balance_latest_year: null,
         avg_bank_balance_previous_year: null,
-        financial_year_latest:          null,
-        financial_year_previous:        null,
-        avg_monthly_credit:             null,
-        avg_monthly_debit:              null,
-        avg_closing_balance:            null,
-        cheque_bounces_12m:             null,
-        statement_period:               null,
-        bank_name:                      null,
-        account_number_masked:          null,
+        financial_year_latest: null,
+        financial_year_previous: null,
+        avg_monthly_credit: null,
+        avg_monthly_debit: null,
+        avg_closing_balance: null,
+        cheque_bounces_12m: null,
+        statement_period: null,
+        bank_name: null,
+        account_number_masked: null,
     };
 
     if (!rawRetrieveData) return result;
@@ -327,7 +514,7 @@ function extractBankDetails(rawRetrieveData) {
                     if (!isNaN(match[1])) {
                         year = parseInt(match[1]); month = parseInt(match[2]);
                     } else {
-                        const monthMap = { Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12 };
+                        const monthMap = { Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12 };
                         month = monthMap[match[1]] || 1; year = parseInt(match[2]);
                     }
                     const fyStart = month >= 4 ? year : year - 1;
@@ -340,11 +527,11 @@ function extractBankDetails(rawRetrieveData) {
 
         const sortedFYs = Object.keys(fyTotals).sort().reverse();
         if (sortedFYs.length > 0) {
-            result.financial_year_latest          = sortedFYs[0];
-            result.avg_bank_balance_latest_year   = fyTotals[sortedFYs[0]] / fyCounts[sortedFYs[0]];
+            result.financial_year_latest = sortedFYs[0];
+            result.avg_bank_balance_latest_year = fyTotals[sortedFYs[0]] / fyCounts[sortedFYs[0]];
         }
         if (sortedFYs.length > 1) {
-            result.financial_year_previous        = sortedFYs[1];
+            result.financial_year_previous = sortedFYs[1];
             result.avg_bank_balance_previous_year = fyTotals[sortedFYs[1]] / fyCounts[sortedFYs[1]];
         }
     }
@@ -352,10 +539,10 @@ function extractBankDetails(rawRetrieveData) {
     // ── Credit / Debit / Closing Balance (from accountLevelAnalysis or overview) ─
     const firstAccount = Array.isArray(accountLevelData) ? accountLevelData[0] : null;
     if (firstAccount) {
-        result.avg_monthly_credit  = toNum(firstAccount.avgMonthlyCredit  || firstAccount.averageMonthlyCredit);
-        result.avg_monthly_debit   = toNum(firstAccount.avgMonthlyDebit   || firstAccount.averageMonthlyDebit);
+        result.avg_monthly_credit = toNum(firstAccount.avgMonthlyCredit || firstAccount.averageMonthlyCredit);
+        result.avg_monthly_debit = toNum(firstAccount.avgMonthlyDebit || firstAccount.averageMonthlyDebit);
         result.avg_closing_balance = toNum(firstAccount.avgClosingBalance || firstAccount.averageClosingBalance);
-        result.bank_name           = firstAccount.bankName || firstAccount.bank || null;
+        result.bank_name = firstAccount.bankName || firstAccount.bank || null;
 
         // Mask account number: show last 4 digits only
         const rawAccNo = String(firstAccount.accountNumber || firstAccount.accNo || '');
@@ -365,11 +552,11 @@ function extractBankDetails(rawRetrieveData) {
 
         // Statement period
         const from = firstAccount.fromDate || firstAccount.startDate;
-        const to   = firstAccount.toDate   || firstAccount.endDate;
+        const to = firstAccount.toDate || firstAccount.endDate;
         if (from && to) result.statement_period = `${from} to ${to}`;
     } else if (overview) {
-        result.avg_monthly_credit  = toNum(overview.averageMonthlyCredit || overview.avgMonthlyCredit);
-        result.avg_monthly_debit   = toNum(overview.averageMonthlyDebit  || overview.avgMonthlyDebit);
+        result.avg_monthly_credit = toNum(overview.averageMonthlyCredit || overview.avgMonthlyCredit);
+        result.avg_monthly_debit = toNum(overview.averageMonthlyDebit || overview.avgMonthlyDebit);
         result.avg_closing_balance = toNum(overview.averageClosingBalance);
     }
 
@@ -395,12 +582,12 @@ function extractBankDetails(rawRetrieveData) {
  */
 function extractBureauDetails(rawResponse) {
     const result = {
-        score:             null,
-        bureau_name:       null,
+        score: null,
+        bureau_name: null,
         emi_obligations_total: null,
         active_loan_count: null,
-        overdue_amount:    null,
-        dpd_status:        null,
+        overdue_amount: null,
+        dpd_status: null,
     };
 
     if (!rawResponse) return result;
@@ -495,140 +682,126 @@ async function loadCaseFinancialSnapshot(prisma, case_id) {
                 extracted.avg_monthly_turnover, extracted.months_filed_12m, extracted.nil_return_months, g.id
             );
             g.avg_monthly_turnover = extracted.avg_monthly_turnover;
-            g.months_filed_12m     = extracted.months_filed_12m;
-            g.nil_return_months    = extracted.nil_return_months;
+            g.months_filed_12m = extracted.months_filed_12m;
+            g.nil_return_months = extracted.nil_return_months;
         }
 
         snapshot.gst = {
-            turnover_latest_year:    Number(g.turnover_latest_year) || null,
-            turnover_previous_year:  Number(g.turnover_previous_year) || null,
-            financial_year_latest:   g.financial_year_latest,
+            turnover_latest_year: Number(g.turnover_latest_year) || null,
+            turnover_previous_year: Number(g.turnover_previous_year) || null,
+            financial_year_latest: g.financial_year_latest,
             financial_year_previous: g.financial_year_previous,
-            avg_monthly_turnover:    Number(g.avg_monthly_turnover) || (Number(g.turnover_latest_year) / 12) || null,
-            months_filed_12m:        g.months_filed_12m,
-            nil_return_months:       g.nil_return_months,
+            avg_monthly_turnover: Number(g.avg_monthly_turnover) || (Number(g.turnover_latest_year) / 12) || null,
+            months_filed_12m: g.months_filed_12m,
+            nil_return_months: g.nil_return_months,
         };
     }
 
     // ── ITR ─────────────────────────────────────────────────────────────────────
-    const itrRows = await prisma.$queryRawUnsafe(`
-        SELECT id, net_profit_latest_year, net_profit_previous_year,
-               gross_receipts_latest_year, gross_receipts_previous_year,
-               financial_year_latest, financial_year_previous,
-               filing_status_latest, filing_status_previous,
-               analytics_payload
-        FROM itr_analytics_requests
-        WHERE case_id = $1 AND status = 'COMPLETED'
-        ORDER BY updated_at DESC LIMIT 1
-    `, case_id);
+    const itrRows = await prisma.itrAnalyticsRequest.findMany({
+        where: { case_id: case_id, status: 'COMPLETED' },
+        orderBy: { updated_at: 'desc' },
+        take: 1
+    });
 
     if (itrRows[0]) {
         const r = itrRows[0];
-        // Backfill filing_status if null
-        if (r.filing_status_latest === null && r.analytics_payload) {
+        // Note: filing_status_latest does not exist in schema, we will extract it into memory
+        let filing_status_latest = 'Filed';
+        let filing_status_previous = 'Filed';
+
+        if (r.analytics_payload) {
             const extracted = extractItrDetails(
                 typeof r.analytics_payload === 'string' ? JSON.parse(r.analytics_payload) : r.analytics_payload
             );
-            await prisma.$executeRawUnsafe(
-                `UPDATE itr_analytics_requests SET filing_status_latest=$1, filing_status_previous=$2 WHERE id=$3`,
-                extracted.filing_status_latest || 'Filed',
-                extracted.filing_status_previous || 'Filed',
-                r.id
-            );
-            r.filing_status_latest   = extracted.filing_status_latest   || 'Filed';
-            r.filing_status_previous = extracted.filing_status_previous || 'Filed';
+            filing_status_latest = extracted.filing_status_latest || 'Filed';
+            filing_status_previous = extracted.filing_status_previous || 'Filed';
         }
 
         snapshot.itr = {
-            net_profit_latest_year:      Number(r.net_profit_latest_year)      || null,
-            net_profit_previous_year:    Number(r.net_profit_previous_year)    || null,
-            gross_receipts_latest_year:  Number(r.gross_receipts_latest_year)  || null,
+            net_profit_latest_year: Number(r.net_profit_latest_year) || null,
+            net_profit_previous_year: Number(r.net_profit_previous_year) || null,
+            gross_receipts_latest_year: Number(r.gross_receipts_latest_year) || null,
             gross_receipts_previous_year: Number(r.gross_receipts_previous_year) || null,
-            financial_year_latest:       r.financial_year_latest,
-            financial_year_previous:     r.financial_year_previous,
-            filing_status_latest:        r.filing_status_latest  || 'Filed',
-            filing_status_previous:      r.filing_status_previous || 'Filed',
+            financial_year_latest: r.financial_year_latest,
+            financial_year_previous: r.financial_year_previous,
+            filing_status_latest: filing_status_latest,
+            filing_status_previous: filing_status_previous,
         };
     }
 
     // ── Bank ─────────────────────────────────────────────────────────────────────
-    const bankRows = await prisma.$queryRawUnsafe(`
-        SELECT id, avg_bank_balance_latest_year, avg_bank_balance_previous_year,
-               financial_year_latest, financial_year_previous,
-               avg_monthly_credit, avg_monthly_debit, avg_closing_balance,
-               cheque_bounces_12m, statement_period, bank_name, account_number_masked,
-               raw_retrieve_response
-        FROM bank_statement_analysis_requests
-        WHERE case_id = $1 AND status = 'COMPLETED'
-        ORDER BY created_at ASC LIMIT 5
-    `, case_id);
+    const bankRows = await prisma.bankStatementAnalysisRequest.findMany({
+        where: { case_id: case_id, status: 'COMPLETED' },
+        orderBy: { created_at: 'asc' },
+        take: 5
+    });
 
     if (bankRows.length > 0) {
         const banks = [];
-        for (const b of bankRows) {
-            // Backfill if detailed columns are null
-            if (b.avg_monthly_credit === null && b.raw_retrieve_response) {
-                const raw = typeof b.raw_retrieve_response === 'string'
-                    ? JSON.parse(b.raw_retrieve_response) : b.raw_retrieve_response;
-                const extracted = extractBankDetails(raw);
-                await prisma.$executeRawUnsafe(
-                    `UPDATE bank_statement_analysis_requests
-                     SET avg_monthly_credit=$1, avg_monthly_debit=$2, avg_closing_balance=$3,
-                         cheque_bounces_12m=$4, statement_period=$5, bank_name=$6, account_number_masked=$7
-                     WHERE id=$8`,
-                    extracted.avg_monthly_credit, extracted.avg_monthly_debit,
-                    extracted.avg_closing_balance, extracted.cheque_bounces_12m,
-                    extracted.statement_period, extracted.bank_name, extracted.account_number_masked,
-                    b.id
-                );
-                Object.assign(b, extracted);
+        for (let b of bankRows) {
+            // Because avg_monthly_credit doesn't exist in Prisma schema, we extract it directly into memory
+            let inMemoryExtracted = {
+                avg_monthly_credit: null,
+                avg_monthly_debit: null,
+                avg_closing_balance: null,
+                cheque_bounces_12m: 0,
+                statement_period: null,
+                bank_name: null,
+                account_number_masked: null
+            };
+
+            if (b.raw_retrieve_response || b.raw_download_response || b.raw_response_json) {
+                const rawBank = b.raw_retrieve_response || b.raw_download_response || b.raw_response_json;
+                const raw = typeof rawBank === 'string' ? JSON.parse(rawBank) : rawBank;
+                inMemoryExtracted = extractBankDetails(raw);
             }
+
             banks.push({
-                avg_balance_latest_year:   Number(b.avg_bank_balance_latest_year) || null,
+                avg_balance_latest_year: Number(b.avg_bank_balance_latest_year) || null,
                 avg_balance_previous_year: Number(b.avg_bank_balance_previous_year) || null,
-                financial_year_latest:     b.financial_year_latest,
-                financial_year_previous:   b.financial_year_previous,
-                avg_monthly_credit:        Number(b.avg_monthly_credit) || null,
-                avg_monthly_debit:         Number(b.avg_monthly_debit) || null,
-                avg_closing_balance:       Number(b.avg_closing_balance) || null,
-                cheque_bounces_12m:        b.cheque_bounces_12m,
-                statement_period:          b.statement_period,
-                bank_name:                 b.bank_name,
-                account_number_masked:     b.account_number_masked,
+                financial_year_latest: b.financial_year_latest,
+                financial_year_previous: b.financial_year_previous,
+                avg_monthly_credit: inMemoryExtracted.avg_monthly_credit,
+                avg_monthly_debit: inMemoryExtracted.avg_monthly_debit,
+                avg_closing_balance: inMemoryExtracted.avg_closing_balance,
+                cheque_bounces_12m: inMemoryExtracted.cheque_bounces_12m,
+                statement_period: inMemoryExtracted.statement_period,
+                bank_name: inMemoryExtracted.bank_name,
+                account_number_masked: inMemoryExtracted.account_number_masked,
             });
         }
         snapshot.bank = banks;
     }
 
     // ── Bureau ─────────────────────────────────────────────────────────────────
-    const bureauRows = await prisma.$queryRawUnsafe(`
-        SELECT id, score, bureau_name, emi_obligations_total,
-               active_loan_count, overdue_amount, dpd_status,
-               applicant_type, raw_response
-        FROM bureau_verifications
-        WHERE case_id = $1
-        ORDER BY created_at DESC LIMIT 1
-    `, case_id);
+    const bureauRows = await prisma.bureauVerification.findMany({
+        where: { case_id: case_id },
+        orderBy: { created_at: 'desc' },
+        take: 1
+    });
 
     if (bureauRows[0]) {
         const bv = bureauRows[0];
-        // Backfill if bureau_name is null
-        if (bv.bureau_name === null && bv.raw_response) {
+        let inMemoryBureau = {
+            bureau_name: 'Credit Bureau',
+            active_loan_count: null,
+            overdue_amount: null,
+            dpd_status: null
+        };
+
+        if (bv.raw_response) {
             const raw = typeof bv.raw_response === 'string' ? JSON.parse(bv.raw_response) : bv.raw_response;
-            const extracted = extractBureauDetails(raw);
-            await prisma.$executeRawUnsafe(
-                `UPDATE bureau_verifications SET bureau_name=$1, active_loan_count=$2, overdue_amount=$3, dpd_status=$4 WHERE id=$5`,
-                extracted.bureau_name, extracted.active_loan_count, extracted.overdue_amount, extracted.dpd_status, bv.id
-            );
-            Object.assign(bv, extracted);
+            inMemoryBureau = extractBureauDetails(raw);
         }
+
         snapshot.bureau = {
-            score:                 bv.score,
-            bureau_name:           bv.bureau_name || 'Credit Bureau',
+            score: bv.score,
+            bureau_name: inMemoryBureau.bureau_name || 'Credit Bureau',
             emi_obligations_total: Number(bv.emi_obligations_total) || null,
-            active_loan_count:     bv.active_loan_count,
-            overdue_amount:        Number(bv.overdue_amount) || null,
-            dpd_status:            bv.dpd_status,
+            active_loan_count: inMemoryBureau.active_loan_count,
+            overdue_amount: Number(inMemoryBureau.overdue_amount) || null,
+            dpd_status: inMemoryBureau.dpd_status,
         };
     }
 

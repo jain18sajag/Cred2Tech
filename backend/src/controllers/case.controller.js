@@ -1,10 +1,11 @@
 const caseService = require('../services/case.service');
 const prisma = require('../../config/db');
+const { REPORT_FILE_NAME, generateLoanApplicationSummaryWorkbook } = require('../services/reports/loanApplicationSummary.service');
 
 async function createCase(req, res) {
   try {
     const { customer_id, product_type } = req.body;
-    
+
     if (!customer_id) {
       return res.status(400).json({ error: 'customer_id is required.' });
     }
@@ -13,7 +14,7 @@ async function createCase(req, res) {
     const user_id = req.user.id;
 
     const newCase = await caseService.createCase(customer_id, product_type, tenant_id, user_id);
-    
+
     res.status(201).json(newCase);
   } catch (error) {
     if (error.message === 'Customer not found or unauthorized.') {
@@ -28,7 +29,7 @@ async function addApplicant(req, res) {
   try {
     const caseId = parseInt(req.params.id, 10);
     const { id, type, name, pan_number, mobile, email, employment_type } = req.body;
-    
+
     if (!type || !['PRIMARY', 'CO_APPLICANT'].includes(type)) {
       return res.status(400).json({ error: 'Invalid applicant type.' });
     }
@@ -107,131 +108,131 @@ async function getSummary(req, res) {
   // #swagger.tags = ['Cases']
   // #swagger.summary = 'Fetch comprehensive case summary'
   try {
-     const caseId = parseInt(req.params.id, 10);
-     const caseRecord = await prisma.case.findUnique({
-        where: { id: caseId },
-        include: {
-           customer: true,
-           applicants: true,
-           api_logs: true,
-           created_by: true
-        }
-     });
+    const caseId = parseInt(req.params.id, 10);
+    const caseRecord = await prisma.case.findUnique({
+      where: { id: caseId },
+      include: {
+        customer: true,
+        applicants: true,
+        api_logs: true,
+        created_by: true
+      }
+    });
 
-     if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
-     
-     const roleName = req.user.role?.name || req.user.role;
-     if (caseRecord.tenant_id !== req.user.tenant_id) {
-        return res.status(403).json({ error: 'Forbidden' });
-     }
+    if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
 
-     const isBypassed = roleName === 'DSA_ADMIN';
-     if (!isBypassed && caseRecord.created_by_user_id !== req.user.id) {
-        if (!caseRecord.created_by?.hierarchy_path?.startsWith(req.user.hierarchy_path)) {
-           return res.status(403).json({ error: 'Forbidden: Hierarchy restriction' });
-        }
-     }
+    const roleName = req.user.role?.name || req.user.role;
+    if (caseRecord.tenant_id !== req.user.tenant_id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
 
-     const primaryApplicant = caseRecord.applicants?.find(a => a.type === 'PRIMARY') || {};
-     
-     const hasSuccessLog = (apiCode) => caseRecord.api_logs.some(l => l.api_code === apiCode && l.status === 'SUCCESS');
+    const isBypassed = roleName === 'DSA_ADMIN';
+    if (!isBypassed && caseRecord.created_by_user_id !== req.user.id) {
+      if (!caseRecord.created_by?.hierarchy_path?.startsWith(req.user.hierarchy_path)) {
+        return res.status(403).json({ error: 'Forbidden: Hierarchy restriction' });
+      }
+    }
 
-     res.json({
-        case_id: caseRecord.id,
-        customer_name: caseRecord.customer.business_name || 'N/A',
-        entity_type: caseRecord.customer.entity_type,
-        industry: caseRecord.customer.industry,
-        business_vintage: caseRecord.customer.business_vintage,
-        cibil_score: primaryApplicant.cibil_score,
-        lender: caseRecord.lender_name,
-        loan_amount: caseRecord.loan_amount,
-        property_type: caseRecord.property_type,
-        occupancy: caseRecord.occupancy,
-        property_value: caseRecord.property_value,
-        location: caseRecord.location,
-        ltv_ratio: caseRecord.ltv_ratio,
-        dsa_notes: caseRecord.dsa_notes,
-        reports_generated: {
-           esr: false,
-           bureau: hasSuccessLog('BUREAU_PULL'),
-           gst: hasSuccessLog('GST_FETCH'),
-           itr: hasSuccessLog('ITR_ANALYTICS')
-        }
-     });
-  } catch(error) {
-     res.status(500).json({ error: 'Failed' });
+    const primaryApplicant = caseRecord.applicants?.find(a => a.type === 'PRIMARY') || {};
+
+    const hasSuccessLog = (apiCode) => caseRecord.api_logs.some(l => l.api_code === apiCode && l.status === 'SUCCESS');
+
+    res.json({
+      case_id: caseRecord.id,
+      customer_name: caseRecord.customer.business_name || 'N/A',
+      entity_type: caseRecord.customer.entity_type,
+      industry: caseRecord.customer.industry,
+      business_vintage: caseRecord.customer.business_vintage,
+      cibil_score: primaryApplicant.cibil_score,
+      lender: caseRecord.lender_name,
+      loan_amount: caseRecord.loan_amount,
+      property_type: caseRecord.property_type,
+      occupancy: caseRecord.occupancy,
+      property_value: caseRecord.property_value,
+      location: caseRecord.location,
+      ltv_ratio: caseRecord.ltv_ratio,
+      dsa_notes: caseRecord.dsa_notes,
+      reports_generated: {
+        esr: false,
+        bureau: hasSuccessLog('BUREAU_PULL'),
+        gst: hasSuccessLog('GST_FETCH'),
+        itr: hasSuccessLog('ITR_ANALYTICS')
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed' });
   }
 }
 
 async function getCoBorrowers(req, res) {
   // #swagger.tags = ['Cases']
   try {
-     const caseId = parseInt(req.params.id, 10);
-     const caseRecord = await prisma.case.findUnique({
-        where: { id: caseId },
-        include: { applicants: true, created_by: true }
-     });
+    const caseId = parseInt(req.params.id, 10);
+    const caseRecord = await prisma.case.findUnique({
+      where: { id: caseId },
+      include: { applicants: true, created_by: true }
+    });
 
-     if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
-     
-     const roleName = req.user.role?.name || req.user.role;
-     if (caseRecord.tenant_id !== req.user.tenant_id) return res.status(403).json({ error: 'Forbidden' });
+    if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
 
-     const isBypassed = roleName === 'DSA_ADMIN';
-     if (!isBypassed && caseRecord.created_by_user_id !== req.user.id) {
-        if (!caseRecord.created_by?.hierarchy_path?.startsWith(req.user.hierarchy_path)) {
-           return res.status(403).json({ error: 'Forbidden: Hierarchy restriction' });
-        }
-     }
+    const roleName = req.user.role?.name || req.user.role;
+    if (caseRecord.tenant_id !== req.user.tenant_id) return res.status(403).json({ error: 'Forbidden' });
 
-     const coBorrowers = caseRecord.applicants.filter(a => a.type === 'CO_APPLICANT').map(a => ({
-         name: a.email || 'Co-Applicant',
-         pan_masked: a.pan_number ? `XXXXX${a.pan_number.slice(5, 9)}X` : null,
-         cibil_score: a.cibil_score,
-         emi: a.emi,
-         role: a.type,
-         otp_verified: a.otp_verified,
-         bureau_fetched: a.bureau_fetched
-     }));
+    const isBypassed = roleName === 'DSA_ADMIN';
+    if (!isBypassed && caseRecord.created_by_user_id !== req.user.id) {
+      if (!caseRecord.created_by?.hierarchy_path?.startsWith(req.user.hierarchy_path)) {
+        return res.status(403).json({ error: 'Forbidden: Hierarchy restriction' });
+      }
+    }
 
-     res.json(coBorrowers);
-  } catch(error) {
-     res.status(500).json({ error: 'Failed' });
+    const coBorrowers = caseRecord.applicants.filter(a => a.type === 'CO_APPLICANT').map(a => ({
+      name: a.email || 'Co-Applicant',
+      pan_masked: a.pan_number ? `XXXXX${a.pan_number.slice(5, 9)}X` : null,
+      cibil_score: a.cibil_score,
+      emi: a.emi,
+      role: a.type,
+      otp_verified: a.otp_verified,
+      bureau_fetched: a.bureau_fetched
+    }));
+
+    res.json(coBorrowers);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed' });
   }
 }
 
 async function getActivityLog(req, res) {
   // #swagger.tags = ['Cases']
   try {
-     const caseId = parseInt(req.params.id, 10);
-     const caseRecord = await prisma.case.findUnique({ where: { id: caseId }, include: { created_by: true } });
-     
-     if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
-     
-     const roleName = req.user.role?.name || req.user.role;
-     if (caseRecord.tenant_id !== req.user.tenant_id) return res.status(403).json({ error: 'Forbidden' });
+    const caseId = parseInt(req.params.id, 10);
+    const caseRecord = await prisma.case.findUnique({ where: { id: caseId }, include: { created_by: true } });
 
-     const isBypassed = roleName === 'DSA_ADMIN';
-     if (!isBypassed && caseRecord.created_by_user_id !== req.user.id) {
-        if (!caseRecord.created_by?.hierarchy_path?.startsWith(req.user.hierarchy_path)) {
-           return res.status(403).json({ error: 'Forbidden: Hierarchy restriction' });
-        }
-     }
+    if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
 
-     const logs = await prisma.activityLog.findMany({
-         where: { case_id: caseId },
-         orderBy: { created_at: 'desc' },
-         include: { user: true }
-     });
+    const roleName = req.user.role?.name || req.user.role;
+    if (caseRecord.tenant_id !== req.user.tenant_id) return res.status(403).json({ error: 'Forbidden' });
 
-     res.json(logs.map(log => ({
-         timestamp: log.created_at,
-         activity_type: log.activity_type,
-         description: log.description,
-         performed_by: log.user ? log.user.name : 'System'
-     })));
-  } catch(error) {
-     res.status(500).json({ error: 'Failed' });
+    const isBypassed = roleName === 'DSA_ADMIN';
+    if (!isBypassed && caseRecord.created_by_user_id !== req.user.id) {
+      if (!caseRecord.created_by?.hierarchy_path?.startsWith(req.user.hierarchy_path)) {
+        return res.status(403).json({ error: 'Forbidden: Hierarchy restriction' });
+      }
+    }
+
+    const logs = await prisma.activityLog.findMany({
+      where: { case_id: caseId },
+      orderBy: { created_at: 'desc' },
+      include: { user: true }
+    });
+
+    res.json(logs.map(log => ({
+      timestamp: log.created_at,
+      activity_type: log.activity_type,
+      description: log.description,
+      performed_by: log.user ? log.user.name : 'System'
+    })));
+  } catch (error) {
+    res.status(500).json({ error: 'Failed' });
   }
 }
 
@@ -239,13 +240,13 @@ async function getPipeline(req, res) {
   try {
     const tenant_id = req.user.tenant_id;
     const { search, stage, lender, entity_type, alert, sort_by, sort_order, page, limit } = req.query;
-    
+
     const result = await caseService.getPipeline(tenant_id, {
       search, stage, lender, entity_type, alert, sort_by, sort_order,
       page: parseInt(page) || 1,
       limit: parseInt(limit) || 10
     }, req.user);
-    
+
     res.json(result);
   } catch (error) {
     console.error(error);
@@ -258,9 +259,9 @@ async function updateStage(req, res) {
     const caseId = parseInt(req.params.id, 10);
     const { stage } = req.body;
     const tenant_id = req.user.tenant_id;
-    
+
     if (!stage) return res.status(400).json({ error: 'Stage is required' });
-    
+
     // Protection: Financial stages must only be reached via Disbursement Service
     if (['PARTLY_DISBURSED', 'DISBURSED'].includes(stage)) {
       return res.status(400).json({ error: `Direct update to ${stage} is not allowed. Please use the Disbursement flow.` });
@@ -360,9 +361,83 @@ async function rollbackStage(req, res) {
   } catch (error) {
     console.error(error);
     if (error.message.includes('earlier') || error.message.includes('Invalid') || error.message.includes('Only DSA_ADMIN')) {
-       return res.status(400).json({ error: error.message });
+      return res.status(400).json({ error: error.message });
     }
     res.status(500).json({ error: 'Failed to rollback stage.' });
+  }
+}
+
+async function downloadBulkTemplate(req, res) {
+  try {
+    const bulkCaseUploadService = require('../services/bulkCaseUpload.service');
+    const buffer = await bulkCaseUploadService.generateTemplate();
+
+    res.setHeader('Content-Disposition', 'attachment; filename="Cred2Tech_Case_Bulk_Upload_Template.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+  } catch (error) {
+    console.error('Template generation error:', error);
+    res.status(500).json({ error: 'Failed to generate template' });
+  }
+}
+
+async function uploadBulkCases(req, res) {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+
+    const tenantId = req.user.tenant_id;
+    const userId = req.user.id;
+    const bulkCaseUploadService = require('../services/bulkCaseUpload.service');
+
+    const result = await bulkCaseUploadService.processUpload(req.file.buffer, tenantId, userId);
+
+    if (result.failedRows > 0 && result.createdCases === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Bulk upload validation failed',
+        summary: { totalRows: result.totalRows, createdCases: result.createdCases, failedRows: result.failedRows },
+        errors: result.errors
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Bulk upload completed',
+      summary: { totalRows: result.totalRows, createdCases: result.createdCases, failedRows: result.failedRows },
+      createdCases: result.createdCaseRefs,
+      errors: result.errors
+    });
+
+  } catch (error) {
+    console.error('Bulk upload error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Internal server error during upload' });
+  }
+}
+
+async function downloadLoanApplicationSummary(req, res) {
+  try {
+    const caseId = parseInt(req.params.id, 10);
+    if (!caseId) return res.status(400).json({ error: 'Invalid case id.' });
+
+    const buffer = await generateLoanApplicationSummaryWorkbook({
+      caseId,
+      tenantId: req.user.tenant_id,
+      user: req.user
+    });
+
+    const encodedName = encodeURIComponent(REPORT_FILE_NAME);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${REPORT_FILE_NAME}"; filename*=UTF-8''${encodedName}`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(Buffer.from(buffer));
+  } catch (error) {
+    if (error.statusCode === 404 || error.message === 'Case not found or unauthorized.') {
+      return res.status(404).json({ error: 'Case not found or unauthorized.' });
+    }
+    console.error('[LoanApplicationSummary] Download failed:', error);
+    res.status(500).json({ error: 'Failed to generate Loan Application Summary.' });
   }
 }
 
@@ -381,5 +456,8 @@ module.exports = {
   updateStage,
   getActivityLog,
   removeApplicant,
-  rollbackStage
+  rollbackStage,
+  downloadBulkTemplate,
+  downloadLoanApplicationSummary,
+  uploadBulkCases
 };

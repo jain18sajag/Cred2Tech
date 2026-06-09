@@ -2,21 +2,53 @@ const fs = require('fs');
 const path = require('path');
 
 class EsrTraceLogger {
-    constructor() {
-        this.enabled = process.env.ESR_TRACE_LOGGING === 'true';
+    constructor(options = {}) {
+        this.enabled = process.env.ESR_TRACE_LOGGING === 'true' || options.enabled === true;
+        this.verbose = process.env.ESR_TRACE_LEVEL === 'verbose' || options.traceLevel === 'verbose';
         this.buffer = [];
         this.startTime = Date.now();
         this.caseId = null;
         this.lastStepTime = Date.now();
     }
 
+    // Scrub sensitive info (PAN, GSTIN, accounts, AWS URLs, emails/phones)
+    _maskSensitive(str) {
+        if (!str) return str;
+        let masked = String(str);
+        
+        // Mask AWS S3 Signed URLs
+        masked = masked.replace(/(https?:\/\/[^\s"'<>]+\.s3\.[^\s"'<>]+\.amazonaws\.com[^\s"'<>]+X-Amz-Credential=)[^\s"'<>]+/gi, '$1[MASKED_CREDENTIALS]');
+        masked = masked.replace(/(https?:\/\/[^\s"'<>]+\.s3\.[^\s"'<>]+\.amazonaws\.com[^\s"'<>]+X-Amz-Signature=)[^\s"'<>]+/gi, '$1[MASKED_SIGNATURE]');
+        
+        // Mask PAN (e.g. ABCDE1234F -> AXXXXXX34F)
+        masked = masked.replace(/\b([a-zA-Z]{5})(\d{4})([a-zA-Z]{1})\b/g, (m, p1, p2, p3) => {
+            return p1[0] + 'XXXX' + p2.slice(-2) + p3;
+        });
+        
+        // Mask GSTIN (e.g. 27ABCDE1234F1Z5 -> 27AXXXXXX34F1Z5)
+        masked = masked.replace(/\b(\d{2})([a-zA-Z]{5})(\d{4})([a-zA-Z]{1})([1-9a-zA-Z]{1})([zZ]{1})([0-9a-zA-Z]{1})\b/g, (m, p1, p2, p3, p4, p5, p6, p7) => {
+            return p1 + p2[0] + 'XXXX' + p3.slice(-2) + p4 + p5 + p6 + p7;
+        });
+
+        // Mask Account numbers (mask all but last 4)
+        masked = masked.replace(/\b(\d{6,18})\b/g, (m, acc) => {
+            if (acc.length < 8) return acc;
+            return 'X'.repeat(acc.length - 4) + acc.slice(-4);
+        });
+
+        return masked;
+    }
+
     // Safely format data as string
     _format(payload) {
         if (!payload) return '';
+        let str = '';
         if (typeof payload === 'object') {
-            return JSON.stringify(payload, null, 2);
+            str = JSON.stringify(payload, null, 2);
+        } else {
+            str = String(payload);
         }
-        return String(payload);
+        return this._maskSensitive(str);
     }
 
     startTrace(caseId, tenantName, productType, inputs) {
@@ -95,6 +127,74 @@ class EsrTraceLogger {
         if (!this.enabled) return;
         this.buffer.push(`[SUCCESS] ${message}`);
         if (payload) this.buffer.push(this._format(payload));
+        this.buffer.push('');
+    }
+
+    traceVerbose(message, payload) {
+        if (!this.enabled || !this.verbose) return;
+        this.buffer.push(this._format(message));
+        if (payload) this.buffer.push(this._format(payload));
+        this.buffer.push('');
+    }
+
+    traceExtraction(category, details) {
+        if (!this.enabled) return;
+        this.buffer.push(`${category.toUpperCase()} SOURCE TRACE\n`);
+        
+        for (const [section, data] of Object.entries(details || {})) {
+            this.buffer.push(`${section}:`);
+            
+            if (data === null || data === undefined) {
+                this.buffer.push(`  N/A`);
+                this.buffer.push('');
+                continue;
+            }
+
+            if (typeof data !== 'object' || Array.isArray(data)) {
+                // If it's a primitive or an array at the section level
+                if (Array.isArray(data)) {
+                    data.forEach(v => this.buffer.push(`  - ${this._maskSensitive(String(v))}`));
+                } else {
+                    this.buffer.push(`  ${this._maskSensitive(String(data))}`);
+                }
+            } else {
+                for (const [key, val] of Object.entries(data)) {
+                    if (Array.isArray(val)) {
+                        this.buffer.push(`  ${key}:`);
+                        val.forEach(v => this.buffer.push(`    - ${this._maskSensitive(String(v))}`));
+                    } else if (val !== null && typeof val === 'object') {
+                        // Stringify inner objects nicely
+                        this.buffer.push(`  ${key}: ${JSON.stringify(val)}`);
+                    } else if (val !== undefined && val !== null) {
+                        this.buffer.push(`  ${key}: ${this._maskSensitive(String(val))}`);
+                    }
+                }
+            }
+            this.buffer.push('');
+        }
+    }
+
+    traceTable(tableName, headers, rows) {
+        if (!this.enabled) return;
+        this.buffer.push(`${tableName}:`);
+        
+        // Calculate column widths
+        const colWidths = headers.map((h, i) => {
+            let max = String(h).length;
+            rows.forEach(r => {
+                const len = String(r[i] || '').length;
+                if (len > max) max = len;
+            });
+            return max + 2; // padding
+        });
+
+        const headerStr = headers.map((h, i) => String(h).padEnd(colWidths[i])).join(' | ');
+        this.buffer.push(`  ${headerStr}`);
+        
+        rows.forEach(r => {
+            const rowStr = r.map((c, i) => this._maskSensitive(String(c || '')).padEnd(colWidths[i])).join(' | ');
+            this.buffer.push(`  ${rowStr}`);
+        });
         this.buffer.push('');
     }
 

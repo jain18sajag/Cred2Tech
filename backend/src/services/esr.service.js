@@ -54,10 +54,12 @@ async function generateESR(case_id, user_id, tenant_id) {
     // calling the evaluation engine.
     const snapshot = await prisma.caseEsrFinancials.findUnique({
         where: { case_id },
-        select: { extraction_status: true, extracted_at: true }
+        select: { extraction_status: true, extracted_at: true, selected_income_method: true }
     });
 
-    if (_snapshotNeedsRefresh(snapshot)) {
+    if (snapshot?.selected_income_method === 'LEGACY_UPLOAD') {
+        console.log(`[ESR] Case ${case_id} is a LEGACY_UPLOAD. Bypassing extraction refresh.`);
+    } else if (_snapshotNeedsRefresh(snapshot)) {
         console.log(`[ESR] Snapshot for Case ${case_id} is ${snapshot ? snapshot.extraction_status + '/stale' : 'missing'} — re-extracting synchronously...`);
         await extractEsrFinancials(case_id, tenant_id);
 

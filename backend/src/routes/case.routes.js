@@ -3,6 +3,7 @@ const router = express.Router();
 const caseController = require('../controllers/case.controller');
 const { authenticate } = require('../middleware/auth.middleware');
 const { requireRole } = require('../middleware/role.middleware');
+const upload = require('../middleware/upload.middleware');
 
 // Apply authentication and RBAC to all case routes
 router.use(authenticate);
@@ -28,12 +29,24 @@ router.get('/:id/summary', caseController.getSummary);
 router.get('/:id/co-borrowers', caseController.getCoBorrowers);
 router.get('/:id/activity-log', caseController.getActivityLog);
 
+router.get('/:id/loan-application-summary.xlsx', caseController.downloadLoanApplicationSummary);
+
 // GET /cases/:id
 router.get('/:id', caseController.getCaseById);
 
 // POST /cases/create
 router.post('/create', caseController.createCase);
 router.post('/create-from-existing', caseController.createFromExisting);
+
+// POST /cases/bulk-legacy-upload
+const legacyUploadController = require('../controllers/legacyUpload.controller');
+router.post('/bulk-legacy-upload', legacyUploadController.bulkUploadLegacyCases);
+
+// GET /cases/bulk-upload/template
+router.get('/bulk-upload/template', caseController.downloadBulkTemplate);
+
+// POST /cases/bulk-upload
+router.post('/bulk-upload', upload.single('file'), caseController.uploadBulkCases);
 
 // POST /cases/:id/add-applicant
 router.post('/:id/add-applicant', caseController.addApplicant);
@@ -53,7 +66,6 @@ router.put('/:id/product-property', caseController.updateProductProperty);
 // ─── Salary Slip & OCR Endpoints ─────────────────────────────────────────────
 const salaryOcrController = require('../controllers/salaryOcr.controller');
 const documentController = require('../controllers/document.controller');
-const upload = require('../middleware/upload.middleware');
 
 // Upload a salary slip
 router.post('/:caseId/applicants/:applicantId/salary-slips', upload.single('file'), documentController.uploadDocument);

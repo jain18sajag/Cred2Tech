@@ -174,5 +174,18 @@ export const caseService = {
   getPartialDisbursements: async () => {
     const response = await axiosInstance.get('/disbursements/partial');
     return response.data;
+  },
+
+  // ─── Bulk Upload ──────────────────────────────────────────────────────────
+  downloadBulkUploadTemplate: async () => {
+    return axiosInstance.get('/cases/bulk-upload/template', { responseType: 'blob' });
+  },
+  
+  uploadBulkCases: async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return axiosInstance.post('/cases/bulk-upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
   }
 };
