@@ -1,64 +1,66 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { caseService } from '../api/caseService';
 import { toast } from 'react-hot-toast';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
-import { CheckCircle, XCircle, RefreshCw, ChevronLeft, Calculator,
-         Send, Clock, CheckCircle2, AlertCircle, X, Mail, Phone } from 'lucide-react';
+import {
+  CheckCircle, XCircle, RefreshCw, ChevronLeft, Calculator,
+  Send, Clock, CheckCircle2, AlertCircle, X, Mail, Phone
+} from 'lucide-react';
 import { sendCaseToLender, sendCaseToOtherLender, getTenantLenders } from '../api/tenantLenderService';
 
 // ─── Send Confirmation Modal ───────────────────────────────────────────────────
 function SendConfirmationModal({ isOpen, onClose, result }) {
   if (!isOpen || !result) return null;
   return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' }}>
-      <div style={{ background:'var(--bg-primary)', width:'94%', maxWidth:520, borderRadius:14, overflow:'hidden', boxShadow:'0 20px 60px rgba(0,0,0,0.2)' }}>
-        <div style={{ background:'linear-gradient(135deg,#F0FFF4,#EBF8FF)', padding:'24px', textAlign:'center', borderBottom:'1px solid var(--border)' }}>
-          <div style={{ fontSize:44, marginBottom:8 }}>✅</div>
-          <h3 style={{ fontSize:18, fontWeight:800, color:'#276749', margin:0 }}>Lead Successfully Sent!</h3>
-          <p style={{ color:'#4A5568', fontSize:13, marginTop:6 }}>The proposal has been dispatched to the lender contact.</p>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ background: 'var(--bg-primary)', width: '94%', maxWidth: 520, borderRadius: 14, overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+        <div style={{ background: 'linear-gradient(135deg,#F0FFF4,#EBF8FF)', padding: '24px', textAlign: 'center', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 44, marginBottom: 8 }}>✅</div>
+          <h3 style={{ fontSize: 18, fontWeight: 800, color: '#276749', margin: 0 }}>Lead Successfully Sent!</h3>
+          <p style={{ color: '#4A5568', fontSize: 13, marginTop: 6 }}>The proposal has been dispatched to the lender contact.</p>
         </div>
-        <div style={{ padding:'20px 24px', display:'flex', flexDirection:'column', gap:14 }}>
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
           {/* Email preview */}
-          <div style={{ border:'1px solid #BEE3F8', borderRadius:10, overflow:'hidden' }}>
-            <div style={{ background:'#EBF8FF', padding:'10px 16px', display:'flex', alignItems:'center', gap:8 }}>
+          <div style={{ border: '1px solid #BEE3F8', borderRadius: 10, overflow: 'hidden' }}>
+            <div style={{ background: '#EBF8FF', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 8 }}>
               <Mail size={14} color='#2B6CB0' />
-              <span style={{ fontSize:12, fontWeight:700, color:'#2B6CB0' }}>EMAIL SENT</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#2B6CB0' }}>EMAIL SENT</span>
             </div>
-            <div style={{ padding:'12px 16px', fontSize:12 }}>
-              <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
-                <span style={{ color:'var(--text-tertiary)' }}>To:</span>
-                <span style={{ fontWeight:600 }}>{result.to}</span>
+            <div style={{ padding: '12px 16px', fontSize: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ color: 'var(--text-tertiary)' }}>To:</span>
+                <span style={{ fontWeight: 600 }}>{result.to}</span>
               </div>
-              <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
-                <span style={{ color:'var(--text-tertiary)' }}>Contact:</span>
-                <span style={{ fontWeight:600 }}>{result.contact_name}</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ color: 'var(--text-tertiary)' }}>Contact:</span>
+                <span style={{ fontWeight: 600 }}>{result.contact_name}</span>
               </div>
-              <div style={{ marginTop:8, padding:'8px 10px', background:'var(--bg-elevated)', borderRadius:6, fontSize:11, color:'var(--text-secondary)', lineHeight:1.6 }}>
-                <strong style={{ display:'block', marginBottom:4 }}>Subject:</strong>
+              <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--bg-elevated)', borderRadius: 6, fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                <strong style={{ display: 'block', marginBottom: 4 }}>Subject:</strong>
                 {result.subject}
               </div>
-              <div style={{ marginTop:6, padding:'8px 10px', background:'var(--bg-elevated)', borderRadius:6, fontSize:11, color:'var(--text-secondary)', lineHeight:1.6, maxHeight:80, overflow:'hidden' }}>
+              <div style={{ marginTop: 6, padding: '8px 10px', background: 'var(--bg-elevated)', borderRadius: 6, fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6, maxHeight: 80, overflow: 'hidden' }}>
                 {(result.body_preview || '').slice(0, 200)}…
               </div>
             </div>
           </div>
           {/* SMS preview */}
           {result.sms?.smsSent && (
-            <div style={{ border:'1px solid #C6F6D5', borderRadius:10, overflow:'hidden' }}>
-              <div style={{ background:'#F0FFF4', padding:'10px 16px', display:'flex', alignItems:'center', gap:8 }}>
+            <div style={{ border: '1px solid #C6F6D5', borderRadius: 10, overflow: 'hidden' }}>
+              <div style={{ background: '#F0FFF4', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Phone size={14} color='#276749' />
-                <span style={{ fontSize:12, fontWeight:700, color:'#276749' }}>SMS SENT</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#276749' }}>SMS SENT</span>
               </div>
-              <div style={{ padding:'12px 16px', fontSize:12 }}>
-                <div style={{ marginBottom:4 }}>Sent to: <strong>{result.sms.to}</strong></div>
-                <div style={{ padding:'8px 10px', background:'var(--bg-elevated)', borderRadius:6, fontSize:11, lineHeight:1.6 }}>{result.sms.message}</div>
+              <div style={{ padding: '12px 16px', fontSize: 12 }}>
+                <div style={{ marginBottom: 4 }}>Sent to: <strong>{result.sms.to}</strong></div>
+                <div style={{ padding: '8px 10px', background: 'var(--bg-elevated)', borderRadius: 6, fontSize: 11, lineHeight: 1.6 }}>{result.sms.message}</div>
               </div>
             </div>
           )}
         </div>
-        <div style={{ padding:'14px 24px', borderTop:'1px solid var(--border)', display:'flex', justifyContent:'flex-end' }}>
-          <button onClick={onClose} style={{ padding:'9px 22px', borderRadius:8, fontWeight:700, fontSize:14, background:'var(--primary)', color:'#fff', border:'none', cursor:'pointer' }}>Done</button>
+        <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
+          <button onClick={onClose} style={{ padding: '9px 22px', borderRadius: 8, fontWeight: 700, fontSize: 14, background: 'var(--primary)', color: '#fff', border: 'none', cursor: 'pointer' }}>Done</button>
         </div>
       </div>
     </div>
@@ -103,56 +105,60 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, caseProductType, onSu
   };
 
   const contacts = selectedLender?.contacts || [];
-  const filteredContacts = contacts.filter(c => 
+  const filteredContacts = contacts.filter(c =>
     !caseProductType || c.product_type === caseProductType || c.product_type === 'ALL'
   );
 
   return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:9999, display:'flex', alignItems:'center', justifyContent:'center' }}>
-      <div style={{ background:'var(--bg-primary)', width:'94%', maxWidth:480, borderRadius:14, overflow:'hidden', boxShadow:'0 20px 60px rgba(0,0,0,0.2)' }}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'18px 24px', borderBottom:'1px solid var(--border)', background:'var(--bg-elevated)' }}>
-          <h3 style={{ margin:0, fontSize:16, fontWeight:700 }}>Send to Other Lender</h3>
-          <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:'var(--text-tertiary)' }}><X size={18} /></button>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ background: 'var(--bg-primary)', width: '94%', maxWidth: 480, borderRadius: 14, overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '18px 24px', borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)' }}>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Send to Other Lender</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}><X size={18} /></button>
         </div>
-        <div style={{ padding:'20px 24px' }}>
-          {loading ? <div style={{ textAlign:'center', padding:30 }}><LoadingSpinner size={30} /></div> : lenders.length === 0 ? (
-            <div style={{ textAlign:'center', padding:20, color:'var(--text-tertiary)' }}>
-              No configured lenders found. <a href='/settings/lender-contacts' style={{ color:'var(--primary)' }}>Add contacts →</a>
+        <div style={{ padding: '20px 24px' }}>
+          {loading ? <div style={{ textAlign: 'center', padding: 30 }}><LoadingSpinner size={30} /></div> : lenders.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-tertiary)' }}>
+              No configured lenders found. <a href='/settings/lender-contacts' style={{ color: 'var(--primary)' }}>Add contacts →</a>
             </div>
           ) : (
             <>
-              <div style={{ marginBottom:16 }}>
-                <label style={{ fontSize:11, fontWeight:700, color:'var(--text-tertiary)', textTransform:'uppercase', letterSpacing:'0.5px', display:'block', marginBottom:8 }}>Select Lender</label>
-                <div style={{ display:'flex', flexDirection:'column', gap:8, maxHeight: 180, overflowY: 'auto' }}>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: 8 }}>Select Lender</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 180, overflowY: 'auto' }}>
                   {lenders.map(l => (
                     <button key={l.id} onClick={() => { setSelectedLender(l); setSelectedContact(null); }}
-                      style={{ padding:'10px 14px', borderRadius:8, textAlign:'left', cursor:'pointer', fontSize:14, fontWeight:600,
-                        border:`2px solid ${selectedLender?.id === l.id ? 'var(--primary)' : 'var(--border)'}`,
-                        background: selectedLender?.id === l.id ? '#EEF2FF' : 'var(--bg-elevated)', color:'var(--text-primary)' }}>
-                      🏦 {l.lender_name} <span style={{ fontSize:11, fontWeight:400, color:'var(--text-tertiary)' }}>· {l.contacts.length} contact(s)</span>
+                      style={{
+                        padding: '10px 14px', borderRadius: 8, textAlign: 'left', cursor: 'pointer', fontSize: 14, fontWeight: 600,
+                        border: `2px solid ${selectedLender?.id === l.id ? 'var(--primary)' : 'var(--border)'}`,
+                        background: selectedLender?.id === l.id ? '#EEF2FF' : 'var(--bg-elevated)', color: 'var(--text-primary)'
+                      }}>
+                      🏦 {l.lender_name} <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-tertiary)' }}>· {l.contacts.length} contact(s)</span>
                     </button>
                   ))}
                 </div>
               </div>
               {selectedLender && (
                 <div>
-                  <label style={{ fontSize:11, fontWeight:700, color:'var(--text-tertiary)', textTransform:'uppercase', letterSpacing:'0.5px', display:'block', marginBottom:8 }}>Select Contact</label>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: 8 }}>Select Contact</label>
                   {filteredContacts.length === 0 ? (
                     <div style={{ padding: 12, fontSize: 13, color: 'var(--error)', background: '#FFF5F5', borderRadius: 8, border: '1px solid #FED7D7' }}>
                       No contacts configured for product {caseProductType}. Configure one in Lender Contacts.
                     </div>
                   ) : (
-                    <div style={{ display:'flex', flexDirection:'column', gap:8, maxHeight: 160, overflowY: 'auto' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 160, overflowY: 'auto' }}>
                       {filteredContacts.map(c => (
                         <button key={c.id} onClick={() => setSelectedContact(c)}
-                          style={{ padding:'10px 14px', borderRadius:8, textAlign:'left', cursor:'pointer', fontSize:13,
-                            border:`2px solid ${selectedContact?.id === c.id ? '#276749' : 'var(--border)'}`,
-                            background: selectedContact?.id === c.id ? '#F0FFF4' : 'var(--bg-elevated)', color:'var(--text-primary)' }}>
+                          style={{
+                            padding: '10px 14px', borderRadius: 8, textAlign: 'left', cursor: 'pointer', fontSize: 13,
+                            border: `2px solid ${selectedContact?.id === c.id ? '#276749' : 'var(--border)'}`,
+                            background: selectedContact?.id === c.id ? '#F0FFF4' : 'var(--bg-elevated)', color: 'var(--text-primary)'
+                          }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div style={{ fontWeight:600 }}>{c.contact_name} <span style={{ fontSize:11, color:'var(--text-tertiary)', fontWeight:400 }}>({c.product_type})</span></div>
-                            {c.dsa_code && <div style={{ fontSize:10, fontWeight:700, color:'#4A5568', background:'#EDF2F7', padding:'2px 6px', borderRadius:6 }}>{c.dsa_code}</div>}
+                            <div style={{ fontWeight: 600 }}>{c.contact_name} <span style={{ fontSize: 11, color: 'var(--text-tertiary)', fontWeight: 400 }}>({c.product_type})</span></div>
+                            {c.dsa_code && <div style={{ fontSize: 10, fontWeight: 700, color: '#4A5568', background: '#EDF2F7', padding: '2px 6px', borderRadius: 6 }}>{c.dsa_code}</div>}
                           </div>
-                          <div style={{ fontSize:11, color:'var(--text-tertiary)', marginTop:2 }}>{c.contact_email}{c.contact_mobile ? ` · ${c.contact_mobile}` : ''}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>{c.contact_email}{c.contact_mobile ? ` · ${c.contact_mobile}` : ''}</div>
                         </button>
                       ))}
                     </div>
@@ -162,10 +168,10 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, caseProductType, onSu
             </>
           )}
         </div>
-        <div style={{ padding:'14px 24px', borderTop:'1px solid var(--border)', display:'flex', justifyContent:'flex-end', gap:10, background:'var(--bg-elevated)' }}>
-          <button onClick={onClose} style={{ padding:'8px 16px', borderRadius:8, border:'1px solid var(--border)', background:'transparent', cursor:'pointer', fontSize:13, fontWeight:600 }}>Cancel</button>
+        <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 10, background: 'var(--bg-elevated)' }}>
+          <button onClick={onClose} style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Cancel</button>
           <button onClick={handleSend} disabled={!selectedContact || sending}
-            style={{ padding:'9px 20px', borderRadius:8, fontWeight:700, fontSize:14, background: selectedContact ? 'var(--primary)' : 'var(--border)', color:'#fff', border:'none', cursor: selectedContact ? 'pointer' : 'not-allowed', display:'flex', alignItems:'center', gap:6 }}>
+            style={{ padding: '9px 20px', borderRadius: 8, fontWeight: 700, fontSize: 14, background: selectedContact ? 'var(--primary)' : 'var(--border)', color: '#fff', border: 'none', cursor: selectedContact ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', gap: 6 }}>
             <Send size={14} /> {sending ? 'Sending...' : 'Send Proposal'}
           </button>
         </div>
@@ -193,14 +199,221 @@ const formatDynamicTenure = (months) => {
 
 const fmtPct = (v) => v != null ? `${(Number(v) * 100).toFixed(1)}%` : '—';
 
+
+const firstPresent = (...values) => values.find(v => v !== null && v !== undefined && v !== '');
+
+const getDscrBreakdown = (ev) => (
+  ev?.dscr_breakdown ||
+  ev?.dscrBreakdown ||
+  ev?.foir_breakdown?.dscr_breakdown ||
+  ev?.foirBreakdown?.dscrBreakdown ||
+  ev?.calculation_breakdown?.dscr ||
+  null
+);
+
+const isDscrEvaluation = (ev) => {
+  const name = String(ev?.scheme_name || ev?.best_scheme_name || '').toUpperCase();
+  return name.includes('DSCR') || Boolean(getDscrBreakdown(ev));
+};
+
+const normalizeSchemeName = (value) => String(value || '').trim().toUpperCase();
+
+const namesMatch = (left, right) => {
+  const a = normalizeSchemeName(left);
+  const b = normalizeSchemeName(right);
+  if (!a || !b) return false;
+  return a === b || a.includes(b) || b.includes(a);
+};
+
+const getSchemeKey = (ev, index = 0) => (
+  ev?.scheme_id || ev?.id || `${normalizeSchemeName(ev?.scheme_name || ev?.best_scheme_name)}-${index}`
+);
+
+const getOrderedEvaluationsForView = (evaluations = [], selectedSchemeName = '') => {
+  const list = Array.isArray(evaluations) ? evaluations.filter(Boolean) : [];
+  const seen = new Set();
+  const unique = [];
+
+  list.forEach((ev, index) => {
+    const key = getSchemeKey(ev, index);
+    if (seen.has(key)) return;
+    seen.add(key);
+    unique.push(ev);
+  });
+
+  const selectedName = normalizeSchemeName(selectedSchemeName);
+
+  return unique.sort((a, b) => {
+    // DSCR must remain visible first in View Calculation.
+    // Previously selected/winning scheme (for example Net Worth) was sorted before DSCR,
+    // so DSCR was hidden behind the horizontal tab list.
+    const aDscr = isDscrEvaluation(a);
+    const bDscr = isDscrEvaluation(b);
+    if (aDscr !== bDscr) return aDscr ? -1 : 1;
+
+    const aSelected = selectedName && namesMatch(a?.scheme_name || a?.best_scheme_name, selectedName);
+    const bSelected = selectedName && namesMatch(b?.scheme_name || b?.best_scheme_name, selectedName);
+    if (aSelected !== bSelected) return aSelected ? -1 : 1;
+
+    const aEligible = Boolean(a?.is_eligible);
+    const bEligible = Boolean(b?.is_eligible);
+    if (aEligible !== bEligible) return aEligible ? -1 : 1;
+
+    return 0;
+  });
+};
+
+const getDscrMetric = (breakdown, camelKey, snakeKey, fallbackValue = null) => (
+  firstPresent(breakdown?.[camelKey], breakdown?.[snakeKey], fallbackValue)
+);
+
+const isHdfcLender = (lender) => {
+  const text = [
+    lender?.lender_name,
+    lender?.lenderName,
+    lender?.lender_code,
+    lender?.lenderCode,
+    lender?.code,
+    lender?.name
+  ].filter(Boolean).join(' ').toUpperCase();
+  return text.includes('HDFC');
+};
+
+const isUnsupportedHdfcLapMethod = (ev) => {
+  const text = normalizeSchemeName(ev?.scheme_name || ev?.best_scheme_name || ev?.method_name || ev?.methodType);
+  return text === 'LIP' || (text.includes('LOW') && text.includes('LTV')) || text.includes('NET WORTH') || text === 'NWM';
+};
+
+const extractEvaluationList = (evaluations, lender) => {
+  const sources = [
+    evaluations,
+    lender?.scheme_evaluations,
+    lender?.schemeEvaluations,
+    lender?.evaluations,
+    lender?.raw_payload?.scheme_evaluations,
+    lender?.rawPayload?.schemeEvaluations,
+    lender?.raw_payload?.lenders?.[0]?.scheme_evaluations,
+    lender?.rawPayload?.lenders?.[0]?.schemeEvaluations
+  ];
+
+  const flat = [];
+  sources.forEach(src => {
+    if (Array.isArray(src)) flat.push(...src.filter(Boolean));
+  });
+
+  // Some APIs store the winning scheme directly on lender. Keep it as a fallback evaluation.
+  if (lender?.best_scheme_name && !flat.some(e => namesMatch(e?.scheme_name, lender.best_scheme_name))) {
+    flat.push({
+      scheme_name: lender.best_scheme_name,
+      is_eligible: lender.is_eligible,
+      final_eligible_loan_amount: lender.final_eligible_loan_amount,
+      eligible_loan_amount: lender.eligible_loan_amount,
+      monthly_income_used: lender.monthly_income_used,
+      foir_breakdown: lender.foir_breakdown,
+      dscr_breakdown: lender.dscr_breakdown || lender.foir_breakdown?.dscr_breakdown,
+      applicable_ltv_percent: lender.applicable_ltv_percent,
+      applicable_ltv_key: lender.applicable_ltv_key,
+      max_loan_by_ltv: lender.max_loan_by_ltv,
+      ltv_based_eligible_loan_amount: lender.ltv_based_eligible_loan_amount,
+      foir_based_eligible_loan_amount: lender.foir_based_eligible_loan_amount,
+      maximum_eligible_emi: lender.maximum_eligible_emi,
+      max_eligible_emi: lender.max_eligible_emi,
+      proposed_emi: lender.proposed_emi,
+      foir_allowed_percent: lender.foir_allowed_percent,
+      foir_actual_percent: lender.foir_actual_percent
+    });
+  }
+
+  return flat;
+};
+
+const buildDscrPlaceholderEvaluation = (lender) => {
+  const dscrBreakdown = getDscrBreakdown(lender) || {};
+  const hasDscrData = Object.keys(dscrBreakdown).length > 0;
+  const finalLoan = hasDscrData ? firstPresent(
+    lender?.dscr_eligible_loan_amount,
+    lender?.dscrEligibleLoanAmount,
+    lender?.final_eligible_loan_amount,
+    lender?.eligible_loan_amount
+  ) : 0;
+
+  return {
+    scheme_id: 'hdfc-dscr-placeholder',
+    scheme_name: 'DSCR',
+    is_eligible: Boolean(lender?.is_eligible && finalLoan),
+    income_method_matched: false,
+    monthly_income_used: firstPresent(
+      lender?.monthly_income_used,
+      dscrBreakdown?.monthlyEquivalentIncome,
+      dscrBreakdown?.monthly_equivalent_income,
+      dscrBreakdown?.annualIncome ? Number(dscrBreakdown.annualIncome) / 12 : null,
+      0
+    ),
+    primary_monthly_income_used: firstPresent(
+      dscrBreakdown?.monthlyEquivalentIncome,
+      dscrBreakdown?.monthly_equivalent_income,
+      0
+    ),
+    foir_breakdown: {
+      skip_foir_check: true,
+      dscr_breakdown: dscrBreakdown
+    },
+    dscr_breakdown: dscrBreakdown,
+    final_eligible_loan_amount: finalLoan || 0,
+    eligible_loan_amount: finalLoan || 0,
+    foir_based_eligible_loan_amount: hasDscrData ? firstPresent(
+      lender?.foir_based_eligible_loan_amount,
+      lender?.foirBasedEligibleLoanAmount,
+      finalLoan,
+      0
+    ) : 0,
+    max_loan_by_ltv: hasDscrData ? (lender?.max_loan_by_ltv || null) : null,
+    ltv_based_eligible_loan_amount: hasDscrData ? (lender?.ltv_based_eligible_loan_amount || lender?.max_loan_by_ltv || null) : null,
+    applicable_ltv_percent: lender?.applicable_ltv_percent || null,
+    applicable_ltv_key: lender?.applicable_ltv_key || null,
+    max_eligible_emi: firstPresent(
+      dscrBreakdown?.maxProposedMonthlyEmi,
+      dscrBreakdown?.max_proposed_monthly_emi,
+      lender?.max_eligible_emi,
+      null
+    ),
+    maximum_eligible_emi: firstPresent(
+      dscrBreakdown?.maxProposedMonthlyEmi,
+      dscrBreakdown?.max_proposed_monthly_emi,
+      lender?.maximum_eligible_emi,
+      null
+    ),
+    proposed_emi: lender?.proposed_emi || null,
+    foir_allowed_percent: null,
+    foir_actual_percent: null,
+    failure_reasons: hasDscrData ? [] : ['DSCR evaluation was not returned in scheme_evaluations. Run HDFC DSCR parameter script and regenerate ESR.'],
+    warnings: hasDscrData ? [] : ['Frontend placeholder shown because HDFC DSCR scheme is missing from API response.']
+  };
+};
+
+const normalizeEvaluationsForView = (evaluations, lender) => {
+  const list = extractEvaluationList(evaluations, lender);
+
+  // HDFC LAP policy does not contain LIP, Low LTV, or Net Worth Method.
+  // Hide those legacy DB schemes for HDFC only; ICICI and other lenders are unaffected.
+  const lenderScopedList = isHdfcLender(lender)
+    ? list.filter(ev => !isUnsupportedHdfcLapMethod(ev))
+    : list;
+
+  // Do not create a fake HDFC DSCR row on the frontend. A placeholder produced
+  // ₹0 / blank LTV cards and made the user think DSCR was calculated. DSCR must
+  // come from backend scheme_evaluations with dscr_breakdown.
+  return lenderScopedList;
+};
+
 // ─── Proposal status badge config ─────────────────────────────────────────────
 const PROPOSAL_STATUS = {
-  draft:              { label: 'Draft',      color: '#718096', bg: '#EDF2F7', icon: Clock },
-  submitted:          { label: 'Submitted',  color: '#2B6CB0', bg: '#EBF8FF', icon: Send },
-  accepted:           { label: 'Accepted',   color: '#276749', bg: '#F0FFF4', icon: CheckCircle2 },
-  rejected:           { label: 'Rejected',   color: '#C53030', bg: '#FFF5F5', icon: XCircle },
-  query_raised:       { label: 'Query',      color: '#C05621', bg: '#FFFBEB', icon: AlertCircle },
-  resent:             { label: 'Resent',     color: '#6B46C1', bg: '#FAF5FF', icon: Send },
+  draft: { label: 'Draft', color: '#718096', bg: '#EDF2F7', icon: Clock },
+  submitted: { label: 'Submitted', color: '#2B6CB0', bg: '#EBF8FF', icon: Send },
+  accepted: { label: 'Accepted', color: '#276749', bg: '#F0FFF4', icon: CheckCircle2 },
+  rejected: { label: 'Rejected', color: '#C53030', bg: '#FFF5F5', icon: XCircle },
+  query_raised: { label: 'Query', color: '#C05621', bg: '#FFFBEB', icon: AlertCircle },
+  resent: { label: 'Resent', color: '#6B46C1', bg: '#FAF5FF', icon: Send },
 };
 
 function ProposalBadge({ status }) {
@@ -218,26 +431,79 @@ function ProposalBadge({ status }) {
 }
 
 // ─── Calculation Breakdown Panel ──────────────────────────────────────────────
-const CalcBreakdownPanel = ({ evaluations, monthlyIncome }) => {
+const CalcBreakdownPanel = ({ evaluations, lender, monthlyIncome, selectedSchemeName }) => {
   const [open, setOpen] = useState(false);
-  const [activeScheme, setActiveScheme] = useState(0);
-  if (!evaluations || evaluations.length === 0) return null;
 
-  const ev = evaluations[activeScheme] || evaluations[0];
+  const orderedEvaluations = useMemo(
+    () => getOrderedEvaluationsForView(normalizeEvaluationsForView(evaluations, lender), selectedSchemeName),
+    [evaluations, lender, selectedSchemeName]
+  );
+
+  const getPreferredIndex = useCallback(() => {
+    if (!orderedEvaluations || orderedEvaluations.length === 0) return 0;
+
+    const dscrIndex = orderedEvaluations.findIndex(isDscrEvaluation);
+    if (dscrIndex >= 0) return dscrIndex;
+
+    if (selectedSchemeName) {
+      const bySelected = orderedEvaluations.findIndex(e => namesMatch(e?.scheme_name || e?.best_scheme_name, selectedSchemeName));
+      if (bySelected >= 0) return bySelected;
+    }
+
+    const eligibleIndex = orderedEvaluations.findIndex(e => e.is_eligible);
+    if (eligibleIndex >= 0) return eligibleIndex;
+
+    return 0;
+  }, [orderedEvaluations, selectedSchemeName]);
+
+  const [activeScheme, setActiveScheme] = useState(0);
+
+  useEffect(() => {
+    setActiveScheme(getPreferredIndex());
+  }, [getPreferredIndex]);
+
+  if (!orderedEvaluations || orderedEvaluations.length === 0) return null;
+
+  const hasRealDscrEvaluation = orderedEvaluations.some(isDscrEvaluation);
+
+  const safeActiveScheme = Math.min(activeScheme, orderedEvaluations.length - 1);
+  const ev = orderedEvaluations[safeActiveScheme] || orderedEvaluations[getPreferredIndex()] || orderedEvaluations[0];
+  const dscrBreakdown = getDscrBreakdown(ev);
+  const isDscrScheme = isDscrEvaluation(ev);
+
+  const dscrActual = getDscrMetric(dscrBreakdown, 'actualDscrRatio', 'actual_dscr_ratio', ev?.dscr_actual_ratio);
+  const dscrMinimum = getDscrMetric(dscrBreakdown, 'minRatio', 'min_ratio', ev?.dscr_min_ratio);
+  const dscrAnnualIncome = getDscrMetric(dscrBreakdown, 'annualIncome', 'annual_income', ev?.annual_income);
+  const dscrExistingAnnualObligations = getDscrMetric(dscrBreakdown, 'existingAnnualObligations', 'existing_annual_obligations', ev?.existing_annual_obligations);
+  const dscrMaxAnnualEmi = getDscrMetric(dscrBreakdown, 'maxProposedAnnualEmi', 'max_proposed_annual_emi', ev?.max_proposed_annual_emi);
+  const dscrMaxMonthlyEmi = getDscrMetric(dscrBreakdown, 'maxProposedMonthlyEmi', 'max_proposed_monthly_emi', ev?.maximum_eligible_emi ?? ev?.max_eligible_emi);
+  const dscrFinalAnnualDebtService = getDscrMetric(dscrBreakdown, 'finalAnnualDebtService', 'final_annual_debt_service', null);
+
+  const schemeMonthlyIncome = ev?.monthly_income_used ?? ev?.foir_breakdown?.composed_income ?? (dscrAnnualIncome ? Number(dscrAnnualIncome) / 12 : monthlyIncome);
+
+  const ltvCards = (ev.applicable_ltv_percent != null || ev.ltv_based_eligible_loan_amount != null || ev.max_loan_by_ltv != null)
+    ? [
+      { label: 'LTV Applied', value: ev.applicable_ltv_percent != null ? `${(ev.applicable_ltv_percent * 100).toFixed(0)}%` : '—', icon: '🏠', color: '#553C9A', bg: '#FAF5FF', note: `Key: ${ev.applicable_ltv_key || '—'}` },
+      { label: 'LTV Allowed', value: ev.ltv_based_eligible_loan_amount != null ? formatDynamicCurrency(ev.ltv_based_eligible_loan_amount) : (ev.max_loan_by_ltv != null ? formatDynamicCurrency(ev.max_loan_by_ltv) : '—'), icon: '🔢', color: '#2C7A7B', bg: '#E6FFFA', note: 'Property Value × LTV%' },
+    ]
+    : [];
 
   const steps = [
-    { label: 'Monthly Income Used', value: formatDynamicCurrency(monthlyIncome), icon: '💰', color: '#2B6CB0', bg: '#EBF8FF', note: 'Selected income method monthly figure' },
-    { label: 'FOIR Allowed', value: ev.foir_breakdown?.skip_foir_check ? 'No DBR' : fmtPct(ev.foir_allowed_percent), icon: '📊', color: '#276749', bg: '#F0FFF4', note: ev.foir_breakdown?.skip_foir_check ? 'FOIR Validation Skipped' : 'Max permissible obligation %' },
-    { label: 'FOIR Actual', value: fmtPct(ev.foir_actual_percent), icon: '📉',
-      color: (!ev.foir_breakdown?.skip_foir_check && ev.foir_actual_percent > ev.foir_allowed_percent) ? '#C53030' : '#276749',
-      bg: (!ev.foir_breakdown?.skip_foir_check && ev.foir_actual_percent > ev.foir_allowed_percent) ? '#FFF5F5' : '#F0FFF4',
-      note: 'Current EMI ÷ income' },
-    { label: 'Underwriting Capacity', value: ev.foir_based_eligible_loan_amount != null ? formatDynamicCurrency(ev.foir_based_eligible_loan_amount) : (ev.foir_breakdown?.skip_foir_check ? 'No Cap' : '—'), icon: '🏦', color: '#744210', bg: '#FFFBF0', note: 'Based on FOIR & Obligations' },
-    { label: 'LTV Applied', value: ev.applicable_ltv_percent != null ? `${(ev.applicable_ltv_percent * 100).toFixed(0)}%` : '—', icon: '🏠', color: '#553C9A', bg: '#FAF5FF', note: `Key: ${ev.applicable_ltv_key || '—'}` },
-    { label: 'LTV Allowed', value: ev.ltv_based_eligible_loan_amount != null ? formatDynamicCurrency(ev.ltv_based_eligible_loan_amount) : (ev.max_loan_by_ltv != null ? formatDynamicCurrency(ev.max_loan_by_ltv) : '—'), icon: '🔢', color: '#2C7A7B', bg: '#E6FFFA', note: 'Property Value × LTV%' },
-    { label: 'Final Eligible Loan', value: ev.final_eligible_loan_amount != null ? formatDynamicCurrency(ev.final_eligible_loan_amount) : '—', icon: '✅',
+    { label: isDscrScheme ? 'Monthly Income Equivalent' : 'Monthly Income Used', value: formatDynamicCurrency(schemeMonthlyIncome), icon: '💰', color: '#2B6CB0', bg: '#EBF8FF', note: isDscrScheme ? 'Annual income ÷ 12 for display only' : 'Scheme-specific monthly income figure' },
+    { label: isDscrScheme ? 'DSCR Required' : 'FOIR Allowed', value: isDscrScheme ? (dscrMinimum ? `${Number(dscrMinimum).toFixed(2)}x` : '—') : (ev.foir_breakdown?.skip_foir_check ? 'No DBR' : fmtPct(ev.foir_allowed_percent)), icon: '📊', color: '#276749', bg: '#F0FFF4', note: isDscrScheme ? 'Minimum DSCR ratio' : (ev.foir_breakdown?.skip_foir_check ? 'FOIR Validation Skipped' : 'Max permissible obligation %') },
+    {
+      label: isDscrScheme ? 'DSCR Actual' : 'FOIR Actual', value: isDscrScheme ? (dscrActual != null ? `${Number(dscrActual).toFixed(2)}x` : '—') : fmtPct(ev.foir_actual_percent), icon: '📉',
+      color: isDscrScheme ? ((dscrActual != null && dscrMinimum != null && dscrActual < dscrMinimum) ? '#C53030' : '#276749') : ((!ev.foir_breakdown?.skip_foir_check && ev.foir_actual_percent > ev.foir_allowed_percent) ? '#C53030' : '#276749'),
+      bg: isDscrScheme ? ((dscrActual != null && dscrMinimum != null && dscrActual < dscrMinimum) ? '#FFF5F5' : '#F0FFF4') : ((!ev.foir_breakdown?.skip_foir_check && ev.foir_actual_percent > ev.foir_allowed_percent) ? '#FFF5F5' : '#F0FFF4'),
+      note: isDscrScheme ? 'Annual income ÷ annual debt service' : 'Current EMI ÷ income'
+    },
+    { label: isDscrScheme ? 'DSCR Capacity' : 'Underwriting Capacity', value: ev.foir_based_eligible_loan_amount != null ? formatDynamicCurrency(ev.foir_based_eligible_loan_amount) : (ev.foir_breakdown?.skip_foir_check ? 'No Cap' : '—'), icon: '🏦', color: '#744210', bg: '#FFFBF0', note: isDscrScheme ? 'Based on DSCR EMI capacity' : 'Based on FOIR & Obligations' },
+    ...ltvCards,
+    {
+      label: 'Final Eligible Loan', value: ev.final_eligible_loan_amount != null ? formatDynamicCurrency(ev.final_eligible_loan_amount) : '—', icon: '✅',
       color: ev.is_eligible ? '#276749' : '#C53030', bg: ev.is_eligible ? '#F0FFF4' : '#FFF5F5',
-      note: ev.is_eligible ? 'Min(Capacity, LTV, Max Loan)' : 'Failed eligibility', highlight: true },
+      note: ev.is_eligible ? 'Min(Capacity, LTV, Max Loan)' : 'Failed eligibility', highlight: true
+    },
   ];
 
   return (
@@ -253,23 +519,31 @@ const CalcBreakdownPanel = ({ evaluations, monthlyIncome }) => {
 
       {open && (
         <div style={{ marginTop: 10, borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)' }}>
-          {evaluations.length > 1 && (
+          {orderedEvaluations.length > 1 && (
             <div style={{ display: 'flex', background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)', overflowX: 'auto', whiteSpace: 'nowrap' }}>
-              {evaluations.map((e, i) => (
+              {orderedEvaluations.map((e, i) => (
                 <button key={i} onClick={() => setActiveScheme(i)} style={{
                   flex: '0 0 auto', padding: '8px 12px', fontSize: 11, fontWeight: 600,
                   border: 'none', cursor: 'pointer',
-                  background: activeScheme === i ? 'var(--primary)' : 'transparent',
-                  color: activeScheme === i ? '#fff' : 'var(--text-secondary)',
+                  background: safeActiveScheme === i ? 'var(--primary)' : 'transparent',
+                  color: safeActiveScheme === i ? '#fff' : 'var(--text-secondary)',
                 }}>
-                  {e.scheme_name}
-                  <span style={{ marginLeft: 6, fontSize: 9, padding: '2px 6px', borderRadius: 10,
+                  {isDscrEvaluation(e) ? `DSCR · ${e.scheme_name}` : e.scheme_name}
+                  <span style={{
+                    marginLeft: 6, fontSize: 9, padding: '2px 6px', borderRadius: 10,
                     background: e.is_eligible ? '#9AE6B4' : '#FED7D7',
-                    color: e.is_eligible ? '#22543D' : '#C53030' }}>
+                    color: e.is_eligible ? '#22543D' : '#C53030'
+                  }}>
                     {e.is_eligible ? '✓' : '✕'}
                   </span>
                 </button>
               ))}
+            </div>
+          )}
+
+          {isHdfcLender(lender) && !hasRealDscrEvaluation && (
+            <div style={{ margin: '10px 14px 0', padding: '9px 11px', background: '#FFFBEB', border: '1px solid #F6AD55', borderRadius: 8, fontSize: 11, color: '#92400E' }}>
+              ⚠️ HDFC DSCR was not returned by backend. Run the HDFC DSCR parameter update and regenerate ESR; frontend will not show fake ₹0 DSCR values.
             </div>
           )}
 
@@ -293,10 +567,38 @@ const CalcBreakdownPanel = ({ evaluations, monthlyIncome }) => {
                 </div>
               ))}
             </div>
-            <div style={{ marginTop: 10, padding: '8px 12px', background: '#1A202C', borderRadius: 8,
-              fontSize: 10, color: '#A0AEC0', fontFamily: 'monospace', lineHeight: 1.8, wordBreak: 'break-word', whiteSpace: 'normal' }}>
+
+            {isDscrScheme && (
+              <div style={{ marginTop: 10, padding: '10px 12px', background: '#F7FAFC', borderRadius: 8, border: '1px solid #CBD5E0', fontSize: 11 }}>
+                <div style={{ fontWeight: 800, color: '#2D3748', marginBottom: 6 }}>📌 DSCR Calculation Details</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, color: '#4A5568' }}>
+                  <div>Annual Income: <strong>{dscrAnnualIncome != null ? formatDynamicCurrency(dscrAnnualIncome) : '—'}</strong></div>
+                  <div>Minimum DSCR: <strong>{dscrMinimum != null ? `${Number(dscrMinimum).toFixed(2)}x` : '—'}</strong></div>
+                  <div>Existing Annual Obligations: <strong>{dscrExistingAnnualObligations != null ? formatDynamicCurrency(dscrExistingAnnualObligations) : '—'}</strong></div>
+                  <div>Max Annual EMI: <strong>{dscrMaxAnnualEmi != null ? formatDynamicCurrency(dscrMaxAnnualEmi) : '—'}</strong></div>
+                  <div>Max Monthly EMI: <strong>{dscrMaxMonthlyEmi != null ? formatDynamicCurrency(Math.max(0, Number(dscrMaxMonthlyEmi))) : '—'}</strong></div>
+                  <div>Actual DSCR: <strong>{dscrActual != null ? `${Number(dscrActual).toFixed(2)}x` : '—'}</strong></div>
+                </div>
+              </div>
+            )}
+
+            <div style={{
+              marginTop: 10, padding: '8px 12px', background: '#1A202C', borderRadius: 8,
+              fontSize: 10, color: '#A0AEC0', fontFamily: 'monospace', lineHeight: 1.8, wordBreak: 'break-word', whiteSpace: 'normal'
+            }}>
               <div style={{ color: '#68D391', fontWeight: 700, marginBottom: 4 }}>📐 Calculation Trace</div>
-              <div>Max EMI = Income ({formatDynamicCurrency(monthlyIncome)}) × FOIR ({fmtPct(ev.foir_allowed_percent)}) − Obligations = {ev.max_eligible_emi != null ? formatDynamicCurrency(Math.max(0, ev.max_eligible_emi)) : '—'}</div>
+              {isDscrScheme ? (
+                <>
+                  <div>DSCR = Annual Income / (Existing Annual Obligations + Proposed Annual EMI)</div>
+                  <div>Annual Income = {dscrAnnualIncome != null ? formatDynamicCurrency(dscrAnnualIncome) : '—'}</div>
+                  <div>Existing Annual Obligations = {dscrExistingAnnualObligations != null ? formatDynamicCurrency(dscrExistingAnnualObligations) : '—'}</div>
+                  <div>Max Annual EMI = {dscrMaxAnnualEmi != null ? formatDynamicCurrency(dscrMaxAnnualEmi) : '—'}</div>
+                  <div>Max Monthly EMI = {dscrMaxMonthlyEmi != null ? formatDynamicCurrency(Math.max(0, Number(dscrMaxMonthlyEmi))) : (ev.max_eligible_emi != null ? formatDynamicCurrency(Math.max(0, ev.max_eligible_emi)) : '—')}</div>
+                  <div>Final Annual Debt Service = {dscrFinalAnnualDebtService != null ? formatDynamicCurrency(dscrFinalAnnualDebtService) : '—'}</div>
+                </>
+              ) : (
+                <div>Max EMI = Income ({formatDynamicCurrency(schemeMonthlyIncome)}) × FOIR ({fmtPct(ev.foir_allowed_percent)}) − Obligations = {ev.max_eligible_emi != null ? formatDynamicCurrency(Math.max(0, ev.max_eligible_emi)) : '—'}</div>
+              )}
               <div>Max Loan LTV = {ev.max_loan_by_ltv != null ? formatDynamicCurrency(ev.max_loan_by_ltv) : '—'}</div>
               <div style={{ color: '#68D391' }}>Final = {ev.final_eligible_loan_amount != null ? formatDynamicCurrency(ev.final_eligible_loan_amount) : '—'}</div>
             </div>
@@ -308,9 +610,53 @@ const CalcBreakdownPanel = ({ evaluations, monthlyIncome }) => {
 };
 
 // ─── Scheme Diagnostics ───────────────────────────────────────────────────────
-const SchemeDiagnosticsPanel = ({ evaluations }) => {
+const SchemeDiagnosticsPanel = ({ evaluations, lender }) => {
   const [open, setOpen] = useState(false);
-  if (!evaluations || evaluations.length === 0) return null;
+
+  const normalizedEvaluations = useMemo(() => {
+    const list = normalizeEvaluationsForView(evaluations, lender);
+    return getOrderedEvaluationsForView(list, lender?.best_scheme_name || lender?.bestSchemeName || '');
+  }, [evaluations, lender]);
+
+  if (!normalizedEvaluations || normalizedEvaluations.length === 0) return null;
+
+  const renderDscrDiagnostics = (ev) => {
+    const dscrBreakdown = getDscrBreakdown(ev) || {};
+    const dscrMinimum = getDscrMetric(dscrBreakdown, 'minRatio', 'min_ratio', ev?.dscr_min_ratio);
+    const dscrActual = getDscrMetric(dscrBreakdown, 'actualDscrRatio', 'actual_dscr_ratio', ev?.dscr_actual_ratio);
+    const annualIncome = getDscrMetric(dscrBreakdown, 'annualIncome', 'annual_income', ev?.annual_income);
+    const existingAnnualObligations = getDscrMetric(dscrBreakdown, 'existingAnnualObligations', 'existing_annual_obligations', ev?.existing_annual_obligations);
+    const maxAnnualEmi = getDscrMetric(dscrBreakdown, 'maxProposedAnnualEmi', 'max_proposed_annual_emi', ev?.max_proposed_annual_emi);
+    const maxMonthlyEmi = getDscrMetric(dscrBreakdown, 'maxProposedMonthlyEmi', 'max_proposed_monthly_emi', ev?.maximum_eligible_emi ?? ev?.max_eligible_emi);
+    const dscrEligibleLoan = firstPresent(
+      ev?.dscr_eligible_loan_amount,
+      ev?.dscrEligibleLoanAmount,
+      ev?.foir_based_eligible_loan_amount,
+      ev?.final_eligible_loan_amount,
+      ev?.eligible_loan_amount
+    );
+
+    return (
+      <div style={{ marginTop: 8, padding: 10, borderRadius: 8, background: '#F7FAFC', border: '1px solid #CBD5E0' }}>
+        <div style={{ fontWeight: 700, color: '#2D3748', marginBottom: 6 }}>DSCR Diagnostics</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 11, color: 'var(--text-secondary)' }}>
+          <div>DSCR Required: <strong>{dscrMinimum != null ? `${Number(dscrMinimum).toFixed(2)}x` : '—'}</strong></div>
+          <div>DSCR Actual: <strong>{dscrActual != null ? `${Number(dscrActual).toFixed(2)}x` : '—'}</strong></div>
+          <div>Annual Income: <strong>{annualIncome != null ? formatDynamicCurrency(annualIncome) : '—'}</strong></div>
+          <div>Existing Annual Obligation: <strong>{existingAnnualObligations != null ? formatDynamicCurrency(existingAnnualObligations) : '—'}</strong></div>
+          <div>Max Annual EMI: <strong>{maxAnnualEmi != null ? formatDynamicCurrency(maxAnnualEmi) : '—'}</strong></div>
+          <div>Max Monthly EMI: <strong>{maxMonthlyEmi != null ? formatDynamicCurrency(Math.max(0, Number(maxMonthlyEmi))) : '—'}</strong></div>
+          <div style={{ gridColumn: '1 / -1' }}>DSCR Eligible Loan: <strong>{dscrEligibleLoan != null ? formatDynamicCurrency(dscrEligibleLoan) : '—'}</strong></div>
+        </div>
+        {!Object.keys(dscrBreakdown).length && (
+          <div style={{ marginTop: 6, color: '#D97706', fontSize: 11 }}>
+            DSCR breakdown is not present in this ESR response. Regenerate ESR after running HDFC DSCR config script.
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div style={{ marginTop: 8 }}>
       <button className="btn btn-ghost" onClick={() => setOpen(!open)}
@@ -319,30 +665,35 @@ const SchemeDiagnosticsPanel = ({ evaluations }) => {
       </button>
       {open && (
         <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-elevated)', borderRadius: 8, fontSize: 12 }}>
-          {evaluations.map((ev, i) => (
-            <div key={i} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: i === evaluations.length - 1 ? 'none' : '1px solid var(--border)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                <strong>{ev.scheme_name}</strong>
-                <span style={{ color: ev.is_eligible ? 'var(--success)' : 'var(--error)' }}>
-                  {ev.is_eligible ? 'Eligible' : 'Ineligible'}
-                </span>
+          {normalizedEvaluations.map((ev, i) => {
+            const isDscr = isDscrEvaluation(ev);
+            return (
+              <div key={getSchemeKey(ev, i)} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: i === normalizedEvaluations.length - 1 ? 'none' : '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <strong>{isDscr ? `DSCR · ${ev.scheme_name || 'DSCR'}` : ev.scheme_name}</strong>
+                  <span style={{ color: ev.is_eligible ? 'var(--success)' : 'var(--error)' }}>
+                    {ev.is_eligible ? 'Eligible' : 'Ineligible'}
+                  </span>
+                </div>
+                <div style={{ color: 'var(--text-tertiary)', fontSize: 11, marginBottom: 6 }}>
+                  LTV: {ev.applicable_ltv_percent ? `${(ev.applicable_ltv_percent * 100).toFixed(0)}%` : '—'} ({ev.applicable_ltv_key || '—'})
+                  <br />Method Matched: {ev.income_method_matched ? 'Yes' : 'No'}
+                  {isDscr && <><br />Method Type: DSCR</>}
+                </div>
+                {isDscr && renderDscrDiagnostics(ev)}
+                {ev.failure_reasons?.length > 0 && (
+                  <ul style={{ color: 'var(--error)', paddingLeft: 16, margin: '4px 0' }}>
+                    {ev.failure_reasons.map((r, ri) => <li key={ri}>{r}</li>)}
+                  </ul>
+                )}
+                {ev.warnings?.length > 0 && (
+                  <ul style={{ color: '#D97706', paddingLeft: 16, margin: '4px 0' }}>
+                    {ev.warnings.map((w, wi) => <li key={wi}>{w}</li>)}
+                  </ul>
+                )}
               </div>
-              <div style={{ color: 'var(--text-tertiary)', fontSize: 11, marginBottom: 6 }}>
-                LTV: {ev.applicable_ltv_percent ? `${(ev.applicable_ltv_percent * 100).toFixed(0)}%` : '—'} ({ev.applicable_ltv_key})
-                <br />Method Matched: {ev.income_method_matched ? 'Yes' : 'No'}
-              </div>
-              {ev.failure_reasons?.length > 0 && (
-                <ul style={{ color: 'var(--error)', paddingLeft: 16, margin: '4px 0' }}>
-                  {ev.failure_reasons.map((r, ri) => <li key={ri}>{r}</li>)}
-                </ul>
-              )}
-              {ev.warnings?.length > 0 && (
-                <ul style={{ color: '#D97706', paddingLeft: 16, margin: '4px 0' }}>
-                  {ev.warnings.map((w, wi) => <li key={wi}>{w}</li>)}
-                </ul>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -422,17 +773,21 @@ function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToL
             <button
               onClick={() => doCreate(otherSubmitted.id)}
               disabled={creating}
-              style={{ flex: 1, padding: '8px', fontSize: 12, fontWeight: 700,
-                       background: '#2B6CB0', color: '#fff', border: 'none',
-                       borderRadius: 6, cursor: 'pointer' }}>
+              style={{
+                flex: 1, padding: '8px', fontSize: 12, fontWeight: 700,
+                background: '#2B6CB0', color: '#fff', border: 'none',
+                borderRadius: 6, cursor: 'pointer'
+              }}>
               {creating ? 'Cloning...' : '✅ Yes, Clone Proposal'}
             </button>
             <button
               onClick={() => { setShowCloneDialog(false); doCreate(null); }}
               disabled={creating}
-              style={{ flex: 1, padding: '8px', fontSize: 12, fontWeight: 600,
-                       background: 'var(--bg-elevated)', color: 'var(--text-secondary)',
-                       border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer' }}>
+              style={{
+                flex: 1, padding: '8px', fontSize: 12, fontWeight: 600,
+                background: 'var(--bg-elevated)', color: 'var(--text-secondary)',
+                border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer'
+              }}>
               No, Start Fresh
             </button>
           </div>
@@ -460,8 +815,10 @@ function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToL
         ) : (
           <button
             className="btn btn-primary"
-            style={{ flex: 1, padding: '10px', fontWeight: 700,
-                     background: 'linear-gradient(135deg,#2B6CB0,#553C9A)' }}
+            style={{
+              flex: 1, padding: '10px', fontWeight: 700,
+              background: 'linear-gradient(135deg,#2B6CB0,#553C9A)'
+            }}
             onClick={handlePrepare}
             disabled={creating}
           >
@@ -471,9 +828,11 @@ function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToL
         <button
           onClick={onSendToOtherLender}
           title="Prepare proposal for a different lender contact"
-          style={{ padding: '9px 12px', fontWeight: 700, fontSize: 11, borderRadius: 8,
-                   background: 'transparent', color: '#553C9A', border: '1px solid #553C9A',
-                   cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
+          style={{
+            padding: '9px 12px', fontWeight: 700, fontSize: 11, borderRadius: 8,
+            background: 'transparent', color: '#553C9A', border: '1px solid #553C9A',
+            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap'
+          }}
         >
           ↗ Other Lender
         </button>
@@ -489,10 +848,10 @@ export default function EsrPage() {
   const [sendConfirmResult, setSendConfirmResult] = useState(null);
   const [showOtherLenderModal, setShowOtherLenderModal] = useState(false);
 
-  const [loading, setLoading]       = useState(true);
+  const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
-  const [esr, setEsr]               = useState(null);
-  const [proposals, setProposals]   = useState([]);
+  const [esr, setEsr] = useState(null);
+  const [proposals, setProposals] = useState([]);
 
   const load = useCallback(async () => {
     try {
@@ -531,9 +890,9 @@ export default function EsrPage() {
   );
 
   const lenders = esr?.lenders || [];
-  const eligibleLenders   = lenders.filter(l => l.is_eligible);
+  const eligibleLenders = lenders.filter(l => l.is_eligible);
   const ineligibleLenders = lenders.filter(l => !l.is_eligible);
-  
+
   // Use snapshot data for income summary if available, else fallback to main fields
   const monthlyIncome = esr?.input_snapshot?.selected_monthly_income
     || (esr?.combined_income ? esr.combined_income / 12 : null);
@@ -573,10 +932,10 @@ export default function EsrPage() {
           <div style={{ padding: '16px 24px', display: 'flex', gap: 40, flexWrap: 'wrap' }}>
             {[
               { label: 'Combined Annual Income', value: fmt(esr.combined_income) },
-              { label: 'Property Value',         value: fmt(esr.property_value) },
-              { label: 'Primary CIBIL',          value: esr.primary_cibil_score || '—' },
-              { label: 'Lowest CIBIL',           value: esr.lowest_cibil_score || '—' },
-              { label: 'Total EMI / Month',       value: fmt(esr.total_emi_per_month) }
+              { label: 'Property Value', value: fmt(esr.property_value) },
+              { label: 'Primary CIBIL', value: esr.primary_cibil_score || '—' },
+              { label: 'Lowest CIBIL', value: esr.lowest_cibil_score || '—' },
+              { label: 'Total EMI / Month', value: fmt(esr.total_emi_per_month) }
             ].map(({ label, value }) => (
               <div key={label}>
                 <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{label}</div>
@@ -617,8 +976,10 @@ export default function EsrPage() {
                         {lender.product_display_name || lender.product_type} · {lender.best_scheme_name}
                       </p>
                     </div>
-                    <span style={{ background: '#F0FFF4', color: 'var(--success)', padding: '4px 10px',
-                      borderRadius: 20, fontSize: 11, fontWeight: 700, border: '1px solid #9AE6B4' }}>✓ ELIGIBLE</span>
+                    <span style={{
+                      background: '#F0FFF4', color: 'var(--success)', padding: '4px 10px',
+                      borderRadius: 20, fontSize: 11, fontWeight: 700, border: '1px solid #9AE6B4'
+                    }}>✓ ELIGIBLE</span>
                   </div>
                 </div>
                 <div style={{ padding: '16px 20px' }}>
@@ -636,8 +997,8 @@ export default function EsrPage() {
                     ))}
                   </div>
 
-                  <CalcBreakdownPanel evaluations={lender.scheme_evaluations} monthlyIncome={monthlyIncome} />
-                  <SchemeDiagnosticsPanel evaluations={lender.scheme_evaluations} />
+                  <CalcBreakdownPanel evaluations={lender.scheme_evaluations} lender={lender} monthlyIncome={monthlyIncome} selectedSchemeName={lender.best_scheme_name} />
+                  <SchemeDiagnosticsPanel evaluations={lender.scheme_evaluations} lender={lender} />
 
                   {/* Proposal Actions */}
                   <LenderActions
@@ -668,20 +1029,24 @@ export default function EsrPage() {
                 <div style={{ padding: '16px 20px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0, color: 'var(--text-secondary)' }}>{lender.lender_name}</h3>
-                    <span style={{ background: 'var(--bg-elevated)', color: 'var(--text-tertiary)', padding: '3px 8px',
-                      borderRadius: 20, fontSize: 11, fontWeight: 600, border: '1px solid var(--border)' }}>✕ INELIGIBLE</span>
+                    <span style={{
+                      background: 'var(--bg-elevated)', color: 'var(--text-tertiary)', padding: '3px 8px',
+                      borderRadius: 20, fontSize: 11, fontWeight: 600, border: '1px solid var(--border)'
+                    }}>✕ INELIGIBLE</span>
                   </div>
                   <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8, lineHeight: 1.5 }}>
                     {lender.product_display_name || lender.product_type}
                   </p>
                   {lender.remarks && (
-                    <div style={{ marginTop: 10, padding: '8px 10px', background: '#FFF5F5', borderRadius: 6,
-                      fontSize: 11, color: 'var(--error)', border: '1px solid #FED7D7' }}>
+                    <div style={{
+                      marginTop: 10, padding: '8px 10px', background: '#FFF5F5', borderRadius: 6,
+                      fontSize: 11, color: 'var(--error)', border: '1px solid #FED7D7'
+                    }}>
                       ❌ {lender.remarks}
                     </div>
                   )}
-                  <CalcBreakdownPanel evaluations={lender.scheme_evaluations} monthlyIncome={monthlyIncome} />
-                  <SchemeDiagnosticsPanel evaluations={lender.scheme_evaluations} />
+                  <CalcBreakdownPanel evaluations={lender.scheme_evaluations} lender={lender} monthlyIncome={monthlyIncome} selectedSchemeName={lender.best_scheme_name} />
+                  <SchemeDiagnosticsPanel evaluations={lender.scheme_evaluations} lender={lender} />
                 </div>
               </div>
             ))}

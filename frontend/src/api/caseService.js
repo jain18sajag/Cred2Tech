@@ -41,6 +41,32 @@ export const caseService = {
     return response.data;
   },
 
+
+  downloadLoanApplicationSummary: async (caseId) => {
+    const response = await axiosInstance.get(`/cases/${caseId}/loan-application-summary.xlsx`, {
+      responseType: 'blob'
+    });
+
+    const disposition = response.headers?.['content-disposition'] || '';
+    const utf8FileName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+    const quotedFileName = disposition.match(/filename="?([^";]+)"?/i)?.[1];
+    const fileName = utf8FileName
+      ? decodeURIComponent(utf8FileName)
+      : (quotedFileName || 'Loan Application Summary.xlsx');
+
+    const blob = new Blob([response.data], {
+      type: response.headers?.['content-type'] || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', fileName);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  },
+
   getCoBorrowers: async (caseId) => {
     const response = await axiosInstance.get(`/cases/${caseId}/co-borrowers`);
     return response.data;
@@ -174,18 +200,5 @@ export const caseService = {
   getPartialDisbursements: async () => {
     const response = await axiosInstance.get('/disbursements/partial');
     return response.data;
-  },
-
-  // ─── Bulk Upload ──────────────────────────────────────────────────────────
-  downloadBulkUploadTemplate: async () => {
-    return axiosInstance.get('/cases/bulk-upload/template', { responseType: 'blob' });
-  },
-  
-  uploadBulkCases: async (file) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    return axiosInstance.post('/cases/bulk-upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    });
   }
 };
