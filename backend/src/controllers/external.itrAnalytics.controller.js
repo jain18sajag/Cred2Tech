@@ -374,14 +374,15 @@ async function sync(req, res) {
         });
 
         if (existing.case_id) {
-            await prisma.caseDataPullStatus.update({
+            await prisma.caseDataPullStatus.upsert({
                 where: { case_id: existing.case_id },
-                data: { itr_status: 'COMPLETE' }
+                create: { case_id: existing.case_id, itr_status: 'COMPLETED' },
+                update: { itr_status: 'COMPLETED' }
             });
 
             // Extract ESR financials asynchronously
             const { extractEsrFinancials } = require('../services/esrFinancials.service');
-            extractEsrFinancials(existing.case_id).catch(err => console.error(err));
+            extractEsrFinancials(existing.case_id, existing.tenant_id).catch(err => console.error(err));
         }
 
         res.status(200).json({

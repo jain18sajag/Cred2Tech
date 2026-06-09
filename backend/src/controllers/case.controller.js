@@ -390,8 +390,13 @@ async function uploadBulkCases(req, res) {
     const tenantId = req.user.tenant_id;
     const userId = req.user.id;
     const bulkCaseUploadService = require('../services/bulkCaseUpload.service');
+    const fs = require('fs');
 
-    const result = await bulkCaseUploadService.processUpload(req.file.buffer, tenantId, userId);
+    const fileBuffer = fs.readFileSync(req.file.path);
+    const result = await bulkCaseUploadService.processUpload(fileBuffer, tenantId, userId);
+    
+    // Clean up temp file
+    try { fs.unlinkSync(req.file.path); } catch(e) {}
 
     if (result.failedRows > 0 && result.createdCases === 0) {
       return res.status(400).json({

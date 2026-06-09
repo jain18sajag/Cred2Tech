@@ -2,10 +2,11 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { caseService } from '../api/caseService';
 import { toast } from 'react-hot-toast';
-import { Search, ChevronDown, AlertTriangle, Plus, MoreHorizontal } from 'lucide-react';
+import { Search, ChevronDown, AlertTriangle, Plus, MoreHorizontal, FileSpreadsheet, Upload } from 'lucide-react';
 import { formatDistanceToNow, parseISO } from 'date-fns';
 
 import CustomerTypeModal from '../components/customers/CustomerTypeModal';
+import BulkUploadModal from '../components/customers/BulkUploadModal';
 
 const STAGE_MAPPING = {
   'All': 'All',
@@ -74,6 +75,7 @@ export default function CustomersListPage() {
 
   // Modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isBulkUploadModalOpen, setIsBulkUploadModalOpen] = useState(false);
 
   // Pagination state
   const [page, setPage] = useState(1);
@@ -170,16 +172,28 @@ export default function CustomersListPage() {
               {stats.totalCases} active cases · {stats.totalCustomers} customers
             </div>
           </div>
-          <button 
-            onClick={() => setIsModalOpen(true)}
-            style={{
-              background: '#6366F1', color: 'white', border: 'none', borderRadius: 20,
-              padding: '8px 16px', fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6,
-              cursor: 'pointer'
-            }}
-          >
-            <Plus size={16} /> Add Customer
-          </button>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button 
+              onClick={() => setIsBulkUploadModalOpen(true)}
+              style={{
+                background: '#fff', color: '#374151', border: '1px solid #D1D5DB', borderRadius: 20,
+                padding: '8px 16px', fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6,
+                cursor: 'pointer'
+              }}
+            >
+              <Upload size={16} color="#4F46E5" /> Bulk Upload
+            </button>
+            <button 
+              onClick={() => setIsModalOpen(true)}
+              style={{
+                background: '#6366F1', color: 'white', border: 'none', borderRadius: 20,
+                padding: '8px 16px', fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6,
+                cursor: 'pointer'
+              }}
+            >
+              <Plus size={16} /> Add Customer
+            </button>
+          </div>
         </div>
       </div>
 
@@ -382,6 +396,11 @@ export default function CustomersListPage() {
         )}
       </div>
       <CustomerTypeModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} />
+      <BulkUploadModal
+        isOpen={isBulkUploadModalOpen}
+        onClose={() => setIsBulkUploadModalOpen(false)}
+        onSuccess={() => { setIsBulkUploadModalOpen(false); fetchPipeline(); }}
+      />
     </div>
   );
 }

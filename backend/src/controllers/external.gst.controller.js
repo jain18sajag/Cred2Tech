@@ -144,7 +144,7 @@ async function createGstRequest(req, res) {
                     status = 'AUTH_LINK_CREATED';
                 } else {
                     // IN_SYSTEM setup
-                    const callbackUrl = process.env.APP_BASE_URL + "/api/external/webhooks/signzy/gst";
+                    const callbackUrl = process.env.APP_BASE_URL + "/api/v1/external/webhooks/signzy/gst";
                     const payload = {
                         gstin,
                         username,
@@ -188,7 +188,7 @@ async function createGstRequest(req, res) {
                         pdf_url_requested: pdf_url || false,
                         emails: emails || [],
                         mobile_numbers: mobile_numbers || [],
-                        callback_url: mode === 'AUTH_LINK' || mode === 'IN_SYSTEM' ? (process.env.APP_BASE_URL + "/api/external/webhooks/signzy/gst") : null,
+                        callback_url: mode === 'AUTH_LINK' || mode === 'IN_SYSTEM' ? (process.env.APP_BASE_URL + "/api/v1/external/webhooks/signzy/gst") : null,
                         provider_request_id: requestId,
                         auth_link: authLink,
                         status: status,
@@ -370,7 +370,7 @@ async function syncGstData(req, res) {
 
                         // Extract ESR financials asynchronously
                         const { extractEsrFinancials } = require('../services/esrFinancials.service');
-                        extractEsrFinancials(dbReq.case_id).catch(err => console.error(err));
+                        extractEsrFinancials(dbReq.case_id, dbReq.tenant_id).catch(err => console.error(err));
                     }
                 }
             } catch (err) {
@@ -490,7 +490,7 @@ async function handleSignzyCallback(req, res) {
         if (updateData.status === 'REPORT_READY' && dbReq.case_id) {
             try {
                 const esrFinancialsService = require('../services/esrFinancials.service');
-                await esrFinancialsService.extractEsrFinancials(dbReq.case_id);
+                await esrFinancialsService.extractEsrFinancials(dbReq.case_id, dbReq.tenant_id);
                 console.log(`[Webhook] Triggered automated ESR Extraction for Case ID: ${dbReq.case_id}`);
             } catch (e) {
                 console.error(`[Webhook] ESR Extraction error post-webhook:`, e);

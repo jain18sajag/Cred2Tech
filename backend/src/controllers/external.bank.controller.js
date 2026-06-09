@@ -198,9 +198,10 @@ async function syncStatus(req, res) {
 
         if (mappedStatus === 'COMPLETED' || mappedStatus === 'FAILED') {
             if (existingRequest.case_id) {
-                await prisma.caseDataPullStatus.update({
+                await prisma.caseDataPullStatus.upsert({
                     where: { case_id: existingRequest.case_id },
-                    data: { bank_status: mappedStatus === 'COMPLETED' ? 'COMPLETE' : 'FAILED' }
+                    create: { case_id: existingRequest.case_id, bank_status: mappedStatus === 'COMPLETED' ? 'COMPLETE' : 'FAILED' },
+                    update: { bank_status: mappedStatus === 'COMPLETED' ? 'COMPLETE' : 'FAILED' }
                 });
 
                 if (mappedStatus === 'COMPLETED') {
