@@ -41,6 +41,22 @@ export const caseService = {
     return response.data;
   },
 
+  downloadBulkUploadTemplate: async () => {
+    const response = await axiosInstance.get('/cases/bulk-upload/template', {
+      responseType: 'blob'
+    });
+    return response;
+  },
+
+  uploadBulkCases: async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await axiosInstance.post('/cases/bulk-upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    return response;
+  },
+
 
   downloadLoanApplicationSummary: async (caseId) => {
     const response = await axiosInstance.get(`/cases/${caseId}/loan-application-summary.xlsx`, {
