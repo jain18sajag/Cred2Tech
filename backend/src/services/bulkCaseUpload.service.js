@@ -1,6 +1,7 @@
 const ExcelJS = require('exceljs');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { generateESR } = require('./esr.service');
 
 // Utility for parsing numbers safely
 const parseNum = (val, fallback = null) => {
@@ -28,6 +29,97 @@ const parseDate = (val) => {
   return isNaN(date.getTime()) ? null : date;
 };
 
+
+// Normalize customer category for Prisma enum CustomerCategory: MSME | SALARIED
+const normalizeCustomerCategory = (customerType, companyType) => {
+  const text = `${customerType || ''} ${companyType || ''}`.toUpperCase();
+  if (text.includes('INDIVIDUAL') || text.includes('SALARIED')) return 'SALARIED';
+  return 'MSME';
+};
+
+const normalizeIncomeMethod = (method) => {
+  const text = String(method || '').trim().toUpperCase();
+
+  // User requirement: pass "Any" so every configured method/scheme is evaluated.
+  // dynamicEligibility treats ANY as no filter/mismatch, so final eligibility can come
+  // from the best lender+scheme instead of the uploaded selected method.
+  if (!text || text === 'ANY' || text === 'ALL' || text === 'AUTO') return 'ANY';
+
+  if (text.includes('SALAR')) return 'SALARIED';
+  if (text.includes('BANK') || text.includes('ABB')) return 'BANKING';
+  if (text.includes('GST')) return 'GST';
+  if (text.includes('NET PROFIT') || text.includes('NPM') || text.includes('ITR')) return 'NET_PROFIT';
+  if (text.includes('GRP') || text.includes('GROSS')) return 'GRP';
+  if (text.includes('DSCR')) return 'DSCR';
+  return 'ANY';
+};
+
+const resolveBulkFinancials = (row) => {
+  const selectedMethod = normalizeIncomeMethod(row['Selected Income Method']);
+
+  const gstSales = parseNum(row['GST Average Monthly Sales'], 0) || parseNum(row['Last 12 Month Sales As Per GSTR'], 0) / 12 || parseNum(row['Annual Sales As Per GSTR'], 0) / 12 || 0;
+  const gstMargin = parseNum(row['GST Industry Margin'], null) ?? 0.10;
+  const gstIncome = gstSales > 0 ? gstSales * (gstMargin > 1 ? gstMargin / 100 : gstMargin) : 0;
+
+  const abb = parseNum(row['ABB'], 0) || parseNum(row['Average Bank Balance'], 0) || 0;
+  const bankDivisor = parseNum(row['Banking ABB Divisor'], 3) || 3;
+  const bankingIncome = abb > 0 ? abb / bankDivisor : 0;
+
+  const pat = parseNum(row['Net Profit After Tax Current Year'], 0) || 0;
+  const dep = parseNum(row['Depreciation Current Year'], 0) || 0;
+  const fin = parseNum(row['Interest On Loan Current Year'], 0) || 0;
+  const dir = parseNum(row['Director Remuneration Current Year'], 0) || 0;
+  const partner = parseNum(row['Partner Salary Current Year'], 0) || 0;
+  const netProfitIncome = Math.max(0, (pat + dep + fin + dir + partner) / 12);
+
+  const salary = parseNum(row['Net Salary Monthly'], 0) || parseNum(row['Gross Salary Monthly'], 0) || parseNum(row['Salary As Per Slip Monthly'], 0) || 0;
+
+  const selectedMonthlyIncomeFromSheet = parseNum(row['Selected Monthly Income'], 0) || 0;
+  const byMethod = {
+    SALARIED: salary,
+    BANKING: bankingIncome,
+    GST: gstIncome,
+    NET_PROFIT: netProfitIncome,
+    GRP: parseNum(row['Annual Gross Receipts'], 0) / 12 || 0,
+    DSCR: selectedMonthlyIncomeFromSheet
+  };
+
+  let selectedMonthlyIncome = selectedMethod === 'ANY' ? 0 : (byMethod[selectedMethod] || 0);
+  if (selectedMonthlyIncome <= 0) {
+    selectedMonthlyIncome = Math.max(selectedMonthlyIncomeFromSheet, salary, bankingIncome, gstIncome, netProfitIncome, byMethod.GRP, 0);
+  }
+
+  const effectiveMethod = selectedMethod === 'ANY'
+    ? 'ANY'
+    : (byMethod[selectedMethod] > 0
+      ? selectedMethod
+      : (selectedMonthlyIncome === bankingIncome && bankingIncome > 0 ? 'BANKING'
+        : selectedMonthlyIncome === gstIncome && gstIncome > 0 ? 'GST'
+          : selectedMonthlyIncome === netProfitIncome && netProfitIncome > 0 ? 'NET_PROFIT'
+            : selectedMonthlyIncome === salary && salary > 0 ? 'SALARIED'
+              : selectedMethod));
+
+  return {
+    effectiveMethod,
+    selectedMonthlyIncome,
+    salary,
+    gstSales,
+    gstMargin: gstSales > 0 ? (gstMargin > 1 ? gstMargin / 100 : gstMargin) : null,
+    gstIncome,
+    abb,
+    bankingIncome,
+    pat,
+    dep,
+    fin,
+    grossReceipts: parseNum(row['Annual Gross Receipts'], 0) || parseNum(row['Turnover As Per ITR'], 0) || 0,
+    netProfitIncome,
+    existingObligations: parseNum(row['Existing EMI Total'], 0) || 0,
+    iciciExposure: parseNum(row['ICICI Exposure'], 0) || 0,
+    hdfcExposure: parseNum(row['HDFC Exposure'], 0) || 0,
+    bureauScore: parseNum(row['Primary CIBIL Score']) || parseNum(row['Lowest CIBIL Score']) || null
+  };
+};
+
 class BulkCaseUploadService {
   /**
    * Generates the multi-sheet Excel Template
@@ -45,7 +137,7 @@ class BulkCaseUploadService {
     sheetInstructions.addRow(['- Co-applicants, manual incomes, and obligations are linked to the case using "Case Ref".']);
     sheetInstructions.addRow(['- Blank optional fields are allowed.']);
     sheetInstructions.addRow(['- PAN and GST formats must be exact. Dates as yyyy-mm-dd or Excel dates.']);
-    sheetInstructions.addRow(['- After successful upload, cases will be visible in the pipeline. Click Generate ESR to apply banking/GST logic.']);
+    sheetInstructions.addRow(['- After successful upload, cases will be visible in the pipeline. ESR will auto-generate and evaluate all methods when Selected Income Method is Any.']);
     sheetInstructions.getRow(1).font = { bold: true };
 
     // 2. Cases Sheet
@@ -61,9 +153,9 @@ class BulkCaseUploadService {
     sheetCases.addRow(casesHeaders);
     sheetCases.getRow(1).font = { bold: true };
     sheetCases.views = [{ state: 'frozen', ySplit: 1 }];
-    
+
     // Add Sample Case
-    sheetCases.addRow(['CASE-UPLOAD-001', 'Proprietorship', 'EXCEL_UPLOAD', '', '', 'BL', 'Any', 'GST', 5000000, 60, 14, 'LEAD_CREATED', 'Sample Uploaded Case', 'Acme Trading', 'Rajesh Kumar', 'PRIMARY_BORROWER', '9876543210', 'rajesh@acme.com', 'ABCDE1234F', '', '', 'Male', '', '', '123 Acme St', 'Mumbai', 'Maharashtra', '400001', '', '', '', '', 'Sole Owner', 'Proprietorship', 'Acme Trading', '9876543210', 'info@acme.com', 'ABCDE1234F', '27ABCDE1234F1Z5', '', '', 'Trading', '5', 10000000, '123 Acme St', 'Mumbai', 'Maharashtra', '400001', 'Commercial - Office / Shop', 'Self Occupied', 'Company Owned', 15000000, '123 Acme St', 'Mumbai', 'Maharashtra', '400001', 'Acme Trading', 'Clear', 0, '', 0, 0, 0, 0, 1200000, 1000000, 200000, 150000, 50000, 40000, 0, 0, 0, 0, 10000000, 10000000, 833333, 9000000, 9000000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 750, 750, 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending']);
+    sheetCases.addRow(['CASE-UPLOAD-001', 'Proprietorship', 'EXCEL_UPLOAD', '', '', 'BL', 'Any', 'Any', 0, 0, 0, 'LEAD_CREATED', 'Sample Uploaded Case', 'Acme Trading', 'Rajesh Kumar', 'PRIMARY_BORROWER', '9876543210', 'rajesh@acme.com', 'ABCDE1234F', '', '', 'Male', '', '', '123 Acme St', 'Mumbai', 'Maharashtra', '400001', '', '', '', '', 'Sole Owner', 'Proprietorship', 'Acme Trading', '9876543210', 'info@acme.com', 'ABCDE1234F', '27ABCDE1234F1Z5', '', '', 'Trading', '5', 10000000, '123 Acme St', 'Mumbai', 'Maharashtra', '400001', 'Commercial - Office / Shop', 'Self Occupied', 'Company Owned', 15000000, '123 Acme St', 'Mumbai', 'Maharashtra', '400001', 'Acme Trading', 'Clear', 0, '', 0, 0, 0, 0, 1200000, 1000000, 200000, 150000, 50000, 40000, 0, 0, 0, 0, 10000000, 10000000, 833333, 9000000, 9000000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 750, 750, 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending']);
 
     // 3. CoApplicants Sheet
     const sheetCoApp = workbook.addWorksheet('CoApplicants');
@@ -116,7 +208,7 @@ class BulkCaseUploadService {
     // Extract sheets
     const sheetCases = workbook.getWorksheet('Cases');
     if (!sheetCases) throw new Error('Missing "Cases" sheet in the workbook.');
-    
+
     const sheetCoApp = workbook.getWorksheet('CoApplicants');
     const sheetIncome = workbook.getWorksheet('ManualIncome');
     const sheetObligations = workbook.getWorksheet('BureauObligations');
@@ -158,21 +250,22 @@ class BulkCaseUploadService {
     for (let i = 0; i < casesList.length; i++) {
       const row = casesList[i];
       const caseRef = row['Case Ref']?.toString().trim();
-      
+
       try {
         if (!caseRef) throw new Error('Missing Case Ref');
-        
+
         const pan = (row['PAN'] || row['Company PAN'] || '').toString().trim().toUpperCase();
         if (!pan) throw new Error('Customer/Applicant PAN is missing');
         if (!/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(pan)) throw new Error(`Invalid PAN Format: ${pan}`);
-        
+
         // Ensure uniqueness of Case Ref in this tenant
         const existingCaseRef = await prisma.case.findFirst({
-          where: { tenant_id: tenantId, dsa_notes: { contains: `[Case Ref: ${caseRef}]` } } 
+          where: { tenant_id: tenantId, dsa_notes: { contains: `[Case Ref: ${caseRef}]` } }
           // We store case_ref in dsa_notes or external reference if available
         });
         if (existingCaseRef) throw new Error(`Case Ref ${caseRef} already exists in this tenant`);
 
+        let createdInfo = null;
         await prisma.$transaction(async (tx) => {
           // 1. Find or Create Customer
           let customer = await tx.customer.findFirst({
@@ -183,7 +276,7 @@ class BulkCaseUploadService {
             customer = await tx.customer.create({
               data: {
                 tenant_id: tenantId,
-                category: row['Customer Type'] === 'Individual' ? 'INDIVIDUAL' : 'MSME',
+                category: normalizeCustomerCategory(row['Customer Type'], row['Company Type']),
                 business_pan: pan,
                 business_name: row['Company Name'] || row['Customer Name'] || row['Applicant Name'],
                 business_mobile: String(row['Company Mobile'] || row['Mobile'] || '').substring(0, 15),
@@ -199,7 +292,7 @@ class BulkCaseUploadService {
           // 2. Determine Stage
           const validStages = ['LEAD_CREATED', 'DATA_COLLECTION', 'LEAD_SENT_TO_LENDER', 'ESR_GENERATED', 'APPROVED', 'PARTLY_DISBURSED', 'DISBURSED', 'REJECTED', 'CLOSED', 'DRAFT'];
           let mappedStage = validStages.includes(row['Case Stage']) ? row['Case Stage'] : 'DRAFT';
-          
+
           const legacyMap = {
             'LEAD_SENT': 'LEAD_SENT_TO_LENDER',
             'LOGIN_DONE': 'ESR_GENERATED',
@@ -216,7 +309,7 @@ class BulkCaseUploadService {
               customer: { connect: { id: customer.id } },
               created_by: { connect: { id: userId } },
               product_type: row['Product Type'],
-              loan_amount: parseNum(row['Required Loan Amount']),
+              loan_amount: 0,
               dsa_notes: `[Bulk Upload] [Case Ref: ${caseRef}] ${row['Remarks'] || ''}`,
               esr_generated: false,
               stage: mappedStage,
@@ -255,24 +348,44 @@ class BulkCaseUploadService {
           }
 
           // 6. Create ESR Financials
+          const bulkFinancials = resolveBulkFinancials(row);
+          const now = new Date();
           await tx.caseEsrFinancials.create({
             data: {
               case_id: newCase.id,
-              selected_income_method: row['Selected Income Method'] || 'SALARIED',
-              selected_monthly_income: parseNum(row['Selected Monthly Income'], 0),
-              salaried_income: parseNum(row['Net Salary Monthly'], 0),
-              itr_pat: parseNum(row['Net Profit After Tax Current Year'], 0),
-              itr_depreciation: parseNum(row['Depreciation Current Year'], 0),
-              itr_finance_cost: parseNum(row['Interest On Loan Current Year'], 0),
-              itr_gross_receipts: parseNum(row['Annual Gross Receipts'], 0),
-              gst_avg_monthly_sales: parseNum(row['GST Average Monthly Sales'], 0),
-              bank_avg_balance: parseNum(row['Average Bank Balance'], 0),
-              existing_obligations: parseNum(row['Existing EMI Total'], 0),
-              icici_exposure: parseNum(row['ICICI Exposure'], 0),
-              bureau_score: parseNum(row['Primary CIBIL Score']),
-              requested_loan_amount: parseNum(row['Required Loan Amount']),
-              requested_tenure_months: parseNum(row['Required Tenure Months'], 60),
-              product_type: row['Product Type']
+              selected_income_method: bulkFinancials.effectiveMethod,
+              selected_monthly_income: bulkFinancials.selectedMonthlyIncome,
+
+              // Method-specific income fields consumed by dynamicEligibility.service.js
+              salaried_income: bulkFinancials.salary,
+              gst_avg_monthly_sales: bulkFinancials.gstSales,
+              gst_industry_type: row['Industry Type'] || 'Retail Business',
+              gst_industry_margin: bulkFinancials.gstMargin,
+              gst_income: bulkFinancials.gstIncome,
+              bank_avg_balance: bulkFinancials.abb,
+              bank_monthly_income: bulkFinancials.bankingIncome,
+              banking_income: bulkFinancials.bankingIncome,
+              net_profit_income: bulkFinancials.netProfitIncome,
+
+              itr_pat: bulkFinancials.pat,
+              itr_depreciation: bulkFinancials.dep,
+              itr_finance_cost: bulkFinancials.fin,
+              itr_gross_receipts: bulkFinancials.grossReceipts,
+
+              existing_obligations: bulkFinancials.existingObligations,
+              icici_exposure: bulkFinancials.iciciExposure,
+              bureau_score: bulkFinancials.bureauScore,
+
+              // User requested bulk upload required amount / tenure / ROI should always be 0
+              requested_loan_amount: 0,
+              requested_tenure_months: 0,
+              product_type: row['Product Type'] || 'LAP',
+              property_value: parseNum(row['Market Value'], 0),
+              property_type: row['Property Type'] || null,
+              occupancy_type: row['Occupancy Status'] || null,
+
+              extraction_status: 'COMPLETED',
+              extracted_at: now
             }
           });
 
@@ -300,7 +413,7 @@ class BulkCaseUploadService {
           for (const inc of relatedIncome) {
             const incPan = inc['Applicant PAN']?.toString().trim().toUpperCase();
             const matchedApp = allApplicants.find(a => a.pan_number === incPan) || primaryApp;
-            
+
             await tx.caseIncomeEntry.create({
               data: {
                 case_id: newCase.id,
@@ -319,7 +432,7 @@ class BulkCaseUploadService {
           for (const obl of relatedObligations) {
             const oblPan = obl['Applicant PAN']?.toString().trim().toUpperCase();
             const matchedApp = allApplicants.find(a => a.pan_number === oblPan) || primaryApp;
-            
+
             await tx.caseCreditObligation.create({
               data: {
                 case_id: newCase.id,
@@ -357,9 +470,44 @@ class BulkCaseUploadService {
             }
           });
 
-          result.createdCases++;
-          result.createdCaseRefs.push({ caseRef, caseId: newCase.id, customerName: customer.business_name });
+          createdInfo = { caseRef, caseId: newCase.id, customerName: customer.business_name };
         }); // End Transaction
+
+        // 11. Auto-generate ESR after the case + bulk financial snapshot is committed.
+        // This lets the upload response show final eligibility immediately.
+        let esrSummary = null;
+        try {
+          const esrResult = await generateESR(createdInfo.caseId, userId, tenantId);
+          const lenders = Array.isArray(esrResult?.lenders) ? esrResult.lenders : [];
+          const eligibleLenders = lenders.filter(l => l.is_eligible);
+          const best = eligibleLenders.sort((a, b) => (b.final_eligible_loan_amount || 0) - (a.final_eligible_loan_amount || 0))[0]
+            || lenders.sort((a, b) => (b.final_eligible_loan_amount || 0) - (a.final_eligible_loan_amount || 0))[0]
+            || null;
+
+          esrSummary = {
+            esrGenerated: true,
+            eligibleCount: esrResult?.eligible_count || eligibleLenders.length,
+            totalLendersEvaluated: esrResult?.total_count || lenders.length,
+            finalEligibilityStatus: best?.is_eligible ? 'Eligible' : 'Ineligible',
+            bestLender: best?.lender_name || null,
+            bestScheme: best?.best_scheme_name || best?.scheme_name || null,
+            finalEligibleLoanAmount: best?.final_eligible_loan_amount || 0,
+            roiMin: best?.roi_min || null,
+            roiMax: best?.roi_max || null,
+            tenureMonths: best?.max_tenure_months || null,
+            ineligibilityReason: best?.ineligibility_reason || null
+          };
+        } catch (esrErr) {
+          esrSummary = {
+            esrGenerated: false,
+            finalEligibilityStatus: 'ESR_FAILED',
+            finalEligibleLoanAmount: 0,
+            error: esrErr.message
+          };
+        }
+
+        result.createdCases++;
+        result.createdCaseRefs.push({ ...createdInfo, esr: esrSummary });
 
       } catch (err) {
         result.failedRows++;

@@ -9,6 +9,12 @@ export default function BulkUploadModal({ isOpen, onClose, onSuccess }) {
   const [result, setResult] = useState(null);
   const fileInputRef = useRef(null);
 
+  const formatINR = (amount) => {
+    const value = Number(amount || 0);
+    return value.toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 });
+  };
+
+
   if (!isOpen) return null;
 
   const handleDownloadTemplate = async () => {
@@ -49,7 +55,7 @@ export default function BulkUploadModal({ isOpen, onClose, onSuccess }) {
       const data = response.data;
       setResult(data);
       if (data.success) {
-        toast.success(`Successfully imported ${data.summary.createdCases} cases!`);
+        toast.success(`Imported ${data.summary.createdCases} cases. ESR generated for ${data.summary.esrGeneratedCases || 0}.`);
         if (onSuccess) onSuccess();
       } else {
         toast.error('Failed to import cases. Check errors.');
@@ -96,7 +102,7 @@ export default function BulkUploadModal({ isOpen, onClose, onSuccess }) {
             <div style={{ fontSize: 13, color: '#6B7280', marginBottom: 12 }}>
               Download the official multi-sheet Excel template. Follow instructions in the first sheet.
             </div>
-            <button 
+            <button
               onClick={handleDownloadTemplate}
               style={{
                 display: 'flex', alignItems: 'center', gap: 8, background: '#F3F4F6', border: '1px solid #D1D5DB',
@@ -112,7 +118,7 @@ export default function BulkUploadModal({ isOpen, onClose, onSuccess }) {
           {/* Step 2: Upload File */}
           <div>
             <div style={{ fontSize: 14, fontWeight: 600, color: '#374151', marginBottom: 8 }}>Step 2: Upload Filled File</div>
-            <div 
+            <div
               style={{
                 border: '2px dashed #D1D5DB', borderRadius: 12, padding: 32, textAlign: 'center',
                 background: '#F9FAFB', cursor: 'pointer'
@@ -126,28 +132,56 @@ export default function BulkUploadModal({ isOpen, onClose, onSuccess }) {
               <div style={{ fontSize: 12, color: '#6B7280' }}>
                 {file ? file.name : 'Excel (.xlsx) files only'}
               </div>
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                onChange={handleFileChange} 
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
                 accept=".xlsx"
-                style={{ display: 'none' }} 
+                style={{ display: 'none' }}
               />
             </div>
           </div>
 
           {/* Results Summary */}
           {result && (
-            <div style={{ marginTop: 24, padding: 16, background: result.failedRows > 0 ? '#FEF2F2' : '#F0FDF4', borderRadius: 8, border: `1px solid ${result.failedRows > 0 ? '#FCA5A5' : '#BBF7D0'}` }}>
-              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6, color: result.failedRows > 0 ? '#991B1B' : '#166534' }}>
-                {result.failedRows > 0 ? <AlertCircle size={16} /> : <CheckCircle size={16} />}
+            <div style={{ marginTop: 24, padding: 16, background: (result.summary?.failedRows || 0) > 0 ? '#FEF2F2' : '#F0FDF4', borderRadius: 8, border: `1px solid ${(result.summary?.failedRows || 0) > 0 ? '#FCA5A5' : '#BBF7D0'}` }}>
+              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6, color: (result.summary?.failedRows || 0) > 0 ? '#991B1B' : '#166534' }}>
+                {(result.summary?.failedRows || 0) > 0 ? <AlertCircle size={16} /> : <CheckCircle size={16} />}
                 Upload Complete
               </div>
               <div style={{ fontSize: 13, color: '#374151', display: 'flex', gap: 16 }}>
                 <span>Total: <b>{result.summary?.totalRows || 0}</b></span>
                 <span style={{ color: '#059669' }}>Success: <b>{result.summary?.createdCases || 0}</b></span>
                 <span style={{ color: '#DC2626' }}>Failed: <b>{result.summary?.failedRows || 0}</b></span>
+                <span style={{ color: '#4F46E5' }}>ESR Done: <b>{result.summary?.esrGeneratedCases || 0}</b></span>
+                <span style={{ color: '#B45309' }}>ESR Failed: <b>{result.summary?.esrFailedCases || 0}</b></span>
               </div>
+              {result.createdCases && result.createdCases.length > 0 && (
+                <div style={{ marginTop: 12, maxHeight: 180, overflowY: 'auto', fontSize: 11, color: '#111827', background: '#fff', padding: 8, borderRadius: 4, border: '1px solid #BBF7D0' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid #D1FAE5', textAlign: 'left' }}>
+                        <th style={{ padding: 4 }}>Case Ref</th>
+                        <th style={{ padding: 4 }}>Customer</th>
+                        <th style={{ padding: 4 }}>ESR</th>
+                        <th style={{ padding: 4 }}>Eligible Lenders</th>
+                        <th style={{ padding: 4 }}>Final Loan Eligibility</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {result.createdCases.map((c, i) => (
+                        <tr key={i} style={{ borderBottom: '1px solid #ECFDF5' }}>
+                          <td style={{ padding: 4 }}>{c.caseRef}</td>
+                          <td style={{ padding: 4 }}>{c.customerName}</td>
+                          <td style={{ padding: 4, color: c.esrGenerated ? '#059669' : '#DC2626', fontWeight: 700 }}>{c.esrGenerated ? 'Generated' : 'Failed'}</td>
+                          <td style={{ padding: 4 }}>{c.eligibleLenderCount || 0}/{c.totalLenderCount || 0}</td>
+                          <td style={{ padding: 4, fontWeight: 700 }}>{formatINR(c.finalLoanEligibility)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
               {result.errors && result.errors.length > 0 && (
                 <div style={{ marginTop: 12, maxHeight: 150, overflowY: 'auto', fontSize: 11, color: '#DC2626', background: '#fff', padding: 8, borderRadius: 4, border: '1px solid #FCA5A5' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -176,14 +210,14 @@ export default function BulkUploadModal({ isOpen, onClose, onSuccess }) {
 
         {/* Footer */}
         <div style={{ padding: '16px 24px', background: '#F9FAFB', borderTop: '1px solid #E5E7EB', display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-          <button 
+          <button
             onClick={onClose}
             style={{ padding: '8px 16px', background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, fontSize: 14, fontWeight: 600, color: '#374151', cursor: 'pointer' }}
           >
             {result ? 'Close' : 'Cancel'}
           </button>
           {!result && (
-            <button 
+            <button
               onClick={processUpload}
               disabled={!file || uploading}
               style={{
@@ -191,7 +225,7 @@ export default function BulkUploadModal({ isOpen, onClose, onSuccess }) {
                 opacity: (!file || uploading) ? 0.6 : 1
               }}
             >
-              {uploading ? 'Processing...' : 'Upload & Import'}
+              {uploading ? 'Processing ESR...' : 'Upload, Import & Generate ESR'}
             </button>
           )}
         </div>

@@ -102,7 +102,8 @@ function getParamInteger(paramMap, key) {
 
 function normalizeIncomeMethod(method) {
     if (!method) return null;
-    const m = method.toUpperCase();
+    const m = String(method).trim().toUpperCase();
+    if (m === 'ANY' || m === 'ALL' || m === 'AUTO') return null;
     if (m === 'BANKING') return 'Banking';
     if (m === 'GST') return 'GST';
     if (m === 'NET_PROFIT') return 'Net Profit Method';
@@ -2856,7 +2857,7 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
     const lenderResults = [];
 
     // Initialize ESR Trace Logger
-    const logger = new EsrTraceLogger();
+    const logger = new EsrTraceLogger({ enabled: true });
     logger.startTrace(case_id, esr.case_entity?.tenant_id, esr.product_type, {
         'Selected Monthly Income': `₹${(esr.selected_monthly_income || 0).toLocaleString()}`,
         'Property Value': esr.property_value ? `₹${esr.property_value.toLocaleString()}` : 'N/A',
