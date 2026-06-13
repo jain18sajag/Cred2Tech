@@ -92,7 +92,7 @@ async function getReusableSummary(customer_id, tenant_id) {
 }
 
 async function createOrAttachCustomer(data, tenant_id, user_id) {
-  const { business_pan, business_mobile, business_email, business_name, customer_id } = data;
+  const { business_pan, business_mobile, business_email, business_name, customer_id, is_professional, profession_type } = data;
   const normalizedPan = business_pan?.trim().toUpperCase();
 
   if (customer_id) {
@@ -109,7 +109,9 @@ async function createOrAttachCustomer(data, tenant_id, user_id) {
       data: {
         business_mobile,
         business_email,
-        business_name
+        business_name,
+        is_professional: is_professional !== undefined ? is_professional : existing.is_professional,
+        profession_type: profession_type !== undefined ? profession_type : existing.profession_type
       }
     });
   }
@@ -131,6 +133,8 @@ async function createOrAttachCustomer(data, tenant_id, user_id) {
         business_mobile,
         business_email,
         business_name,
+        is_professional: is_professional || false,
+        profession_type: profession_type || null,
         created_by_user_id: user_id
       }
     });
@@ -141,7 +145,9 @@ async function createOrAttachCustomer(data, tenant_id, user_id) {
       data: {
         business_mobile: business_mobile || customer.business_mobile,
         business_email: business_email || customer.business_email,
-        business_name: business_name || customer.business_name
+        business_name: business_name || customer.business_name,
+        is_professional: is_professional !== undefined ? is_professional : customer.is_professional,
+        profession_type: profession_type !== undefined ? profession_type : customer.profession_type
       }
     });
   }

@@ -286,6 +286,7 @@ async function executePaidApi({ apiCode, tenantId, userId, customerId, caseId, r
           credits_used: 0,
           status: 'SUCCESS',
           request_payload: requestPayload,
+          response_payload: result,
           idempotency_key: idempotencyKey
         }
       });
@@ -351,11 +352,15 @@ async function executePaidApi({ apiCode, tenantId, userId, customerId, caseId, r
   }
 
   // 4. Update usage log payload asynchronously to prevent blocking or refunding on local DB fails
-  if (requestPayload) {
+  if (requestPayload || result) {
+    const updateData = {};
+    if (requestPayload) updateData.request_payload = requestPayload;
+    if (result) updateData.response_payload = result;
+
     prisma.apiUsageLog.update({
       where: { id: deductionResult.usageLog.id },
-      data: { request_payload: requestPayload }
-    }).catch(e => console.error("Failed to commit requestPayload to ApiUsageLog:", e));
+      data: updateData
+    }).catch(e => console.error("Failed to commit payloads to ApiUsageLog:", e));
   }
   return result;
 }

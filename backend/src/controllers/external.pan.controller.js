@@ -281,3 +281,69 @@ exports.fetchPanIntelligence = async (req, res) => {
         });
     }
 };
+
+const signzyService = require('../services/externalApis/signzy.service');
+
+exports.verifyPan = async (req, res) => {
+    try {
+        const { pan, customer_id, case_id, is_coapplicant, applicant_id } = req.body;
+        const tenantId = req.user.tenant_id;
+        const userId = req.user.id;
+
+        if (!pan) return res.status(400).json({ error: 'PAN is required' });
+        if (!customer_id) return res.status(400).json({ error: 'Customer ID is required' });
+
+        const customer = await prisma.customer.findUnique({ where: { id: customer_id } });
+        if (!customer || customer.tenant_id !== tenantId) {
+            return res.status(403).json({ error: 'Access denied to this customer' });
+        }
+
+        const idempotencyKey = `SIGNZY_PAN_${customer_id}_${pan}`;
+        
+        // Execute paid API wrapper using PAN_FETCH billing bucket for now
+        const result = await executePaidApi({
+            apiCode: 'PAN_FETCH',
+            tenantId,
+            userId,
+            customerId: customer_id,
+            caseId: case_id || null,
+            requestPayload: { customer_id, pan },
+            idempotencyKey,
+            handlerFunction: async () => {
+                const apiResponse = await signzyService.verifyPanSimple(pan);
+                
+                // Save name and dob
+                if (is_coapplicant && applicant_id) {
+                    await prisma.applicant.update({
+                        where: { id: applicant_id },
+                        data: {
+                            name: apiResponse.name,
+                            dob: apiResponse.dob
+                        }
+                    });
+                } else {
+                    await prisma.customer.update({
+                        where: { id: customer_id },
+                        data: {
+                            business_name: apiResponse.name || customer.business_name,
+                            dob: apiResponse.dob || customer.dob
+                        }
+                    });
+                }
+
+                return {
+                   status: "SUCCESS",
+                   name: apiResponse.name,
+                   dob: apiResponse.dob,
+                   panStatus: apiResponse.panStatus,
+                   rawResponse: apiResponse.rawResponse
+                };
+            }
+        });
+
+        res.json(result);
+    } catch (error) {
+        console.error('PAN Verify error:', error);
+        res.status(500).json({ status: "FAILED", error_message: error.message });
+    }
+};

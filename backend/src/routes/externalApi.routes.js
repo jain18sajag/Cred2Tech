@@ -34,7 +34,8 @@ router.post('/gst/submit-otp', gstController.submitGstOtp);
 router.post('/gst/sync', gstController.syncGstData);
 router.get('/gst/requests', gstController.getRequestDetails);
 
-// New PAN Integration
+// 4. PAN Intelligence & Verify
+router.post('/pan/verify', panController.verifyPan);
 router.post('/pan/fetch', panController.fetchPanIntelligence);
 
 module.exports = router;

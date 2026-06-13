@@ -4,19 +4,12 @@ const fs = require('fs');
 const path = require('path');
 const { processSalarySlipOcr: mockProcessSalarySlipOcr } = require('./salaryOcr.service');
 
-// Normalize Base URL to avoid trailing slashes
-const getBaseUrl = () => {
-    let url = process.env.FRACTO_OCR_BASE_URL || 'https://prod-ml.fracto.tech';
-    return url.replace(/\/+$/, '');
-};
-
-const getApiKey = () => process.env.FRACTO_OCR_API_KEY;
-const getParserApp = () => process.env.FRACTO_SALARY_PARSER_APP;
-const getModel = () => process.env.FRACTO_OCR_MODEL || 'v1';
-const getExtraAccuracy = () => process.env.FRACTO_OCR_EXTRA_ACCURACY === 'true' ? 'true' : 'false';
+// Use the new Cred2Tech OCR URL and API Key
+const getBaseUrl = () => process.env.CRED2TECH_OCR_BASE_URL || 'https://ocr.api.cred2tech.com';
+const getApiKey = () => process.env.CRED2TECH_OCR_API_KEY || 'Fu65SDEeUKmXNvfZdBzwM_NNpuJ_LFYgKsPrfbvKBrQ';
 
 /**
- * Validates the file extension and size before hitting Fracto API.
+ * Validates the file extension and size before hitting API.
  */
 const validateFile = (filePath, mimeType) => {
     if (!fs.existsSync(filePath)) {
@@ -38,10 +31,10 @@ const validateFile = (filePath, mimeType) => {
 };
 
 /**
- * Maps Fracto HTTP/Axios errors to user-friendly messages.
+ * Maps HTTP/Axios errors to user-friendly messages.
  */
-const handleFractoError = (error) => {
-    console.error('[fractoSalaryOcr.service] Vendor API Error:', error.response?.data || error.message);
+const handleOcrError = (error) => {
+    console.error('[fractoSalaryOcr.service] Cred2Tech API Error:', error.response?.data || error.message);
 
     if (error.response) {
         const status = error.response.status;
@@ -56,58 +49,57 @@ const handleFractoError = (error) => {
             if (msg.includes('size')) {
                 return new Error('File size exceeds 10 MB.');
             }
-            return new Error(`Invalid OCR configuration or file payload. Vendor says: ${rawMsg}`);
+            return new Error(`Invalid OCR payload. Vendor says: ${rawMsg}`);
         }
-        if (status === 403) {
-            if (msg.includes('funds') || msg.includes('wallet') || msg.includes('balance')) {
-                return new Error('OCR service is temporarily unavailable.');
-            }
-            return new Error('OCR service is not configured correctly.');
+        if (status === 403 || status === 401) {
+            return new Error('OCR service is not configured correctly (Invalid API Key).');
+        }
+        if (status === 422) {
+            const detail = data.detail || JSON.stringify(data);
+            return new Error(`OCR service validation error: ${detail}`);
         }
         if (status >= 500) {
             return new Error('OCR service is temporarily unavailable.');
         }
+        
+        const detail = data.detail || JSON.stringify(data);
+        return new Error(`OCR service error (${status}): ${detail}`);
     }
 
     return new Error('Unknown OCR error occurred.');
 };
 
 /**
- * Normalizes Fracto parsed data safely, guarding against missing fields.
+ * Normalizes Cred2Tech parsed data.
  */
 const normalizeSalarySlipResponse = (parsedData) => {
     if (!parsedData || typeof parsedData !== 'object') {
         return { gross_salary: null, net_salary: null, deductions: null, employer_name: null, employee_name: null };
     }
 
-    // Attempt to extract fields dynamically (defensive matching against varying key names)
-    const findValue = (keys, isNumeric = false) => {
-        // Expand keys to include PascalCase and lowercase versions
-        const allKeys = [...keys];
-        keys.forEach(k => {
-            allKeys.push(k.charAt(0).toUpperCase() + k.slice(1));
-            allKeys.push(k.toLowerCase());
-        });
-
-        for (const key of allKeys) {
-            if (parsedData[key] !== undefined && parsedData[key] !== null) {
-                let val = parsedData[key];
-                if (isNumeric && typeof val === 'string') {
-                    // Strip everything except numbers and decimal points
-                    const parsedNum = parseFloat(val.replace(/[^0-9.]/g, ''));
-                    return !isNaN(parsedNum) ? parsedNum : null;
-                }
-                return val;
+    const extractValue = (obj) => {
+        if (obj && typeof obj === 'object' && obj.value !== undefined) {
+            const val = obj.value;
+            if (typeof val === 'string') {
+                const parsedNum = parseFloat(val.replace(/[^0-9.-]/g, ''));
+                return !isNaN(parsedNum) ? parsedNum : val;
             }
+            return val;
         }
         return null;
     };
 
-    const gross_salary = findValue(['gross_salary', 'Gross_salary', 'grossPay', 'grossEarnings', 'grossAmount'], true);
-    const net_salary = findValue(['net_salary', 'Net_salary', 'netPay', 'salary payable', 'netAmount'], true);
-    const deductions = findValue(['deductions', 'Deductions', 'total_deductions', 'totalDeductions'], true);
-    const employer_name = findValue(['employer_name', 'Employer_name', 'company_name', 'organization', 'companyName']);
-    const employee_name = findValue(['employee_name', 'Employee_name', 'name', 'employeeName']);
+    const gross_salary = extractValue(parsedData.gross_salary);
+    const net_salary = extractValue(parsedData.net_salary);
+    
+    // Deductions usually aren't returned explicitly by this endpoint, so we derive it if both gross and net are present
+    let deductions = extractValue(parsedData.deductions);
+    if (deductions === null && gross_salary !== null && net_salary !== null) {
+        deductions = gross_salary - net_salary;
+    }
+
+    const employer_name = extractValue(parsedData.employer_name) || null; // Left null as it's not in the example payload
+    const employee_name = extractValue(parsedData.name);
 
     return {
         gross_salary,
@@ -119,7 +111,7 @@ const normalizeSalarySlipResponse = (parsedData) => {
 };
 
 /**
- * Synchronous Upload to Fracto (blocks until parsed)
+ * Synchronous Upload to Cred2Tech
  */
 async function processSalarySlipSync({ filePath, mimeType, originalName, document_id, case_id, applicant_id, month, year, tenant_id }) {
     if (process.env.FRACTO_OCR_MODE === 'mock') {
@@ -131,78 +123,63 @@ async function processSalarySlipSync({ filePath, mimeType, originalName, documen
 
     const form = new FormData();
     form.append('file', fs.createReadStream(filePath), { contentType: mimeType, filename: originalName });
-    form.append('parserApp', getParserApp());
-    form.append('model', getModel());
-    form.append('extra_accuracy', getExtraAccuracy());
 
     try {
-        const response = await axios.post(`${getBaseUrl()}/upload-file-smart-ocr`, form, {
+        const response = await axios.post(`${getBaseUrl()}/extract?date_order=auto`, form, {
             headers: {
-                'x-api-key': getApiKey(),
+                'X-API-Key': getApiKey(),
+                'accept': 'application/json',
                 ...form.getHeaders()
             },
-            timeout: 60000 // 60s timeout for sync OCR
+            timeout: 60000 
         });
 
         const data = response.data;
-        const normalized = normalizeSalarySlipResponse(data.parsedData);
+        const normalized = normalizeSalarySlipResponse(data);
 
         return {
             status: 'COMPLETED',
-            vendor_job_id: data.job_id || null,
+            vendor_job_id: `C2T-SYNC-${Date.now()}`,
             raw_ocr_response: data,
             extracted_json: normalized,
             ...normalized
         };
     } catch (error) {
-        throw handleFractoError(error);
+        throw handleOcrError(error);
     }
 }
 
 /**
- * Asynchronous Upload to Fracto (returns Job ID immediately)
+ * Asynchronous Upload (Shim for Synchronous API)
  */
-async function startSalarySlipAsync({ filePath, mimeType, originalName, document_id, case_id, applicant_id, month, year, tenant_id }) {
+async function startSalarySlipAsync(params) {
     if (process.env.FRACTO_OCR_MODE === 'mock') {
         console.log('[fractoSalaryOcr.service] Running in MOCK mode.');
-        return mockProcessSalarySlipOcr({ tenant_id, case_id, applicant_id, document_id, month, year });
+        return mockProcessSalarySlipOcr({ ...params });
     }
 
-    validateFile(filePath, mimeType);
+    // Since Cred2Tech API is synchronous, we process it synchronously right away
+    const syncResult = await processSalarySlipSync(params);
+    const jobId = `C2T-ASYNC-${Date.now()}`;
 
-    const form = new FormData();
-    form.append('file', fs.createReadStream(filePath), { contentType: mimeType, filename: originalName });
-    form.append('parserApp', getParserApp());
-    form.append('model', getModel());
-    form.append('extra_accuracy', getExtraAccuracy());
-
-    try {
-        const response = await axios.post(`${getBaseUrl()}/upload-file-smart-ocr-async`, form, {
-            headers: {
-                'x-api-key': getApiKey(),
-                ...form.getHeaders()
-            },
-            timeout: 30000 // 30s timeout for async kick-off
-        });
-
-        const data = response.data;
-
-        return {
-            status: 'PROCESSING',
-            vendor_job_id: data.job_id,
-            raw_ocr_response: data
-        };
-    } catch (error) {
-        throw handleFractoError(error);
-    }
+    // Return it in the shape expected by the async polling UI
+    return {
+        status: 'PROCESSING',
+        vendor_job_id: jobId,
+        // We embed the final result inside raw_ocr_response so getJobStatus can retrieve it from the DB
+        raw_ocr_response: {
+            ...syncResult.raw_ocr_response,
+            _cred2tech_shim_completed: true
+        }
+    };
 }
 
 /**
- * Synchronous Batch Upload to Fracto
- * We process them in parallel to satisfy the user's batch request while bypassing 
- * the vendor's multi-part upload limitations.
+ * Synchronous Batch Upload
  */
-async function processSalarySlipBatchSync({ files, case_id, applicant_id, tenant_id }) {
+async function processSalarySlipBatchSync(params) {
+    const { files, case_id, applicant_id, tenant_id } = params;
+
     if (process.env.FRACTO_OCR_MODE === 'mock') {
         return {
             status: 'COMPLETED',
@@ -216,7 +193,6 @@ async function processSalarySlipBatchSync({ files, case_id, applicant_id, tenant
     try {
         console.log(`[fractoSalaryOcr.service] Processing batch of ${files.length} files in parallel...`);
 
-        // Execute all OCRs in parallel
         const results = await Promise.all(files.map(async (file) => {
             try {
                 return await processSalarySlipSync({
@@ -231,68 +207,45 @@ async function processSalarySlipBatchSync({ files, case_id, applicant_id, tenant
             }
         }));
 
-        // Check if any succeeded
         const successful = results.filter(r => r.status === 'COMPLETED');
-
         if (successful.length === 0) {
             throw new Error('All files in the batch failed to process.');
         }
 
-        // Return the first successful one as a representative, but the controller will handle individual records
         return {
             status: 'COMPLETED',
-            batchResults: results, // Pass all results back to the controller
+            batchResults: results,
             vendor_job_id: successful[0].vendor_job_id,
             raw_ocr_response: successful[0].raw_ocr_response,
             extracted_json: successful[0].extracted_json,
             ...successful[0].extracted_json
         };
     } catch (error) {
-        throw handleFractoError(error);
+        throw handleOcrError(error);
     }
 }
 
 /**
- * Asynchronous Batch Upload to Fracto (multiple files)
+ * Asynchronous Batch Upload (Shim)
  */
-async function startSalarySlipBatchAsync({ files, case_id, applicant_id, tenant_id }) {
+async function startSalarySlipBatchAsync(params) {
     if (process.env.FRACTO_OCR_MODE === 'mock') {
-        console.log('[fractoSalaryOcr.service] Running in MOCK mode for batch.');
-        // For mock, just return a single dummy job ID
         return { status: 'PROCESSING', vendor_job_id: `MOCK-BATCH-${Date.now()}` };
     }
 
-    const form = new FormData();
+    // Process immediately
+    const syncBatchResult = await processSalarySlipBatchSync(params);
+    const jobId = `C2T-BATCH-${Date.now()}`;
 
-    // Append each file
-    for (const f of files) {
-        validateFile(f.filePath, f.mimeType);
-        form.append('file', fs.createReadStream(f.filePath), { contentType: f.mimeType, filename: f.originalName });
-    }
-
-    form.append('parserApp', getParserApp());
-    form.append('model', getModel());
-    form.append('extra_accuracy', getExtraAccuracy());
-
-    try {
-        const response = await axios.post(`${getBaseUrl()}/upload-file-smart-ocr-async`, form, {
-            headers: {
-                'x-api-key': getApiKey(),
-                ...form.getHeaders()
-            },
-            timeout: 60000 // higher timeout since we're uploading multiple files
-        });
-
-        const data = response.data;
-
-        return {
-            status: 'PROCESSING',
-            vendor_job_id: data.job_id,
-            raw_ocr_response: data
-        };
-    } catch (error) {
-        throw handleFractoError(error);
-    }
+    // Pass the completed batchResults embedded in raw response
+    return {
+        status: 'PROCESSING',
+        vendor_job_id: jobId,
+        raw_ocr_response: {
+            _cred2tech_shim_completed: true,
+            batchResults: syncBatchResult.batchResults
+        }
+    };
 }
 
 /**
@@ -301,41 +254,39 @@ async function startSalarySlipBatchAsync({ files, case_id, applicant_id, tenant_
 async function getJobStatus(jobId) {
     if (!jobId) throw new Error('Job ID is required to check status.');
 
-    try {
-        const response = await axios.get(`${getBaseUrl()}/get-job-status`, {
-            params: { job_id: jobId },
-            headers: { 'x-api-key': getApiKey() },
-            timeout: 30000
-        });
+    // We fetch the record from the DB to see our shimmed completed result
+    const prisma = require('../../../config/db');
+    const record = await prisma.salarySlipOcrResult.findFirst({
+        where: { vendor_job_id: jobId }
+    });
 
-        const data = response.data;
+    if (!record || !record.raw_ocr_response) {
+        return { status: 'PROCESSING', raw_ocr_response: {} };
+    }
 
-        // Assuming Fracto returns a recognizable completion status or raw data
-        if (data.status && data.status.toLowerCase() === 'processing') {
-            return { status: 'PROCESSING', raw_ocr_response: data };
-        }
-
-        if (data.status && data.status.toLowerCase() === 'failed') {
-            return { status: 'FAILED', error_message: 'Vendor OCR processing failed.', raw_ocr_response: data };
-        }
-
-        // If parsedData exists, assume it's done
-        if (data.parsedData) {
-            const normalized = normalizeSalarySlipResponse(data.parsedData);
+    const data = record.raw_ocr_response;
+    
+    // Check if it's our completed shim
+    if (data._cred2tech_shim_completed) {
+        // Handle batch vs single
+        if (data.batchResults) {
+            // For batch, we just say completed. The controller doesn't usually poll batch but if it does, this handles it.
             return {
                 status: 'COMPLETED',
-                raw_ocr_response: data,
-                extracted_json: normalized,
-                ...normalized
+                raw_ocr_response: data
             };
         }
 
-        // Catch-all
-        return { status: 'PROCESSING', raw_ocr_response: data };
-
-    } catch (error) {
-        throw handleFractoError(error);
+        const normalized = normalizeSalarySlipResponse(data);
+        return {
+            status: 'COMPLETED',
+            raw_ocr_response: data,
+            extracted_json: normalized,
+            ...normalized
+        };
     }
+
+    return { status: 'PROCESSING', raw_ocr_response: data };
 }
 
 module.exports = {

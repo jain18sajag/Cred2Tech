@@ -28,6 +28,7 @@ const AddSalariedCustomerWizardPage = () => {
     business_name: '',
     business_mobile: '',
     business_email: '',
+    dob: '',
     mobile_verified: false,
     applicants: [],
     product_type: '',
@@ -146,6 +147,7 @@ const AddSalariedCustomerWizardPage = () => {
         business_name: caseData.customer?.business_name || '',
         business_mobile: (caseData.customer?.business_mobile || '').replace(/\D/g, ''),
         business_email: caseData.customer?.business_email || '',
+        dob: caseData.customer?.dob || '',
         mobile_verified: caseData.customer?.mobile_verified || false,
         applicants: restoredApplicants.map(app => ({
           ...app,
@@ -158,7 +160,7 @@ const AddSalariedCustomerWizardPage = () => {
         market_value: caseData.property?.market_value || '',
       });
 
-      if (restoredApplicants.length > 0) {
+      if (caseData.customer?.mobile_verified && restoredApplicants.length > 0) {
         setCurrentStep(2);
         // Auto-set active tab to primary applicant
         if (primaryApp?.id) setActiveTabId(primaryApp.id);
@@ -177,8 +179,8 @@ const AddSalariedCustomerWizardPage = () => {
     let targetCaseId = caseId;
     let targetCustomerId = formData.customer_id;
 
-    if (!targetCaseId && (!formData.business_pan || !formData.business_mobile || !formData.business_name)) {
-      throw new Error("PAN, Name, and Mobile are required first");
+    if (!targetCaseId && !formData.business_pan) {
+      throw new Error("PAN is required to start the case");
     }
 
     // Validation: Ensure mobile is numeric (to prevent PAN being entered in mobile field)
@@ -192,7 +194,8 @@ const AddSalariedCustomerWizardPage = () => {
          business_pan: formData.business_pan,
          business_name: formData.business_name,
          business_mobile: formData.business_mobile,
-         business_email: formData.business_email
+         business_email: formData.business_email,
+         dob: formData.dob
       });
       
       const savedCase = res.data.data;
@@ -214,7 +217,8 @@ const AddSalariedCustomerWizardPage = () => {
          business_pan: formData.business_pan,
          business_name: formData.business_name,
          business_mobile: formData.business_mobile,
-         business_email: formData.business_email
+         business_email: formData.business_email,
+         dob: formData.dob
       });
       
       // Fetch fresh case data to get latest applicant IDs
@@ -277,6 +281,60 @@ const AddSalariedCustomerWizardPage = () => {
       toast.error(err.response?.data?.error || err.message || 'Failed to send OTP');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleVerifyPan = async (isCoapplicant = false, idx = null) => {
+    if (typeof isCoapplicant === 'object') {
+        isCoapplicant = false;
+        idx = null;
+    }
+
+    if (!formData.business_pan || formData.business_pan.length < 10) return toast.error('Valid PAN required');
+    
+    setPanVerifying(true);
+    
+    try {
+      // Create or ensure case exists using just the PAN first
+      let targetCaseId = caseId;
+      let targetCustomerId = formData.customer_id;
+      if (!targetCaseId) {
+        const draft = await ensureDraftSaved();
+        targetCaseId = draft.targetCaseId;
+        targetCustomerId = draft.targetCustomerId;
+      }
+
+      const res = await api.post(`/external/pan/verify`, { 
+        pan: isCoapplicant ? formData.applicants[idx].pan_number : formData.business_pan, 
+        customer_id: targetCustomerId,
+        case_id: targetCaseId,
+        is_coapplicant: isCoapplicant,
+        applicant_id: isCoapplicant && idx !== null ? formData.applicants[idx].id : null
+      });
+      const data = res.data;
+
+      const entityName = data.name || '';
+      const entityDob = data.dob || '';
+      
+      if (isCoapplicant && idx !== null) {
+        const list = [...formData.applicants];
+        list[idx] = { ...list[idx], name: entityName, dob: entityDob, pan_verified: true };
+        setFormData(prev => ({ ...prev, applicants: list }));
+      } else {
+        setFormData(prev => ({
+           ...prev,
+           business_name: entityName && !prev.business_name ? entityName : prev.business_name,
+           dob: entityDob && !prev.dob ? entityDob : prev.dob,
+           pan_verified: true
+        }));
+      }
+
+      toast.success('PAN Verified Successfully!');
+    } catch(err) {
+      const errMsg = err.response?.data?.error_message || err.response?.data?.error || err.message || 'Failed to verify PAN';
+      toast.error(errMsg);
+    } finally {
+      setPanVerifying(false);
     }
   };
 
@@ -516,25 +574,6 @@ const AddSalariedCustomerWizardPage = () => {
               
               <div style={{ padding: 24 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
-                  <FormField label="FULL NAME (AS PER PAN)" name="business_name" required>
-                    <input type="text" value={formData.business_name} onChange={e => setFormData({...formData, business_name: e.target.value})} className="form-control" placeholder="Arjun Sharma" disabled={!!caseId} />
-                  </FormField>
-
-                  <FormField label="PAN NUMBER" name="business_pan" required disabled={!!caseId || formData.mobile_verified}>
-                    <input 
-                      type="text" 
-                      value={formData.business_pan} 
-                      onChange={e => setFormData({...formData, business_pan: e.target.value.toUpperCase()})} 
-                      onBlur={() => checkPanDuplicate(formData.business_pan)}
-                      className="form-control" 
-                      placeholder="ABCDE1234F" 
-                      disabled={!!caseId || formData.mobile_verified} 
-                      style={{ textTransform: 'uppercase' }} 
-                    />
-                  </FormField>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
                   <FormField label="MOBILE NUMBER" name="business_mobile" required disabled={formData.mobile_verified}>
                     <div style={{ display: 'flex', gap: 10 }}>
                       <input 
@@ -549,7 +588,7 @@ const AddSalariedCustomerWizardPage = () => {
                         disabled={formData.mobile_verified} 
                       />
                       {!formData.mobile_verified ? (
-                        <button type="button" onClick={handleSendPrimaryOtp} disabled={saving || !formData.business_mobile || !formData.business_pan || !formData.business_name} className="btn" style={{ background: '#10B981', color: 'white', border: 'none', padding: '0 20px', borderRadius: '8px', fontWeight: 600 }}>Send OTP</button>
+                        <button type="button" onClick={handleSendPrimaryOtp} disabled={saving || !formData.business_mobile || !formData.business_pan} className="btn" style={{ background: '#10B981', color: 'white', border: 'none', padding: '0 20px', borderRadius: '8px', fontWeight: 600 }}>Send OTP</button>
                       ) : (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--success)', fontWeight: 600, padding: '0 10px', whiteSpace: 'nowrap' }}>
                           <CheckCircle2 size={18} /> Verified
@@ -559,6 +598,41 @@ const AddSalariedCustomerWizardPage = () => {
                     </div>
                   </FormField>
 
+                  <FormField label="PAN NUMBER" name="business_pan" required disabled={!!caseId || formData.mobile_verified}>
+                    <div style={{ display: 'flex', gap: 10 }}>
+                      <input 
+                        type="text" 
+                        value={formData.business_pan} 
+                        onChange={e => setFormData({...formData, business_pan: e.target.value.toUpperCase()})} 
+                        onBlur={() => checkPanDuplicate(formData.business_pan)}
+                        className="form-control" 
+                        placeholder="ABCDE1234F" 
+                        disabled={!!caseId || formData.mobile_verified} 
+                        style={{ textTransform: 'uppercase' }} 
+                      />
+                      <button type="button" onClick={handleVerifyPan} disabled={panVerifying || !formData.business_pan || formData.pan_verified} className="btn btn-secondary" style={{ background: '#F1F5F9', border: '1px solid var(--border)' }}>
+                        {panVerifying ? 'Wait...' : (formData.pan_verified ? 'Verified' : 'Verify PAN')}
+                      </button>
+                    </div>
+                  </FormField>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
+                  <FormField label="FULL NAME (AS PER PAN)" name="business_name" required>
+                    <input type="text" value={formData.business_name} onChange={e => setFormData({...formData, business_name: e.target.value})} className="form-control" placeholder="Arjun Sharma" disabled={!!caseId} />
+                  </FormField>
+
+                  <FormField label="DATE OF BIRTH" name="dob">
+                    <input 
+                      type="date" 
+                      value={formData.dob || ''} 
+                      onChange={e => setFormData({...formData, dob: e.target.value})} 
+                      className="form-control" 
+                    />
+                  </FormField>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
                   <FormField label="EMAIL ADDRESS" name="business_email" required>
                     <input 
                       type="email" 
@@ -600,15 +674,30 @@ const AddSalariedCustomerWizardPage = () => {
                              <button type="button" onClick={() => removeApplicant(realIdx)} style={{ color: 'var(--error)', fontSize: 13, fontWeight: 600, border: 'none', background: 'none' }}>Remove ×</button>
                           </div>
                           <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: 'var(--text-secondary)' }}>Applicant #{coApplicantDisplayIdx + 1}</h4>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1.2fr 1fr', gap: 16, alignItems: 'end' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, alignItems: 'end', marginBottom: 16 }}>
                             <FormField label="EMPLOYMENT TYPE" name={`coemp_${realIdx}`}>
                               <select className="form-control" value={app.employment_type || 'SALARIED'} onChange={e => updateApplicantRow(realIdx, 'employment_type', e.target.value)}>
                                  <option value="SALARIED">Salaried</option>
                                  <option value="SELF_EMPLOYED">Self Employed</option>
                               </select>
                             </FormField>
+                            <FormField label="FULL NAME" name={`coname_${realIdx}`}>
+                              <input type="text" value={app.name || ''} onChange={e => updateApplicantRow(realIdx, 'name', e.target.value)} className="form-control" placeholder="Enter Full Name" />
+                            </FormField>
+                            <FormField label="DATE OF BIRTH" name={`codob_${realIdx}`}>
+                              <input type="date" value={app.dob || ''} onChange={e => updateApplicantRow(realIdx, 'dob', e.target.value)} className="form-control" />
+                            </FormField>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1.2fr', gap: 16, alignItems: 'end' }}>
                             <FormField label="PAN NUMBER" name={`copan_${realIdx}`}>
-                              <input type="text" value={app.pan_number || ''} onChange={e => updateApplicantRow(realIdx, 'pan_number', e.target.value.toUpperCase())} className="form-control" style={{ textTransform: 'uppercase' }} disabled={app.otp_verified} />
+                              <div style={{ display: 'flex', gap: 8 }}>
+                                <input type="text" value={app.pan_number || ''} onChange={e => updateApplicantRow(realIdx, 'pan_number', e.target.value.toUpperCase())} className="form-control" style={{ textTransform: 'uppercase' }} disabled={app.otp_verified} />
+                                {app.otp_verified && (
+                                  <button type="button" onClick={() => handleVerifyPan(true, realIdx)} disabled={panVerifying || app.pan_verified} className="btn btn-secondary">
+                                    {panVerifying ? 'Wait...' : (app.pan_verified ? 'Verified' : 'Verify PAN')}
+                                  </button>
+                                )}
+                              </div>
                             </FormField>
                             <FormField label="MOBILE NUMBER" name={`comob_${realIdx}`}>
                               <div style={{ display: 'flex', gap: 8 }}>

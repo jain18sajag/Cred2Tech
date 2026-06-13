@@ -150,8 +150,11 @@ model Customer {
   business_mobile  String?
   business_email   String?
   entity_type      String?
+  dob              String?
   industry         String?
   business_vintage String?
+  is_professional  Boolean          @default(false)
+  profession_type  String?
   mobile_verified  Boolean          @default(false)
   created_at       DateTime         @default(now())
   updated_at       DateTime         @updatedAt
@@ -337,6 +340,7 @@ model Applicant {
   employment_type     EmploymentType @default(NA)
   name                String? // Phase 1: display name for bureau/income pages
   pan_number          String?
+  dob                 String?
   mobile              String?
   email               String?
   cibil_score         Int?
@@ -584,6 +588,7 @@ model ApiUsageLog {
   credits_used         Int            @default(0)
   status               ApiUsageStatus
   request_payload      Json?
+  response_payload     Json?
   response_status      String?
   error_message        String?
   reference_id         Int?

@@ -69,7 +69,8 @@ async function createSalariedCase({ business_pan, business_name, business_mobile
           business_name,
           business_mobile,
           business_email,
-          entity_type: 'Individual' // Appropriate default for salaried
+          entity_type: 'Individual', // Appropriate default for salaried
+          created_by_user_id: user_id
         }
       });
     }

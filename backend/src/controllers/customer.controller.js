@@ -64,7 +64,7 @@ async function checkCustomer(req, res) {
 
 async function createOrAttach(req, res) {
   try {
-    let { business_pan, business_mobile, business_email, business_name, customer_id } = req.body;
+    let { business_pan, business_mobile, business_email, business_name, customer_id, is_professional, profession_type } = req.body;
     
     business_pan = business_pan?.trim().toUpperCase();
     const mobileStr = business_mobile ? business_mobile.toString().replace(/\D/g, '') : null;
@@ -81,7 +81,9 @@ async function createOrAttach(req, res) {
       business_pan,
       business_mobile: mobileStr,
       business_email,
-      business_name
+      business_name,
+      is_professional,
+      profession_type
     }, tenant_id, user_id);
 
     res.status(200).json(customer);
@@ -97,8 +99,8 @@ async function createSalariedCustomer(req, res) {
     
     business_pan = business_pan?.trim().toUpperCase();
 
-    if (!business_pan || !business_name || !business_mobile) {
-      return res.status(400).json({ error: 'business_pan, business_name, and business_mobile are required.' });
+    if (!business_pan) {
+      return res.status(400).json({ error: 'business_pan is required.' });
     }
 
     const tenant_id = req.user.tenant_id;
@@ -264,6 +266,8 @@ async function getProfile(req, res) {
       business_mobile: customer.business_mobile,
       business_email: customer.business_email,
       mobile_verified: customer.mobile_verified,
+      is_professional: customer.is_professional,
+      profession_type: customer.profession_type,
       // PAN Profile enrichment
       gstin: panProfile?.gstin || null,
       legal_name: panProfile?.legal_name || null,

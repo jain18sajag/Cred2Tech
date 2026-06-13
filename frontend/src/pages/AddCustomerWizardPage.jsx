@@ -31,10 +31,13 @@ const AddCustomerWizardPage = () => {
     business_name: '',
     business_mobile: '',
     business_email: '',
+    dob: '',
     mobile_verified: false,
     applicants: [],
     linked_gstins: [],
     product_type: '',
+    is_professional: false,
+    profession_type: '',
     // Property (Step 3)
     property_type: '',
     occupancy_status: 'Self Occupied',
@@ -109,7 +112,10 @@ const AddCustomerWizardPage = () => {
         business_name: caseData.customer?.business_name || '',
         business_mobile: (caseData.customer?.business_mobile || '').replace(/\D/g, ''),
         business_email: caseData.customer?.business_email || '',
+        dob: caseData.customer?.dob || '',
         mobile_verified: caseData.customer?.mobile_verified || false,
+        is_professional: caseData.customer?.is_professional || false,
+        profession_type: caseData.customer?.profession_type || '',
         applicants: (caseData.applicants || []).map(app => ({
           ...app,
           mobile: (app.mobile || '').replace(/\D/g, ''),
@@ -194,8 +200,8 @@ const AddCustomerWizardPage = () => {
     let targetCaseId = caseId;
     let targetCustomerId = formData.customer_id;
 
-    if (!formData.business_pan || !formData.business_mobile) {
-      throw new Error("Business PAN and Mobile are required first");
+    if (!targetCaseId && !formData.business_pan) {
+      throw new Error("PAN is required to start the case");
     }
 
     // Validation: Ensure mobile is numeric (to prevent PAN being entered in mobile field)
@@ -209,7 +215,10 @@ const AddCustomerWizardPage = () => {
       business_pan: formData.business_pan,
       business_name: formData.business_name,
       business_mobile: formData.business_mobile,
-      business_email: formData.business_email
+      business_email: formData.business_email,
+      dob: formData.dob,
+      is_professional: formData.is_professional === 'true' || formData.is_professional === true,
+      profession_type: (formData.is_professional === 'true' || formData.is_professional === true) ? formData.profession_type : null
     });
     targetCustomerId = customer.id;
 
@@ -237,29 +246,41 @@ const AddCustomerWizardPage = () => {
     }
 
     if (!formData.business_pan || formData.business_pan.length < 10) return toast.error('Valid PAN required');
-    if (!formData.customer_id || !caseId) return toast.error('Please verify mobile first to generate a case');
+    
     setPanVerifying(true);
     
     try {
-      const res = await api.post(`/external/pan/fetch`, { 
+      // Create or ensure case exists using just the PAN first
+      let targetCaseId = caseId;
+      let targetCustomerId = formData.customer_id;
+      if (!targetCaseId) {
+        const draft = await ensureDraftSaved();
+        targetCaseId = draft.targetCaseId;
+        targetCustomerId = draft.targetCustomerId;
+      }
+
+      const res = await api.post(`/external/pan/verify`, { 
         pan: isCoapplicant ? formData.applicants[idx].pan_number : formData.business_pan, 
-        customer_id: formData.customer_id,
-        case_id: caseId
+        customer_id: targetCustomerId,
+        case_id: targetCaseId,
+        is_coapplicant: isCoapplicant,
+        applicant_id: isCoapplicant && idx !== null ? formData.applicants[idx].id : null
       });
       const data = res.data;
 
-      const entityName = data.providerResponse?.data?.full_name || data.providerResponse?.data?.entityName || data.result?.gstnDetailed?.[0]?.legalNameOfBusiness || '';
+      const entityName = data.name || '';
+      const entityDob = data.dob || '';
       
       if (isCoapplicant && idx !== null) {
         const list = [...formData.applicants];
-        list[idx] = { ...list[idx], name: entityName, linked_gstins: data.gst_records || [] };
-        setFormData(prev => ({ ...prev, applicants: list, pan_profile: data }));
+        list[idx] = { ...list[idx], name: entityName, dob: entityDob, pan_verified: true };
+        setFormData(prev => ({ ...prev, applicants: list }));
       } else {
         setFormData(prev => ({
            ...prev,
            business_name: entityName && !prev.business_name ? entityName : prev.business_name,
-           pan_profile: data,
-           linked_gstins: data.gst_records || []
+           dob: entityDob && !prev.dob ? entityDob : prev.dob,
+           pan_verified: true
         }));
       }
 
@@ -270,6 +291,35 @@ const AddCustomerWizardPage = () => {
       toast.error(errMsg);
     } finally {
       setPanVerifying(false);
+    }
+  };
+
+  const handleFetchGst = async () => {
+    if (!formData.business_pan || formData.business_pan.length < 10) return toast.error('Valid PAN required');
+    if (!formData.customer_id || !caseId) return toast.error('Please verify mobile first to generate a case');
+    setSaving(true);
+    
+    try {
+      const res = await api.post(`/external/pan/fetch`, { 
+        pan: formData.business_pan, 
+        customer_id: formData.customer_id,
+        case_id: caseId
+      });
+      const data = res.data;
+
+      setFormData(prev => ({
+         ...prev,
+         pan_profile: data,
+         linked_gstins: data.gst_records || []
+      }));
+
+      toast.success('GST Records Fetched Successfully!');
+
+    } catch(err) {
+      const errMsg = err.response?.data?.error_message || err.response?.data?.error || err.message || 'Failed to fetch GST';
+      toast.error(errMsg);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -665,12 +715,36 @@ const AddCustomerWizardPage = () => {
                         disabled={formData.pan_profile || formData.mobile_verified} 
                         style={{ textTransform: 'uppercase' }} 
                       />
-                      {formData.mobile_verified && (
-                        <button type="button" onClick={handleVerifyPan} disabled={panVerifying || !formData.business_pan || formData.pan_profile} className="btn btn-secondary">
-                          {panVerifying ? 'Wait...' : (formData.pan_profile ? 'Verified' : 'Verify pan')}
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button type="button" onClick={handleVerifyPan} disabled={panVerifying || !formData.business_pan || formData.pan_verified} className="btn btn-secondary">
+                          {panVerifying ? 'Wait...' : (formData.pan_verified ? 'Verified' : 'Verify PAN')}
                         </button>
-                      )}
+                        <button type="button" onClick={handleFetchGst} disabled={saving || !formData.business_pan || formData.pan_profile} className="btn btn-outline" style={{ border: '1px solid var(--border)', background: 'white' }}>
+                          {formData.pan_profile ? 'GST Fetched' : 'Fetch GST'}
+                        </button>
+                      </div>
                     </div>
+                  </FormField>
+
+                  <FormField label="BUSINESS NAME / FULL NAME" name="business_name">
+                    <input 
+                      type="text" 
+                      value={formData.business_name} 
+                      onChange={e => setFormData({...formData, business_name: e.target.value})} 
+                      className="form-control" 
+                      placeholder="Autofetched via PAN or enter manually" 
+                    />
+                  </FormField>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
+                  <FormField label="DATE OF BIRTH / INCORPORATION" name="dob">
+                    <input 
+                      type="date" 
+                      value={formData.dob || ''} 
+                      onChange={e => setFormData({...formData, dob: e.target.value})} 
+                      className="form-control" 
+                    />
                   </FormField>
                   
                   <FormField label="MOBILE NUMBER" name="business_mobile" required disabled={formData.mobile_verified}>
@@ -708,7 +782,39 @@ const AddCustomerWizardPage = () => {
                       placeholder="admin@company.in" 
                     />
                   </FormField>
+
+                  <FormField label="ARE YOU A PROFESSIONAL?" name="is_professional">
+                    <select 
+                      className="form-control"
+                      value={formData.is_professional === true || formData.is_professional === 'true' ? 'true' : 'false'}
+                      onChange={e => {
+                        const isProf = e.target.value === 'true';
+                        setFormData({...formData, is_professional: isProf, profession_type: isProf ? formData.profession_type : ''})
+                      }}
+                    >
+                      <option value="false">No</option>
+                      <option value="true">Yes</option>
+                    </select>
+                  </FormField>
                 </div>
+
+                { (formData.is_professional === true || formData.is_professional === 'true') && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginTop: 24 }}>
+                    <FormField label="SELECT YOUR PROFESSION" name="profession_type" required>
+                      <select 
+                        className="form-control"
+                        value={formData.profession_type || ''}
+                        onChange={e => setFormData({...formData, profession_type: e.target.value})}
+                      >
+                        <option value="">Select Profession</option>
+                        <option value="CA">CA</option>
+                        <option value="Lawyer">Lawyer</option>
+                        <option value="Doctor">Doctor</option>
+                        <option value="Other">Other</option>
+                      </select>
+                    </FormField>
+                  </div>
+                )}
 
                 <div style={{ marginTop: 24, padding: '14px 16px', background: 'var(--primary-subtle)', borderRadius: 'var(--radius)', color: 'var(--primary-dark)', fontSize: 12 }}>
                   📌 After entering PAN and Mobile, trigger 'Send OTP' to lock your draft and verify ownership.
@@ -777,7 +883,7 @@ const AddCustomerWizardPage = () => {
                              <button type="button" onClick={() => removeApplicant(realIdx)} style={{ color: 'var(--error)', fontSize: 13, fontWeight: 600, border: 'none', background: 'none' }}>Remove ×</button>
                           </div>
                           <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: 'var(--text-secondary)' }}>Applicant #{coApplicantIdx + 1}</h4>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr 1fr 1fr 1fr', gap: 16, alignItems: 'end' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, alignItems: 'end', marginBottom: 16 }}>
                             <FormField label="EMPLOYMENT TYPE" name={`coemp_${realIdx}`}>
                               <select className="form-control" value={app.employment_type || 'SELF_EMPLOYED'} onChange={e => updateApplicantRow(realIdx, 'employment_type', e.target.value)}>
                                  <option value="SELF_EMPLOYED">Self Employed</option>
@@ -787,8 +893,20 @@ const AddCustomerWizardPage = () => {
                             <FormField label="FULL NAME" name={`coname_${realIdx}`}>
                               <input type="text" value={app.name || ''} onChange={e => updateApplicantRow(realIdx, 'name', e.target.value)} className="form-control" placeholder="Enter Full Name" />
                             </FormField>
+                            <FormField label="DATE OF BIRTH" name={`codob_${realIdx}`}>
+                              <input type="date" value={app.dob || ''} onChange={e => updateApplicantRow(realIdx, 'dob', e.target.value)} className="form-control" />
+                            </FormField>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 1fr', gap: 16, alignItems: 'end' }}>
                             <FormField label="PAN NUMBER" name={`copan_${realIdx}`}>
-                              <input type="text" value={app.pan_number || ''} onChange={e => updateApplicantRow(realIdx, 'pan_number', e.target.value)} className="form-control" style={{ textTransform: 'uppercase' }} disabled={app.otp_verified} />
+                              <div style={{ display: 'flex', gap: 8 }}>
+                                <input type="text" value={app.pan_number || ''} onChange={e => updateApplicantRow(realIdx, 'pan_number', e.target.value)} className="form-control" style={{ textTransform: 'uppercase' }} disabled={app.otp_verified} />
+                                {app.otp_verified && (
+                                  <button type="button" onClick={() => handleVerifyPan(true, realIdx)} disabled={panVerifying || app.pan_verified} className="btn btn-secondary">
+                                    {panVerifying ? 'Wait...' : (app.pan_verified ? 'Verified' : 'Verify PAN')}
+                                  </button>
+                                )}
+                              </div>
                             </FormField>
                             <FormField label="MOBILE NUMBER" name={`comob_${realIdx}`}>
                               <div style={{ display: 'flex', gap: 8 }}>
@@ -805,11 +923,11 @@ const AddCustomerWizardPage = () => {
                                 )}
                               </div>
                             </FormField>
-                          <FormField label="EMAIL" name={`coemail_${realIdx}`}>
-                            <input type="email" value={app.email || ''} onChange={e => updateApplicantRow(realIdx, 'email', e.target.value)} className="form-control" />
-                          </FormField>
+                            <FormField label="EMAIL" name={`coemail_${realIdx}`}>
+                              <input type="email" value={app.email || ''} onChange={e => updateApplicantRow(realIdx, 'email', e.target.value)} className="form-control" />
+                            </FormField>
+                          </div>
                         </div>
-                      </div>
                       );
                     })}
                   </div>
