@@ -9,6 +9,7 @@ async function getIncomeSummary(case_id, tenant_id) {
   const caseRecord = await prisma.case.findFirst({
     where: { id: case_id, tenant_id },
     include: {
+      esr_financials:  true,
       gst_requests:    { orderBy: { created_at: 'desc' }, take: 1 },
       itr_analytics:   { orderBy: { created_at: 'desc' }, take: 1 },
       applicants: {
@@ -25,18 +26,20 @@ async function getIncomeSummary(case_id, tenant_id) {
 
   if (!caseRecord) throw new Error('Case not found or unauthorized.');
 
+  const esr = caseRecord.esr_financials;
+
   // ── GST: prefer persisted FY snapshot columns ─────────────────────────────
   const gstReq = caseRecord.gst_requests?.[0];
-  const gstTurnoverLatest = gstReq?.turnover_latest_year   != null ? Number(gstReq.turnover_latest_year)   : null;
-  const gstTurnoverPrev   = gstReq?.turnover_previous_year != null ? Number(gstReq.turnover_previous_year)  : null;
+  let gstTurnoverLatest = gstReq?.turnover_latest_year   != null ? Number(gstReq.turnover_latest_year)   : (esr?.gst_avg_monthly_sales ? esr.gst_avg_monthly_sales * 12 : null);
+  let gstTurnoverPrev   = gstReq?.turnover_previous_year != null ? Number(gstReq.turnover_previous_year)  : null;
   const gstFyLatest       = gstReq?.financial_year_latest  || null;
   const gstFyPrev         = gstReq?.financial_year_previous || null;
 
   // ── ITR: prefer persisted FY snapshot columns ─────────────────────────────
   const itrReq = caseRecord.itr_analytics?.[0];
-  let netProfitLatest     = itrReq?.net_profit_latest_year   != null ? Number(itrReq.net_profit_latest_year)   : null;
+  let netProfitLatest     = itrReq?.net_profit_latest_year   != null ? Number(itrReq.net_profit_latest_year)   : (esr?.itr_pat ?? null);
   let netProfitPrev       = itrReq?.net_profit_previous_year != null ? Number(itrReq.net_profit_previous_year)  : null;
-  let grossReceiptsLatest = itrReq?.gross_receipts_latest_year != null ? Number(itrReq.gross_receipts_latest_year) : null;
+  let grossReceiptsLatest = itrReq?.gross_receipts_latest_year != null ? Number(itrReq.gross_receipts_latest_year) : (esr?.itr_gross_receipts ?? null);
   const itrFyLatest       = itrReq?.financial_year_latest  || null;
   const itrFyPrev         = itrReq?.financial_year_previous || null;
 
@@ -50,8 +53,8 @@ async function getIncomeSummary(case_id, tenant_id) {
   // ── Bank: prefer persisted FY snapshot columns ────────────────────────────
   const primaryApplicant = caseRecord.applicants?.[0];
   const bankReq = primaryApplicant?.bank_statements?.[0] || caseRecord.bank_statements?.[0];
-  const avgBalanceLatest = bankReq?.avg_bank_balance_latest_year   != null ? Number(bankReq.avg_bank_balance_latest_year)   : null;
-  const avgBalancePrev   = bankReq?.avg_bank_balance_previous_year != null ? Number(bankReq.avg_bank_balance_previous_year)  : null;
+  let avgBalanceLatest = bankReq?.avg_bank_balance_latest_year   != null ? Number(bankReq.avg_bank_balance_latest_year)   : (esr?.bank_avg_balance ?? null);
+  let avgBalancePrev   = bankReq?.avg_bank_balance_previous_year != null ? Number(bankReq.avg_bank_balance_previous_year)  : null;
   const bankFyLatest     = bankReq?.financial_year_latest  || null;
   const bankFyPrev       = bankReq?.financial_year_previous || null;
 

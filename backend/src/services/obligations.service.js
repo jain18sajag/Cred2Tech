@@ -86,12 +86,8 @@ async function syncObligationsFromBureau(case_id, tenant_id) {
     }
   }
 
-  // Background snapshot refresh (safety net — ESR orchestrator also validates freshness on generation)
-  const { extractEsrFinancials } = require('./esrFinancials.service');
-  extractEsrFinancials(case_id, tenant_id).catch(err =>
-    console.error(`[ESR Background] Snapshot refresh failed for case ${case_id}:`, err.message)
-  );
-
+  // Removed background extractEsrFinancials call to prevent wiping out bulk upload manual financials.
+  // The ESR orchestrator already validates freshness on generation, and FOIR is calculated dynamically.
   return { created, skipped };
 }
 
@@ -171,13 +167,7 @@ async function addObligation(case_id, payload, tenant_id) {
     }
   });
 
-  // Background snapshot refresh
-  const { extractEsrFinancials } = require('./esrFinancials.service');
-  const caseForTenant = await prisma.case.findUnique({ where: { id: case_id }, select: { tenant_id: true } });
-  extractEsrFinancials(case_id, caseForTenant?.tenant_id || null).catch(err =>
-    console.error(`[ESR Background] Snapshot refresh failed for case ${case_id}:`, err.message)
-  );
-
+  // Removed background extractEsrFinancials call to prevent wiping out bulk upload manual financials.
   return result;
 }
 
@@ -206,12 +196,7 @@ async function updateObligation(obligation_id, case_id, payload, tenant_id) {
     }
   });
 
-  // Background snapshot refresh
-  const { extractEsrFinancials } = require('./esrFinancials.service');
-  extractEsrFinancials(case_id, caseRecord.tenant_id).catch(err =>
-    console.error(`[ESR Background] Snapshot refresh failed for case ${case_id}:`, err.message)
-  );
-
+  // Removed background extractEsrFinancials call to prevent wiping out bulk upload manual financials.
   return result;
 }
 

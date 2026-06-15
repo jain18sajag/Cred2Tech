@@ -311,7 +311,7 @@ async function sendProposalSms({ mobile, message }) {
 }
 
 // ── Orchestrator: Send by Proposal ID ─────────────────────────────────────────
-async function dispatchProposalEmailByProposalId({ proposalId, tenantId, userId }) {
+async function dispatchProposalEmailByProposalId({ proposalId, tenantId, userId, contactId }) {
   // 1. Fetch full context
   const proposal = await prisma.proposal.findFirst({
     where: { id: Number(proposalId), tenant_id: Number(tenantId) },
@@ -348,16 +348,21 @@ async function dispatchProposalEmailByProposalId({ proposalId, tenantId, userId 
   }
 
   // 2. Resolve lender contact
-  const { resolveContactForLender } = require('./tenantLender.service');
+  const { resolveContactForLender, resolveContactById } = require('./tenantLender.service');
   const lenderName = proposal.lender?.name || proposal.tenant_lender?.lender_name;
 
   if (!lenderName) throw new Error('Target lender name not found on proposal.');
 
-  const contact = await resolveContactForLender({
-    tenantId,
-    lenderName,
-    productType: proposal.product_type || caseData.product_type
-  });
+  let contact;
+  if (contactId) {
+    contact = await resolveContactById(contactId, tenantId);
+  } else {
+    contact = await resolveContactForLender({
+      tenantId,
+      lenderName,
+      productType: proposal.product_type || caseData.product_type
+    });
+  }
 
   if (!contact || !contact.contact_email) {
     throw new Error('No email contact configured for this lender/product. Please check Lender Contacts.');
@@ -475,6 +480,7 @@ async function dispatchProposalEmailByProposalId({ proposalId, tenantId, userId 
     console.log(`[PROPOSAL SEND] Linked to Child Case: CASE-${childCaseId}`);
   } catch (err) {
     console.error('[PROPOSAL SEND] Child Case Linkage Error (Non-Fatal):', err.message);
+    console.error('[PROPOSAL SEND] Stack:', err.stack);
   }
 
   return {

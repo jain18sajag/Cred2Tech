@@ -15,23 +15,16 @@ function generateProposalNumber(caseId, lenderCode, seq) {
  * Get next sequence number for proposals on this case+lender
  * Robustly avoids collisions by counting any proposal that might share the same lender code
  */
-async function getNextSeq(caseId, lenderId, tenantLenderId) {
-    const where = {
-        case_id: Number(caseId),
-    };
-
-    if (lenderId && tenantLenderId) {
-        where.OR = [
-            { lender_id: String(lenderId) },
-            { tenant_lender_id: Number(tenantLenderId) }
-        ];
-    } else if (lenderId) {
-        where.lender_id = String(lenderId);
-    } else if (tenantLenderId) {
-        where.tenant_lender_id = Number(tenantLenderId);
-    }
-
-    const count = await prisma.proposal.count({ where });
+async function getNextSeq(caseId, lenderCode) {
+    const code = String(lenderCode || 'LENDER').toUpperCase().replace(/\s+/g, '').slice(0, 8);
+    const prefix = `PROP-${caseId}-${code}-`;
+    
+    const count = await prisma.proposal.count({
+        where: {
+            case_id: Number(caseId),
+            proposal_number: { startsWith: prefix }
+        }
+    });
     return count + 1;
 }
 
@@ -104,7 +97,7 @@ async function createProposalDraft({ case_id, lender_id, tenant_lender_id, schem
     }
 
     const lenderCode = await getLenderCode(validLenderId, tenant_lender_id);
-    const seq = await getNextSeq(case_id, validLenderId, tenant_lender_id);
+    const seq = await getNextSeq(case_id, lenderCode);
     const proposalNumber = generateProposalNumber(case_id, lenderCode, seq);
 
     // Derive prefilled values
@@ -300,6 +293,37 @@ async function getProposalForPrep({ proposal_id, case_id, tenant_id }) {
         categories[cat].push({ ...doc, is_attached: doc.proposal_docs.length > 0 });
     }
 
+    // 6. Fallback to ESR Financials for Bulk Uploads
+    const finalGst = {
+        turnover_latest: gstData?.turnover_latest_year || (esr?.gst_avg_monthly_sales ? esr.gst_avg_monthly_sales * 12 : null),
+        turnover_previous: gstData?.turnover_previous_year || null,
+        fy_latest: gstData?.financial_year_latest || null,
+        fy_previous: gstData?.financial_year_previous || null,
+        avg_monthly_turnover: gstExtraStats.avg_monthly_turnover || esr?.gst_avg_monthly_sales || null,
+        months_filed: gstExtraStats.months_filed,
+        nil_months: gstExtraStats.nil_months
+    };
+
+    const finalItrYears = itrYears.length > 0 ? itrYears : (esr?.itr_pat ? [{
+        ay: 'Reported Data',
+        gross_receipts: esr.itr_gross_receipts || null,
+        net_profit: esr.itr_pat,
+        filing_status: 'Available'
+    }] : []);
+
+    const finalBankAccounts = bankAccounts.length > 0 ? bankAccounts : (esr?.bank_avg_balance ? [{
+        label: 'Primary Account',
+        bank_name: 'Reported Data',
+        avg_monthly_credit: esr.bank_avg_monthly_credit || esr.bank_total_credits || null,
+        avg_closing_balance: esr.bank_avg_balance
+    }] : []);
+
+    // Try to get Office Address from GST/PAN profile
+    const panProfile = await prisma.customerPanProfile.findFirst({
+        where: { customer_id: customer.id },
+        orderBy: { created_at: 'desc' }
+    });
+
     return {
         proposal: { ...proposal, lender_name: lender.name || 'Unknown', lender_code: lender.code || '' },
         lender_eligibility: lenderEligibility,
@@ -320,13 +344,15 @@ async function getProposalForPrep({ proposal_id, case_id, tenant_id }) {
             property_type: esr.property_type || property.property_type,
             occupancy_type: esr.occupancy_type || property.occupancy_status,
             property_address: property.remarks || null,
+            residential_address: null, // Aadhaar data not strictly stored in DB columns
+            office_address: panProfile?.principal_address || null,
         },
         applicants,
         co_applicants: applicants.filter(a => a.type !== 'PRIMARY'),
         financial_summary: {
-            gst: { turnover_latest: gstData?.turnover_latest_year || null, turnover_previous: gstData?.turnover_previous_year || null, fy_latest: gstData?.financial_year_latest || null, fy_previous: gstData?.financial_year_previous || null, avg_monthly_turnover: gstExtraStats.avg_monthly_turnover, months_filed: gstExtraStats.months_filed, nil_months: gstExtraStats.nil_months },
-            itr_years: itrYears,
-            bank_accounts: bankAccounts,
+            gst: finalGst,
+            itr_years: finalItrYears,
+            bank_accounts: finalBankAccounts,
         },
         documents_by_category: categories,
     };
@@ -469,7 +495,7 @@ async function cloneProposalForLender({ source_id, new_lender_id, new_tenant_len
 
     const validLenderId = await validatePlatformLender(new_lender_id);
     const lenderCode = await getLenderCode(validLenderId, new_tenant_lender_id);
-    const seq = await getNextSeq(src.case_id, validLenderId, new_tenant_lender_id);
+    const seq = await getNextSeq(src.case_id, lenderCode);
     const proposalNumber = generateProposalNumber(src.case_id, lenderCode, seq);
 
     try {

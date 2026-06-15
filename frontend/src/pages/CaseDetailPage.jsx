@@ -729,35 +729,58 @@ export default function CaseDetailPage() {
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                     <div>
-                      <label style={{ display: 'block', fontSize: 11, color: '#64748B', marginBottom: 4 }}>Lender Name</label>
-                      <select
-                        value={sanctionForm.tenant_lender_id || ''}
-                        disabled={disbursementSummary?.summary?.is_locked}
-                        onChange={(e) => {
-                          const selected = tenantLenders.find(l => String(l.id) === e.target.value);
-                          setSanctionForm({
-                            ...sanctionForm,
-                            tenant_lender_id: e.target.value,
-                            lender_name: selected ? selected.lender_name : ''
-                          });
-                        }}
-                        style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #CBD5E1', background: '#fff' }}
-                      >
-                        <option value="">— Select Lender —</option>
-                        {tenantLenders.map(l => (
-                          <option key={l.id} value={l.id}>{l.lender_name}</option>
-                        ))}
-                      </select>
+                      <label style={{ display: 'block', fontSize: 11, color: '#64748B', marginBottom: 4 }}>
+                        Lender Name
+                        {sanctionForm.lender_name && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: '#7C3AED', background: '#EDE9FE', padding: '1px 6px', borderRadius: 4, letterSpacing: '.3px' }}>AUTO-FILLED</span>}
+                      </label>
+                      {sanctionForm.lender_name ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 6, border: '1.5px solid #A78BFA', background: '#F5F3FF', minHeight: 36 }}>
+                          <span style={{ fontSize: 18 }}>🏦</span>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: '#4C1D95' }}>{sanctionForm.lender_name}</span>
+                          <span style={{ marginLeft: 'auto', fontSize: 10, color: '#7C3AED', fontWeight: 600 }}>🔒 Locked</span>
+                        </div>
+                      ) : (
+                        <select
+                          value={sanctionForm.tenant_lender_id || ''}
+                          disabled={disbursementSummary?.summary?.is_locked}
+                          onChange={(e) => {
+                            const selected = tenantLenders.find(l => String(l.id) === e.target.value);
+                            setSanctionForm({
+                              ...sanctionForm,
+                              tenant_lender_id: e.target.value,
+                              lender_name: selected ? selected.lender_name : ''
+                            });
+                          }}
+                          style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #CBD5E1', background: '#fff' }}
+                        >
+                          <option value="">— Select Lender —</option>
+                          {tenantLenders.map(l => (
+                            <option key={l.id} value={l.id}>{l.lender_name}</option>
+                          ))}
+                        </select>
+                      )}
                     </div>
                     <div>
-                      <label style={{ display: 'block', fontSize: 11, color: '#64748B', marginBottom: 4 }}>Product Type</label>
-                      <input
-                        type="text"
-                        value={sanctionForm.product_type}
-                        disabled={disbursementSummary?.summary?.is_locked}
-                        onChange={(e) => setSanctionForm({ ...sanctionForm, product_type: e.target.value })}
-                        style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #CBD5E1' }}
-                      />
+                      <label style={{ display: 'block', fontSize: 11, color: '#64748B', marginBottom: 4 }}>
+                        Product Type
+                        {sanctionForm.product_type && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: '#7C3AED', background: '#EDE9FE', padding: '1px 6px', borderRadius: 4, letterSpacing: '.3px' }}>AUTO-FILLED</span>}
+                      </label>
+                      {sanctionForm.product_type ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 6, border: '1.5px solid #A78BFA', background: '#F5F3FF', minHeight: 36 }}>
+                          <span style={{ fontSize: 18 }}>📋</span>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: '#4C1D95' }}>{sanctionForm.product_type}</span>
+                          <span style={{ marginLeft: 'auto', fontSize: 10, color: '#7C3AED', fontWeight: 600 }}>🔒 Locked</span>
+                        </div>
+                      ) : (
+                        <input
+                          type="text"
+                          value={sanctionForm.product_type}
+                          disabled={disbursementSummary?.summary?.is_locked}
+                          onChange={(e) => setSanctionForm({ ...sanctionForm, product_type: e.target.value })}
+                          placeholder="e.g. LAP, HL, BL"
+                          style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #CBD5E1' }}
+                        />
+                      )}
                     </div>
                     <div style={{ gridColumn: 'span 2' }}>
                       <label style={{ display: 'block', fontSize: 11, color: '#64748B', marginBottom: 4 }}>Loan Account Number</label>

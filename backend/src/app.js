@@ -165,6 +165,7 @@ apiRouter.use('/sub-dsa', subDsaPayoutRoutes);
 apiRouter.use('/dashboard', dashboardRoutes);
 apiRouter.use('/sales-incentives', salesIncentiveRoutes);
 
+app.use((req, res, next) => { if (req.url.includes('clone')) require('fs').appendFileSync('clone_debug.json', new Date() + ' ' + req.method + ' ' + req.url + '\n'); next(); });
 app.use('/api', apiRouter);
 
 app.use((err, req, res, next) => {
@@ -200,3 +201,4 @@ const seedDataMatrix = require('./utils/seed_matrix');
 // });
 
 module.exports = app;
+

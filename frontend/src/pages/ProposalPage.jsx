@@ -536,14 +536,22 @@ function DocCard({ label, uploaded, doc, onToggle, required = true, isSubmitted,
   const isAttached = doc?.is_attached;
   const [uploading, setUploading] = useState(false);
   const inputRef = React.useRef(null);
+  const { pid: proposalId } = useParams();
 
   const handleFileChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
     try {
-      await uploadDocument(file, caseId, docType || 'OTHER');
-      toast.success(`${file.name} uploaded ✓`);
+      const res = await uploadDocument(file, caseId, docType || 'OTHER');
+      if (res?.data?.id && proposalId) {
+        try {
+          await caseService.attachProposalDocs(caseId, proposalId, [res.data.id]);
+        } catch (attachErr) {
+          console.error("Failed to auto-attach doc to proposal", attachErr);
+        }
+      }
+      toast.success(`${file.name} uploaded & included ✓`);
       onUploaded?.();
     } catch (err) {
       toast.error(err.response?.data?.error || err.message || 'Upload failed');
@@ -668,13 +676,28 @@ export default function ProposalPage() {
         additional_notes: p.additional_notes || '',
         preferred_banking_program: p.preferred_banking_program || '',
       });
-      // Parse addresses + references from additional_notes JSON
       try {
         const stored = p.additional_notes ? JSON.parse(p.additional_notes) : null;
-        if (stored?.__addresses) setAddresses(stored.__addresses);
+        if (stored?.__addresses) {
+            setAddresses(stored.__addresses);
+        } else {
+            // Auto-fill from prefill if no draft is saved yet
+            setAddresses({
+                residential: res.prefill?.residential_address || '',
+                office: res.prefill?.office_address || '',
+                property: res.prefill?.property_address || ''
+            });
+        }
         if (stored?.__references) setReferences(stored.__references);
         setForm(f => ({ ...f }));
-      } catch { }
+      } catch { 
+          // If JSON parsing fails, still auto-fill
+          setAddresses({
+              residential: res.prefill?.residential_address || '',
+              office: res.prefill?.office_address || '',
+              property: res.prefill?.property_address || ''
+          });
+      }
     } catch (e) {
       toast.error('Failed to load proposal');
     } finally {
@@ -1053,6 +1076,7 @@ export default function ProposalPage() {
         isOpen={showOtherLenderModal}
         onClose={() => setShowOtherLenderModal(false)}
         caseId={caseId}
+        proposalId={proposalId}
         onSuccess={r => { setShowOtherLenderModal(false); setSendConfirmResult(r); }}
       />
       <SendConfirmationModal
@@ -1065,7 +1089,7 @@ export default function ProposalPage() {
 }
 
 // ─── SendToOtherLenderModal (inline in ProposalPage) ──────────────────────────
-function SendToOtherLenderModal({ isOpen, onClose, caseId, onSuccess }) {
+function SendToOtherLenderModal({ isOpen, onClose, caseId, proposalId, onSuccess }) {
   const [lenders, setLenders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedLender, setSelectedLender] = useState(null);
@@ -1089,19 +1113,25 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, onSuccess }) {
     setSending(true);
     try {
       console.log('[Clone] Triggering clone for:', { caseId, proposalId, selectedLender });
-      // Instead of sending directly, we CLONE the current proposal for this new lender
+      // 1. CLONE the current proposal for this new lender
       const r = await caseService.cloneProposal(caseId, proposalId, {
         new_lender_id: selectedLender.platform_lender_id || null,
         new_tenant_lender_id: selectedLender.id,
       });
       const result = r.proposal;
-      console.log('[Clone] Success:', result);
-      toast.success(`Proposal cloned for ${selectedLender.lender_name}`);
+      
+      // 2. IMMEDIATELY send the newly cloned proposal
+      const sendResult = await caseService.sendProposal(caseId, result.id, {
+        contact_id: selectedContact.id
+      });
+      
+      console.log('[Clone & Send] Success:', sendResult);
+      toast.success(`Proposal sent to ${selectedLender.lender_name}`);
       window.location.href = `/cases/${caseId}/proposals/${result.id}`;
       onClose();
     } catch (e) {
-      console.error('[Clone] Error caught:', e);
-      toast.error(e.response?.data?.error || 'Failed to clone proposal');
+      console.error('[Clone & Send] Error caught:', e);
+      toast.error(`Error: ${e.message} | ` + (e.response?.data?.error || 'No backend error'));
     } finally { setSending(false); }
   };
 

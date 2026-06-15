@@ -141,7 +141,8 @@ async function send(req, res) {
         const result = await dispatchProposalEmailByProposalId({
             proposalId: proposal_id,
             tenantId: req.user.tenant_id,
-            userId: req.user.id
+            userId: req.user.id,
+            contactId: req.body.contact_id
         });
 
         // After successful dispatch, mark as submitted if not already

@@ -14,7 +14,9 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
   const {
     product_type,
     lender_name,
-    platform_lender_id,
+    // NOTE: platform_lender_id from proposal.lender_id is a STRING (UUID),
+    // but Case.platform_lender_id is Int? — do NOT set it from proposal lender_id.
+    // tenant_lender_id is the correct Int field to track the lender.
     tenant_lender_id,
     contact_id,
     dsa_code,
@@ -23,22 +25,22 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
     contact_mobile
   } = lenderSnapshot;
 
-  // 1. Check for duplicate child case
+  // 1. Check for duplicate child case (idempotency guard)
   const existingChild = await prisma.case.findFirst({
     where: {
       parent_case_id: parentCaseId,
       tenant_id: tenantId,
       product_type: product_type,
       lender_name: lender_name,
-      // Consider contact_id / platform_lender_id for tighter scoping
     }
   });
 
   if (existingChild) {
+    console.log(`[CLONE] Duplicate child case found: CASE-${existingChild.id}. Returning existing.`);
     return { isDuplicate: true, case: existingChild };
   }
 
-  // 2. Perform Deep Clone
+  // 2. Perform Deep Clone in a transaction
   return await prisma.$transaction(async (tx) => {
     // Fetch full parent case hierarchy
     const parentCase = await tx.case.findUnique({
@@ -58,7 +60,7 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
       }
     });
 
-    if (!parentCase) throw new Error('Parent case not found');
+    if (!parentCase) throw new Error(`Parent case CASE-${parentCaseId} not found`);
 
     // Create the Base Case Clone
     const childCase = await tx.case.create({
@@ -71,29 +73,35 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
         dsa_notes: parentCase.dsa_notes,
         esr_generated: parentCase.esr_generated,
         stage: 'LEAD_SENT_TO_LENDER',
-        
+
         customer_name: parentCase.customer_name,
         entity_type: parentCase.entity_type,
         cibil_score: parentCase.cibil_score,
         alert_flag: parentCase.alert_flag,
         created_by_user_id: userId,
-        
+
+        // CRITICAL: lead_date must be set so this case shows in pipeline
+        lead_date: new Date(),
+
         // Tracking & snapshot fields
         parent_case_id: parentCaseId,
-        platform_lender_id: platform_lender_id,
-        tenant_lender_id: tenant_lender_id,
-        contact_id: contact_id,
-        dsa_code: dsa_code,
-        contact_name: contact_name,
-        contact_email: contact_email,
-        contact_mobile: contact_mobile,
+        // NOTE: platform_lender_id is Int? on Case, so we cannot set a string lender UUID here.
+        // tenant_lender_id (Int?) is the correct FK to track the lender.
+        tenant_lender_id: tenant_lender_id ? parseInt(tenant_lender_id, 10) : null,
+        contact_id: contact_id ? parseInt(contact_id, 10) : null,
+        dsa_code: dsa_code || null,
+        contact_name: contact_name || null,
+        contact_email: contact_email || null,
+        contact_mobile: contact_mobile || null,
         proposal_sent_at: new Date(),
         proposal_sent_by_user_id: userId,
         is_cloned_snapshot: true
       }
     });
 
-    // Clone Applicants
+    console.log(`[CLONE] Created child case CASE-${childCase.id} from parent CASE-${parentCaseId}`);
+
+    // Clone Applicants — build a map: parentApplicantId → childApplicantId
     const applicantIdMap = {};
     for (const app of parentCase.applicants) {
       const newApp = await tx.applicant.create({
@@ -116,6 +124,8 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
       applicantIdMap[app.id] = newApp.id;
     }
 
+    console.log(`[CLONE] Cloned ${parentCase.applicants.length} applicants`);
+
     // Clone Property Details
     if (parentCase.property) {
       await tx.casePropertyDetails.create({
@@ -130,11 +140,13 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
       });
     }
 
+    // Clone Income Entries
     if (parentCase.income_entries.length > 0) {
       await tx.caseIncomeEntry.createMany({
         data: parentCase.income_entries.map(inc => ({
           case_id: childCase.id,
-          applicant_id: inc.applicant_id ? applicantIdMap[inc.applicant_id] : null,
+          // Remap applicant_id — if not found in map, skip (null is allowed)
+          applicant_id: inc.applicant_id ? (applicantIdMap[inc.applicant_id] || null) : null,
           income_type: inc.income_type,
           applicant_label: inc.applicant_label,
           annual_amount: inc.annual_amount,
@@ -144,27 +156,32 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
       });
     }
 
+    // Clone Credit Obligations
     if (parentCase.obligations.length > 0) {
-      await tx.caseCreditObligation.createMany({
-        data: parentCase.obligations.map(ob => ({
-          case_id: childCase.id,
-          applicant_id: applicantIdMap[ob.applicant_id],
-          lender_name: ob.lender_name,
-          loan_type: ob.loan_type,
-          loan_amount: ob.loan_amount,
-          outstanding_amount: ob.outstanding_amount,
-          loan_start_date: ob.loan_start_date,
-          emi_per_month: ob.emi_per_month,
-          status: ob.status,
-          source: ob.source,
-          needs_verification: ob.needs_verification,
-          include_in_foir: ob.include_in_foir,
-          remarks: ob.remarks
-        }))
-      });
+      // Only clone obligations where the applicant_id has been successfully remapped
+      const validObligations = parentCase.obligations.filter(ob => applicantIdMap[ob.applicant_id]);
+      if (validObligations.length > 0) {
+        await tx.caseCreditObligation.createMany({
+          data: validObligations.map(ob => ({
+            case_id: childCase.id,
+            applicant_id: applicantIdMap[ob.applicant_id],
+            lender_name: ob.lender_name,
+            loan_type: ob.loan_type,
+            loan_amount: ob.loan_amount,
+            outstanding_amount: ob.outstanding_amount,
+            loan_start_date: ob.loan_start_date,
+            emi_per_month: ob.emi_per_month,
+            status: ob.status,
+            source: ob.source,
+            needs_verification: ob.needs_verification,
+            include_in_foir: ob.include_in_foir,
+            remarks: ob.remarks
+          }))
+        });
+      }
     }
 
-    // Clone ESR Financials
+    // Clone ESR Financials (snapshot for lender-specific analysis)
     if (parentCase.esr_financials) {
       const e = parentCase.esr_financials;
       await tx.caseEsrFinancials.create({
@@ -188,53 +205,72 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
           gst_industry_type: e.gst_industry_type,
           gst_industry_margin: e.gst_industry_margin,
           bank_avg_balance: e.bank_avg_balance,
+          bank_total_credits: e.bank_total_credits,
+          bank_avg_monthly_credit: e.bank_avg_monthly_credit,
           bank_monthly_income: e.bank_monthly_income,
           net_profit_income: e.net_profit_income,
           gst_income: e.gst_income,
           banking_income: e.banking_income,
+          salaried_income: e.salaried_income,
+          salaried_income_source: e.salaried_income_source,
+          salaried_slip_count: e.salaried_slip_count,
           selected_income_method: e.selected_income_method,
           selected_monthly_income: e.selected_monthly_income,
           constitution_type: e.constitution_type,
           employment_type: e.employment_type,
-          business_vintage_months: e.business_vintage_months
+          business_vintage_months: e.business_vintage_months,
+          itr_remuneration: e.itr_remuneration,
+          double_whammy_flag: e.double_whammy_flag,
+          net_worth: e.net_worth,
+          salaried_incentive_income: e.salaried_incentive_income,
+          salaried_other_income: e.salaried_other_income,
+          manual_eligible_loan_amount: e.manual_eligible_loan_amount,
+          manual_proposed_emi: e.manual_proposed_emi,
+          extraction_status: 'COMPLETED' // Cloned snapshot is already extracted
         }
       });
     }
 
-    // Clone External Metadata (Preserving remote JSON/File links but duplicating DB rows to map to new applicants)
-    
-    // Bureau Checks
+    // Clone Bureau Checks
+    // BureauVerification.applicant_id is required (non-nullable), so only clone if we have a valid mapping
     for (const b of parentCase.bureau_checks) {
+      const childApplicantId = applicantIdMap[b.applicant_id];
+      if (!childApplicantId) {
+        console.warn(`[CLONE] Skipping bureau check — no applicant mapping for applicant_id=${b.applicant_id}`);
+        continue;
+      }
       await tx.bureauVerification.create({
         data: {
           case_id: childCase.id,
-          applicant_id: b.applicant_id ? applicantIdMap[b.applicant_id] : null,
+          applicant_id: childApplicantId,
           applicant_type: b.applicant_type,
-          request_id: b.request_id + '_CLONE_' + Math.random().toString(36).substring(7), // bypass @unique
+          // request_id must be unique — append clone marker
+          request_id: `${b.request_id}_CLONE_${Math.random().toString(36).substring(2, 9)}`,
           stan: b.stan,
           mobile_number: b.mobile_number,
           score: b.score,
-          raw_response: b.raw_response ? b.raw_response : null,
+          raw_response: b.raw_response || null,
           status: b.status,
           emi_obligations_total: b.emi_obligations_total
         }
       });
     }
 
-    // Bank Statements
+    // Clone Bank Statements
     for (const b of parentCase.bank_statements) {
       await tx.bankStatementAnalysisRequest.create({
         data: {
           tenant_id: tenantId,
           customer_id: parentCase.customer_id,
           case_id: childCase.id,
-          applicant_id: b.applicant_id ? applicantIdMap[b.applicant_id] : null,
-          report_id: b.report_id ? b.report_id + '_CLONE_' + Math.random().toString(36).substring(7) : null, // bypass @unique
+          applicant_id: b.applicant_id ? (applicantIdMap[b.applicant_id] || null) : null,
+          // report_id must be unique — append clone marker
+          report_id: b.report_id ? `${b.report_id}_CLONE_${Math.random().toString(36).substring(2, 9)}` : null,
           status: b.status,
           provider_message: b.provider_message,
           report_json_url: b.report_json_url,
           report_excel_url: b.report_excel_url,
-          files_payload: b.files_payload ? b.files_payload : null,
+          files_payload: b.files_payload || null,
           avg_bank_balance_latest_year: b.avg_bank_balance_latest_year,
           avg_bank_balance_previous_year: b.avg_bank_balance_previous_year,
           financial_year_latest: b.financial_year_latest,
@@ -244,20 +280,21 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
       });
     }
 
-    // ITR Analytics
+    // Clone ITR Analytics
     for (const i of parentCase.itr_analytics) {
       await tx.itrAnalyticsRequest.create({
         data: {
           tenant_id: tenantId,
           customer_id: parentCase.customer_id,
           case_id: childCase.id,
-          applicant_id: i.applicant_id ? applicantIdMap[i.applicant_id] : null,
+          applicant_id: i.applicant_id ? (applicantIdMap[i.applicant_id] || null) : null,
           pan: i.pan,
-          reference_id: i.reference_id ? i.reference_id + '_CLONE_' + Math.random().toString(36).substring(7) : null,
+          // reference_id must be unique — append clone marker
+          reference_id: i.reference_id ? `${i.reference_id}_CLONE_${Math.random().toString(36).substring(2, 9)}` : null,
           status: i.status,
           provider_message: i.provider_message,
           excel_url: i.excel_url,
-          analytics_payload: i.analytics_payload ? i.analytics_payload : null,
+          analytics_payload: i.analytics_payload || null,
           net_profit_latest_year: i.net_profit_latest_year,
           net_profit_previous_year: i.net_profit_previous_year,
           gross_receipts_latest_year: i.gross_receipts_latest_year,
@@ -269,24 +306,29 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
       });
     }
 
-    // GST Requests
+    // Clone GST Requests
     for (const g of parentCase.gst_requests) {
       await tx.gstrAnalyticsRequest.create({
         data: {
           tenant_id: tenantId,
           customer_id: parentCase.customer_id,
           case_id: childCase.id,
-          applicant_id: g.applicant_id ? applicantIdMap[g.applicant_id] : null,
+          applicant_id: g.applicant_id ? (applicantIdMap[g.applicant_id] || null) : null,
           mode: g.mode,
           auth_type: g.auth_type,
           gstin: g.gstin,
           username: g.username,
           from_date: g.from_date || '',
           to_date: g.to_date || '',
-          provider_request_id: g.provider_request_id ? g.provider_request_id + '_CLONE_' + Math.random().toString(36).substring(7) : null,
+          entity_details: g.entity_details ?? false,
+          pdf_url_requested: g.pdf_url_requested ?? false,
+          // provider_request_id must be unique — append clone marker
+          provider_request_id: g.provider_request_id
+            ? `${g.provider_request_id}_CLONE_${Math.random().toString(36).substring(2, 9)}`
+            : null,
           status: g.status,
           provider_message: g.provider_message,
-          raw_gst_data: g.raw_gst_data ? g.raw_gst_data : null,
+          raw_gst_data: g.raw_gst_data || null,
           report_json_url: g.report_json_url,
           report_excel_url: g.report_excel_url,
           report_pdf_url: g.report_pdf_url,
@@ -299,32 +341,48 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
       });
     }
 
-    // Salary OCR
+    // Clone Salary OCR Results
+    // SalarySlipOcrResult.applicant_id is required (non-nullable).
+    // Schema fields: month, year (NOT salary_month, salary_year).
+    // @@unique([case_id, applicant_id, month, year]) — new case_id means no conflict.
     for (const o of parentCase.salary_ocr_results) {
+      const childApplicantId = applicantIdMap[o.applicant_id];
+      if (!childApplicantId) {
+        console.warn(`[CLONE] Skipping salary OCR — no applicant mapping for applicant_id=${o.applicant_id}`);
+        continue;
+      }
       await tx.salarySlipOcrResult.create({
         data: {
           tenant_id: tenantId,
           customer_id: parentCase.customer_id,
           case_id: childCase.id,
-          applicant_id: o.applicant_id ? applicantIdMap[o.applicant_id] : null,
-          report_json_url: o.report_json_url,
-          net_salary: o.net_salary,
+          applicant_id: childApplicantId,
+          month: o.month,
+          year: o.year,
+          ocr_status: o.ocr_status,
+          source: o.source,
           gross_salary: o.gross_salary,
+          net_salary: o.net_salary,
+          deductions: o.deductions,
           employer_name: o.employer_name,
-          salary_month: o.salary_month,
-          salary_year: o.salary_year
+          employee_name: o.employee_name,
+          vendor_name: o.vendor_name,
+          vendor_job_id: o.vendor_job_id,
+          raw_ocr_response: o.raw_ocr_response || null,
+          extracted_json: o.extracted_json || null,
+          error_message: o.error_message
         }
       });
     }
 
-    // Documents
+    // Clone Documents (links only — same physical file, new DB row pointing to child case)
     for (const d of parentCase.documents) {
       await tx.document.create({
         data: {
           tenant_id: tenantId,
           customer_id: parentCase.customer_id,
           case_id: childCase.id,
-          applicant_id: d.applicant_id ? applicantIdMap[d.applicant_id] : null,
+          applicant_id: d.applicant_id ? (applicantIdMap[d.applicant_id] || null) : null,
           document_type: d.document_type,
           source_type: d.source_type,
           source_url: d.source_url,
@@ -338,12 +396,12 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
           checksum_md5: d.checksum_md5,
           status: d.status,
           uploaded_by_user_id: userId,
-          metadata: d.metadata ? d.metadata : null
+          metadata: d.metadata || null
         }
       });
     }
 
-    // Add ActivityLogs and Stage History
+    // Stage History for the new child case
     await tx.caseStageHistory.create({
       data: {
         case_id: childCase.id,
@@ -354,11 +412,13 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
       }
     });
 
+    // Activity Logs
     await tx.activityLog.create({
       data: {
         case_id: childCase.id,
+        customer_id: parentCase.customer_id,
         activity_type: 'CHILD_CASE_CREATED',
-        description: `Child case created for ${lender_name}. Cloned from source Case CASE-${parentCaseId}.`,
+        description: `Child case created for ${lender_name}. Cloned from source CASE-${parentCaseId}.`,
         performed_by_user_id: userId
       }
     });
@@ -366,6 +426,7 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
     await tx.activityLog.create({
       data: {
         case_id: parentCaseId,
+        customer_id: parentCase.customer_id,
         activity_type: 'PROPOSAL_SENT',
         description: `Proposal sent to ${lender_name}. Created child lender case CASE-${childCase.id}.`,
         performed_by_user_id: userId
