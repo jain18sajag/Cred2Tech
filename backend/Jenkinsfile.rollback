@@ -47,8 +47,7 @@ pipeline {
         DEPLOY_BASE   = '/opt/cred2tech/cred2tech-backend'
         ENV_FILE      = '/etc/cred2tech/cred2tech-backend.env'
         BACKEND_DIR   = 'backend'
-        APP_PORT      = '5000'
-        HEALTH_URL    = 'http://localhost:5000/health'
+        // APP_PORT is resolved at runtime from PORT in the service env file.
         NOTIFY_EMAIL  = 'adarsh.suradkar@cred2tech.com, cred2tech@gmail.com'
         GIT_REPO      = 'https://github.com/jain18sajag/Cred2Tech.git'
         RESTORE_SCRIPT = '/opt/cred2tech/scripts/cred2tech-backend-db-restore.sh'
@@ -104,8 +103,12 @@ pipeline {
                     if (params.RESTORE_DB && !params.CONFIRM_DB_OVERWRITE) {
                         error("RESTORE_DB is set but CONFIRM_DB_OVERWRITE is false — refusing to overwrite live data. Re-run with CONFIRM_DB_OVERWRITE=true.")
                     }
-                    env.PREV_RELEASE = sh(script: "readlink -f ${DEPLOY_BASE}/current 2>/dev/null || echo ''", returnStdout: true).trim()
+                    env.PREV_RELEASE = sh(script: "if [ -L ${DEPLOY_BASE}/current ]; then readlink -f ${DEPLOY_BASE}/current; else echo ''; fi", returnStdout: true).trim()
                     echo "On failure, will restore previous live release: ${env.PREV_RELEASE ?: '(none)'}"
+                    // Resolve listen port from the service env file (default 5000).
+                    env.APP_PORT = sh(returnStdout: true, script: "grep -E '^PORT=' ${ENV_FILE} 2>/dev/null | tail -1 | cut -d= -f2- | tr -dc '0-9' || true").trim()
+                    if (!env.APP_PORT) { env.APP_PORT = '5000' }
+                    echo "App port: ${env.APP_PORT}"
                 }
             }
         }
@@ -254,7 +257,7 @@ ECOEOF
                     for (int i = 1; i <= 12; i++) {
                         def code = '000'
                         try {
-                            code = sh(script: "curl -s -o /dev/null -w '%{http_code}' ${HEALTH_URL}", returnStdout: true).trim()
+                            code = sh(script: "curl -s -o /dev/null -w '%{http_code}' http://localhost:${APP_PORT}/health", returnStdout: true).trim()
                         } catch (Exception ignored) {}
                         if (code == '200') { healthy = true; echo "Health check passed (attempt ${i}/12): HTTP ${code}"; break }
                         echo "Attempt ${i}/12: HTTP ${code} — waiting 5s..."

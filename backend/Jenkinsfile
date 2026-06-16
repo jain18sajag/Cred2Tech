@@ -39,8 +39,9 @@ pipeline {
         DEPLOY_BASE   = '/opt/cred2tech/cred2tech-backend'
         ENV_FILE      = '/etc/cred2tech/cred2tech-backend.env'
         BACKEND_DIR   = 'backend'                       // sub-path inside the mono-repo
-        APP_PORT      = '5000'
-        HEALTH_URL    = 'http://localhost:5000/health'
+        // APP_PORT is resolved at runtime from PORT in the service env file (so this
+        // PROD instance can run on its own port — 5000 is already taken on the box by
+        // uat_backend). Default 5000 if PORT is not set in the env file.
         NOTIFY_EMAIL  = 'adarsh.suradkar@cred2tech.com, cred2tech@gmail.com'
         GIT_REPO      = 'https://github.com/jain18sajag/Cred2Tech.git'
         // Installed copy of scripts/db-backup.sh; the pipeline falls back to an
@@ -238,8 +239,16 @@ pipeline {
                             env.RELEASE_TS  = sh(script: 'date +%Y%m%d_%H%M%S', returnStdout: true).trim()
                             env.RELEASE_DIR = "${DEPLOY_BASE}/releases/${env.RELEASE_TS}"
                             env.DEPLOYED    = 'false'
+                            // Resolve the listen port from PORT in the service env file
+                            // (single source of truth). Default 5000 if unset.
+                            env.APP_PORT = sh(
+                                returnStdout: true,
+                                script: "grep -E '^PORT=' ${ENV_FILE} 2>/dev/null | tail -1 | cut -d= -f2- | tr -dc '0-9' || true"
+                            ).trim()
+                            if (!env.APP_PORT) { env.APP_PORT = '5000' }
                             echo "Release ID: ${env.RELEASE_TS}"
                             echo "Target:     ${env.RELEASE_DIR}"
+                            echo "App port:   ${env.APP_PORT} (from ${ENV_FILE})"
                         }
                     }
                 }
@@ -321,8 +330,13 @@ pipeline {
                 stage('Create Release') {
                     steps {
                         script {
+                            // Only capture a previous release if 'current' is an actual
+                            // symlink. (GNU `readlink -f` prints the path with exit 0 even
+                            // when the target is missing, which on a first deploy wrongly
+                            // set PREV_RELEASE to the symlink itself and made the failure
+                            // handler create a self-referential symlink.)
                             env.PREV_RELEASE = sh(
-                                script: "readlink -f ${DEPLOY_BASE}/current 2>/dev/null || echo ''",
+                                script: "if [ -L ${DEPLOY_BASE}/current ]; then readlink -f ${DEPLOY_BASE}/current; else echo ''; fi",
                                 returnStdout: true
                             ).trim()
 
@@ -468,7 +482,7 @@ except Exception:
                                 def code = '000'
                                 try {
                                     code = sh(
-                                        script: "curl -s -o /dev/null -w '%{http_code}' ${HEALTH_URL}",
+                                        script: "curl -s -o /dev/null -w '%{http_code}' http://localhost:${APP_PORT}/health",
                                         returnStdout: true
                                     ).trim()
                                 } catch (Exception ignored) {}
