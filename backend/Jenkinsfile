@@ -1,0 +1,557 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// CI/CD pipeline for cred2tech-backend (Express + Prisma / PostgreSQL).
+//
+// This is a MONO-REPO (backend/ + frontend/). This pipeline deploys ONLY the
+// backend/ subtree to production — the frontend is never touched here. Pushes
+// that change only frontend/ are skipped (unless FORCE_DEPLOY is set).
+//
+// Safety-first: BEFORE anything is deployed we take a full PostgreSQL backup
+// (pg_dump → gzip → AES-256 encrypted) and push it to S3, so a bad deploy can be
+// restored immediately (see Jenkinsfile.rollback + scripts/db-restore.sh). A
+// failed backup BLOCKS the deploy — we never change production without a fresh
+// offsite backup in hand.
+//
+// Set Jenkins job "Script Path" = backend/Jenkinsfile.
+// ─────────────────────────────────────────────────────────────────────────────
+pipeline {
+    agent any
+
+    tools {
+        nodejs 'node-lts'
+    }
+
+    parameters {
+        booleanParam(
+            name: 'FORCE_DEPLOY',
+            defaultValue: false,
+            description: 'Deploy even if this push did not change backend/ (e.g. manual redeploy).'
+        )
+        booleanParam(
+            name: 'RUN_MIGRATIONS',
+            defaultValue: false,
+            description: 'Run `prisma migrate deploy` against production after the backup. Leave OFF unless this release ships schema changes.'
+        )
+    }
+
+    environment {
+        SERVICE       = 'cred2tech-backend'
+        PM2_APP       = 'cred2tech-backend'
+        DEPLOY_BASE   = '/opt/cred2tech/cred2tech-backend'
+        ENV_FILE      = '/etc/cred2tech/cred2tech-backend.env'
+        BACKEND_DIR   = 'backend'                       // sub-path inside the mono-repo
+        APP_PORT      = '5000'
+        HEALTH_URL    = 'http://localhost:5000/health'
+        NOTIFY_EMAIL  = 'adarsh.suradkar@cred2tech.com, cred2tech@gmail.com'
+        GIT_REPO      = 'https://github.com/jain18sajag/Cred2Tech.git'
+        // Installed copy of scripts/db-backup.sh; the pipeline falls back to an
+        // inline backup if it is not present on the server.
+        BACKUP_SCRIPT = '/opt/cred2tech/scripts/cred2tech-backend-db-backup.sh'
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 30, unit: 'MINUTES')
+        timestamps()
+        ansiColor('xterm')
+    }
+
+    stages {
+
+        // ── 1. Checkout ──────────────────────────────────────────────────────────
+        stage('Checkout') {
+            steps {
+                cleanWs()
+                git branch: 'main',
+                    credentialsId: 'github-cred2tech',
+                    url: "${GIT_REPO}"
+            }
+        }
+
+        // ── 2. Validate Branch ───────────────────────────────────────────────────
+        stage('Validate Branch') {
+            steps {
+                script {
+                    def branch = sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
+                    if (branch != 'main') {
+                        error("Pipeline only runs on main branch. Got: ${branch}")
+                    }
+                    echo "Branch validated: ${branch}"
+                }
+            }
+        }
+
+        // ── 3. Detect Backend Changes (mono-repo gate) ───────────────────────────
+        // Only deploy when this push actually changed backend/. Frontend-only
+        // commits are skipped so we never needlessly restart the backend.
+        stage('Detect Backend Changes') {
+            steps {
+                script {
+                    if (params.FORCE_DEPLOY) {
+                        env.BACKEND_CHANGED = 'true'
+                        echo "FORCE_DEPLOY set — deploying regardless of changed paths."
+                    } else if (!env.GIT_PREVIOUS_SUCCESSFUL_COMMIT?.trim() || !env.GIT_COMMIT?.trim()) {
+                        env.BACKEND_CHANGED = 'true'
+                        echo "No previous successful commit recorded — treating as a backend change (safe default)."
+                    } else {
+                        // Fail SAFE: if the commit range can't be resolved (e.g. a shallow
+                        // clone), emit a sentinel so we deploy rather than wrongly skip.
+                        def changed = sh(
+                            script: """
+                                if git rev-parse --verify --quiet ${env.GIT_PREVIOUS_SUCCESSFUL_COMMIT}^{commit} >/dev/null \
+                                   && git rev-parse --verify --quiet ${env.GIT_COMMIT}^{commit} >/dev/null; then
+                                    git diff --name-only ${env.GIT_PREVIOUS_SUCCESSFUL_COMMIT} ${env.GIT_COMMIT} | grep -E '^${BACKEND_DIR}/' || true
+                                else
+                                    echo '__DIFF_UNAVAILABLE__'
+                                fi
+                            """,
+                            returnStdout: true
+                        ).trim()
+                        env.BACKEND_CHANGED = changed ? 'true' : 'false'
+                        if (changed == '__DIFF_UNAVAILABLE__') {
+                            echo "Could not resolve commit range — deploying to be safe."
+                        } else {
+                            echo changed ? "Backend changes detected:\n${changed}" : "No backend/ changes in this push — skipping deploy."
+                        }
+                    }
+                    if (env.BACKEND_CHANGED != 'true') {
+                        currentBuild.result = 'NOT_BUILT'
+                        currentBuild.description = 'Skipped — no backend changes'
+                    }
+                }
+            }
+        }
+
+        // ── 4. Deploy Backend (all deploy work is gated on backend changes) ───────
+        stage('Deploy Backend') {
+            when { expression { env.BACKEND_CHANGED == 'true' } }
+            stages {
+
+                // ── 4a. Database Backup (ALWAYS FIRST) ───────────────────────────
+                // Full pg_dump → encrypted → local + S3 BEFORE we touch production.
+                // A failure here aborts the deploy: no backup, no deploy.
+                stage('Database Backup → S3') {
+                    steps {
+                        script {
+                            echo "Taking pre-deploy PostgreSQL backup (local + S3)…"
+                            // Prefer the installed script; otherwise use the copy that was
+                            // just checked out into the workspace. Either way it does a full
+                            // pg_dump → encrypt → local + S3 and prints BACKUP_S3_KEY=…
+                            // `set -euo pipefail` inside the script means any failure (dump,
+                            // missing creds, S3 upload) returns non-zero → this stage fails →
+                            // the whole deploy aborts. No backup, no deploy.
+                            def out = sh(returnStdout: true, script: """
+                                set -euo pipefail
+                                if [ -x "${BACKUP_SCRIPT}" ]; then
+                                    SCRIPT="${BACKUP_SCRIPT}"
+                                else
+                                    echo "Installed backup script not found — using the checked-out copy."
+                                    SCRIPT="${BACKEND_DIR}/scripts/db-backup.sh"
+                                    chmod +x "\$SCRIPT"
+                                fi
+                                "\$SCRIPT" predeploy
+                            """).trim()
+                            echo out
+                            // Capture the S3 key + local path for the notification emails.
+                            def keyLine  = out.readLines().find { it.startsWith('BACKUP_S3_KEY=') }
+                            def fileLine = out.readLines().find { it.startsWith('BACKUP_FILE=') }
+                            env.BACKUP_S3_KEY = keyLine ? keyLine.replace('BACKUP_S3_KEY=', '').trim() : ''
+                            env.BACKUP_FILE   = fileLine ? fileLine.replace('BACKUP_FILE=', '').trim() : ''
+                            if (!env.BACKUP_S3_KEY) {
+                                error("Pre-deploy backup did not produce an S3 key — aborting deploy (no verified offsite backup).")
+                            }
+                            echo "Pre-deploy backup safe in S3: ${env.BACKUP_S3_KEY}"
+                        }
+                    }
+                }
+
+                // ── 4b. Secret Scan (warn-only) ──────────────────────────────────
+                stage('Secret Scan') {
+                    steps {
+                        script {
+                            def hits = sh(
+                                script: '''
+                                    grep -rn \
+                                      -e "password[[:space:]]*=[[:space:]]*['\\"][^'\\"]{6,}['\\"]" \
+                                      -e "secret[[:space:]]*=[[:space:]]*['\\"][^'\\"]{6,}['\\"]" \
+                                      -e "AKIA[0-9A-Z]\\{16\\}" \
+                                      -e "sk-[a-zA-Z0-9]\\{32,\\}" \
+                                      --include="*.js" --include="*.json" \
+                                      --exclude-dir=node_modules --exclude-dir=.git \
+                                      backend 2>/dev/null || true
+                                ''',
+                                returnStdout: true
+                            ).trim()
+                            if (hits) {
+                                unstable("Secret scan: potential hardcoded secrets detected. Review output.")
+                                echo "Matches:\n${hits}"
+                            } else {
+                                echo "Secret scan passed."
+                            }
+                        }
+                    }
+                }
+
+                // ── 4c. Install + Prisma Generate (CI validation) ────────────────
+                stage('Install & Validate') {
+                    steps {
+                        sh """
+                            cd ${BACKEND_DIR}
+                            npm ci
+                            npx prisma generate
+                            node -e "require('./src/app.js'); console.log('app.js loads OK')"
+                            echo "Dependencies installed, Prisma client generated, app loads."
+                        """
+                    }
+                }
+
+                // ── 4d. Generate Artifact metadata ───────────────────────────────
+                stage('Generate Artifact') {
+                    steps {
+                        script {
+                            env.RELEASE_TS  = sh(script: 'date +%Y%m%d_%H%M%S', returnStdout: true).trim()
+                            env.RELEASE_DIR = "${DEPLOY_BASE}/releases/${env.RELEASE_TS}"
+                            env.DEPLOYED    = 'false'
+                            echo "Release ID: ${env.RELEASE_TS}"
+                            echo "Target:     ${env.RELEASE_DIR}"
+                        }
+                    }
+                }
+
+                // ── 4e. Approval Gate ────────────────────────────────────────────
+                stage('Approval Gate') {
+                    steps {
+                        script {
+                            def gitRange = (env.GIT_PREVIOUS_SUCCESSFUL_COMMIT?.trim() && env.GIT_COMMIT?.trim()) ? "${env.GIT_PREVIOUS_SUCCESSFUL_COMMIT}..${env.GIT_COMMIT}" : "-10"
+                            env.CHANGELOG = sh(returnStdout: true, script: "git log --no-merges --pretty=format:'- %s — %an (%h)' ${gitRange} 2>/dev/null | head -25").trim()
+                            if (!env.CHANGELOG?.trim()) { env.CHANGELOG = '(no new commits detected)' }
+                            echo "Changes in this update:\n${env.CHANGELOG}"
+
+                            emailext(
+                                to: "${env.NOTIFY_EMAIL}",
+                                subject: "[${SERVICE}] Build #${BUILD_NUMBER} awaiting PRODUCTION approval",
+                                body: """
+                                    <h2 style="color:#4338ca;">Production deployment awaiting approval</h2>
+                                    <p>Build <b>#${BUILD_NUMBER}</b> (${env.RELEASE_TS}) for <b>${SERVICE}</b> is ready to deploy.</p>
+                                    <p><b>Pre-deploy backup:</b> <code>${env.BACKUP_S3_KEY}</code> (already in S3)</p>
+                                    <p><b>Run migrations:</b> ${params.RUN_MIGRATIONS}</p>
+                                    <p style="margin-top:14px;margin-bottom:4px;"><b>Changes in this update</b></p>
+                                    <pre style="background:#f3f4f6;padding:10px;border-radius:6px;font-size:13px;white-space:pre-wrap;">${env.CHANGELOG}</pre>
+                                    <p style="margin-top:16px;">
+                                      <a href="${BUILD_URL}input" style="background:#4338ca;color:#fff;padding:11px 20px;border-radius:6px;text-decoration:none;font-weight:bold;">Review &amp; Approve Deployment</a>
+                                    </p>
+                                """,
+                                mimeType: 'text/html'
+                            )
+
+                            timeout(time: 30, unit: 'MINUTES') {
+                                def approver = input(
+                                    id: 'DeployApproval',
+                                    message: "Deploy ${SERVICE} build #${BUILD_NUMBER} (${env.RELEASE_TS}) to production?\n\nPre-deploy backup: ${env.BACKUP_S3_KEY}\nRun migrations: ${params.RUN_MIGRATIONS}\n\nChanges:\n${env.CHANGELOG}",
+                                    ok: 'Deploy to Production',
+                                    submitter: 'approver',
+                                    submitterParameter: 'APPROVED_BY'
+                                )
+                                env.APPROVED_BY = approver
+                                echo "Approved by: ${approver}"
+                            }
+                        }
+                    }
+                }
+
+                // ── 4f. Create Release (backend subtree only) ────────────────────
+                stage('Create Release') {
+                    steps {
+                        script {
+                            env.PREV_RELEASE = sh(
+                                script: "readlink -f ${DEPLOY_BASE}/current 2>/dev/null || echo ''",
+                                returnStdout: true
+                            ).trim()
+
+                            // Copy ONLY the backend subtree — the frontend never reaches prod.
+                            sh """
+                                mkdir -p ${env.RELEASE_DIR}
+                                cp -r ${BACKEND_DIR}/src               ${env.RELEASE_DIR}/
+                                cp -r ${BACKEND_DIR}/config            ${env.RELEASE_DIR}/
+                                cp -r ${BACKEND_DIR}/prisma            ${env.RELEASE_DIR}/
+                                cp -r ${BACKEND_DIR}/scripts           ${env.RELEASE_DIR}/ 2>/dev/null || true
+                                cp -r ${BACKEND_DIR}/docs              ${env.RELEASE_DIR}/ 2>/dev/null || true
+                                cp    ${BACKEND_DIR}/server.js         ${env.RELEASE_DIR}/
+                                cp    ${BACKEND_DIR}/package.json      ${env.RELEASE_DIR}/
+                                cp    ${BACKEND_DIR}/package-lock.json ${env.RELEASE_DIR}/
+                                cp    ${ENV_FILE}                      ${env.RELEASE_DIR}/.env
+                                echo "Release folder ready: ${env.RELEASE_DIR}"
+                            """
+
+                            // version.json — served by GET /health so the pipeline can prove
+                            // PM2 is running THIS release (catches stale-process deploys).
+                            sh """
+                                COMMIT=\$(git rev-parse --short HEAD)
+                                printf '{"release":"%s","commit":"%s","build":"%s"}\\n' \
+                                    "${env.RELEASE_TS}" "\$COMMIT" "${BUILD_NUMBER}" \
+                                    > ${env.RELEASE_DIR}/version.json
+                                echo "version.json: \$(cat ${env.RELEASE_DIR}/version.json)"
+                            """
+
+                            // PM2 ecosystem points at the STABLE 'current' symlink (not the
+                            // release dir) so a graceful reload always re-execs the path that
+                            // Switch Symlink repointed → reliably loads new code.
+                            sh """
+                                cat > ${env.RELEASE_DIR}/ecosystem.config.js << 'ECOEOF'
+module.exports = {
+  apps: [
+    {
+      name: '${PM2_APP}',
+      script: '${DEPLOY_BASE}/current/server.js',
+      cwd: '${DEPLOY_BASE}/current',
+      instances: 1,
+      exec_mode: 'fork',
+      env_production: { NODE_ENV: 'production', PORT: ${APP_PORT} },
+      watch: false,
+      max_memory_restart: '512M',
+      error_file: '/var/log/pm2/${PM2_APP}-error.log',
+      out_file: '/var/log/pm2/${PM2_APP}-out.log',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      merge_logs: true,
+      restart_delay: 3000,
+      max_restarts: 5,
+      min_uptime: '10s',
+      kill_timeout: 5000,
+    },
+  ],
+};
+ECOEOF
+                                echo "ecosystem.config.js written → script points at ${DEPLOY_BASE}/current"
+                            """
+                        }
+                    }
+                }
+
+                // ── 4g. Install Prod Dependencies + Prisma Client ────────────────
+                stage('Install Prod Deps') {
+                    steps {
+                        sh """
+                            cd ${env.RELEASE_DIR}
+                            npm ci
+                            npx prisma generate
+                            echo "Production dependencies installed and Prisma client generated."
+                        """
+                    }
+                }
+
+                // ── 4h. DB Migrate (optional, gated by RUN_MIGRATIONS) ───────────
+                // Runs AFTER the pre-deploy backup, BEFORE the symlink switch, so a
+                // failed migration leaves the OLD code live on the OLD schema and the
+                // backup is available for restore.
+                stage('DB Migrate') {
+                    when { expression { params.RUN_MIGRATIONS } }
+                    steps {
+                        sh """
+                            cd ${env.RELEASE_DIR}
+                            echo "Applying Prisma migrations (prisma migrate deploy)…"
+                            npx prisma migrate deploy
+                            echo "Migrations applied."
+                        """
+                    }
+                }
+
+                // ── 4i. Switch Symlink ───────────────────────────────────────────
+                stage('Switch Symlink') {
+                    steps {
+                        sh """
+                            ln -sfn ${env.RELEASE_DIR} ${DEPLOY_BASE}/current
+                            echo "Symlink: ${DEPLOY_BASE}/current → ${env.RELEASE_DIR}"
+                        """
+                        script { env.DEPLOYED = 'true' }
+                    }
+                }
+
+                // ── 4j. PM2 Reload ───────────────────────────────────────────────
+                stage('PM2 Reload') {
+                    steps {
+                        sh """
+                            PM2="\$(which pm2)"
+                            ECO="${DEPLOY_BASE}/current/ecosystem.config.js"
+                            STABLE_PATH="${DEPLOY_BASE}/current/server.js"
+
+                            RUNNING_PATH=\$(sudo \$PM2 jlist 2>/dev/null | python3 -c "
+import sys, json
+try:
+    data = sys.stdin.read()
+    apps = json.loads(data[data.index('['):])
+    match = [a for a in apps if a['name'] == '${PM2_APP}']
+    print(match[0]['pm2_env'].get('pm_exec_path', '') if match else 'absent')
+except Exception:
+    print('absent')
+" || echo 'absent')
+                            echo "Running script path: \$RUNNING_PATH"
+                            echo "Stable script path:  \$STABLE_PATH"
+
+                            if [ "\$RUNNING_PATH" = "\$STABLE_PATH" ]; then
+                                sudo \$PM2 reload \$ECO --env production --update-env
+                                echo "Graceful reload complete (new code via symlink)."
+                            else
+                                sudo \$PM2 delete ${PM2_APP} 2>/dev/null || true
+                                sudo \$PM2 start \$ECO --env production
+                                echo "Migrated PM2 onto stable symlink path (one-time restart)."
+                            fi
+                            sudo \$PM2 save
+                            echo "PM2 process live."
+                        """
+                    }
+                }
+
+                // ── 4k. Health Check ─────────────────────────────────────────────
+                stage('Health Check') {
+                    steps {
+                        script {
+                            def healthy = false
+                            for (int i = 1; i <= 12; i++) {
+                                def code = '000'
+                                try {
+                                    code = sh(
+                                        script: "curl -s -o /dev/null -w '%{http_code}' ${HEALTH_URL}",
+                                        returnStdout: true
+                                    ).trim()
+                                } catch (Exception ignored) {}
+                                if (code == '200') {
+                                    healthy = true
+                                    echo "Health check passed (attempt ${i}/12): HTTP ${code}"
+                                    break
+                                }
+                                echo "Attempt ${i}/12: HTTP ${code} — waiting 5s..."
+                                sleep(5)
+                            }
+                            if (!healthy) {
+                                error("Health check failed after 12 attempts — triggering rollback.")
+                            }
+                        }
+                    }
+                }
+
+                // ── 4l. Version Verification ─────────────────────────────────────
+                stage('Version Verification') {
+                    steps {
+                        script {
+                            def verified = false
+                            for (int i = 1; i <= 6; i++) {
+                                try {
+                                    def response = sh(
+                                        script: "curl -sf http://localhost:${APP_PORT}/health",
+                                        returnStdout: true
+                                    ).trim()
+                                    def data = new groovy.json.JsonSlurper().parseText(response)
+                                    if (data.release == env.RELEASE_TS) {
+                                        verified = true
+                                        echo "Version verified ✓ release=${data.release} commit=${data.commit} build=${data.build}"
+                                        break
+                                    }
+                                    echo "Attempt ${i}/6: running release=${data.release}, expected=${env.RELEASE_TS} — waiting 5s..."
+                                } catch (Exception e) {
+                                    echo "Attempt ${i}/6: /health unreachable — ${e.message}"
+                                }
+                                sleep(5)
+                            }
+                            if (!verified) {
+                                error("Version verification FAILED — production is not serving release ${env.RELEASE_TS} (stale PM2 path?).")
+                            }
+                        }
+                    }
+                }
+
+                // ── 4m. Smoke Tests ──────────────────────────────────────────────
+                stage('Smoke Tests') {
+                    steps {
+                        script {
+                            def code = sh(
+                                script: "curl -s -o /dev/null -w '%{http_code}' http://localhost:${APP_PORT}/",
+                                returnStdout: true
+                            ).trim()
+                            if (code != '200') {
+                                error("Smoke test FAILED: / → expected 200, got ${code}")
+                            }
+                            echo "Smoke test OK: / → HTTP ${code}"
+                        }
+                    }
+                }
+
+                // ── 4n. Cleanup Old Releases ─────────────────────────────────────
+                stage('Cleanup Old Releases') {
+                    steps {
+                        sh """
+                            cd ${DEPLOY_BASE}/releases
+                            ls -dt */ | tail -n +6 | xargs -r rm -rf
+                            echo "Retained last 5 releases."
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            emailext(
+                to: "${env.NOTIFY_EMAIL}",
+                subject: "[${SERVICE}] Build #${BUILD_NUMBER} deployed successfully",
+                body: """
+                    <h2 style="color:#059669;">Deployment Successful</h2>
+                    <table>
+                      <tr><td><b>Service</b></td><td>${SERVICE}</td></tr>
+                      <tr><td><b>Build</b></td><td>#${BUILD_NUMBER}</td></tr>
+                      <tr><td><b>Release</b></td><td>${env.RELEASE_TS ?: '—'}</td></tr>
+                      <tr><td><b>Approved by</b></td><td>${env.APPROVED_BY ?: '—'}</td></tr>
+                      <tr><td><b>Migrations</b></td><td>${params.RUN_MIGRATIONS}</td></tr>
+                      <tr><td><b>Pre-deploy backup</b></td><td>${env.BACKUP_S3_KEY ?: '—'}</td></tr>
+                      <tr><td><b>Duration</b></td><td>${currentBuild.durationString}</td></tr>
+                    </table>
+                    <p><a href="${BUILD_URL}">View Build</a></p>
+                """,
+                mimeType: 'text/html'
+            )
+        }
+        unstable {
+            emailext(
+                to: "${env.NOTIFY_EMAIL}",
+                subject: "[${SERVICE}] Build #${BUILD_NUMBER} UNSTABLE (warnings)",
+                body: "<p>Build completed with warnings (e.g. secret scan). Review recommended.</p><p><a href=\"${BUILD_URL}console\">Console</a></p>",
+                mimeType: 'text/html'
+            )
+        }
+        failure {
+            script {
+                if (env.DEPLOYED == 'true' && env.PREV_RELEASE?.trim()) {
+                    echo "Deployment failed — rolling CODE back to: ${env.PREV_RELEASE}"
+                    sh """
+                        PM2="\$(which pm2)"
+                        ln -sfn ${env.PREV_RELEASE} ${DEPLOY_BASE}/current
+                        cd ${DEPLOY_BASE}/current
+                        sudo \$PM2 reload ecosystem.config.js --env production --update-env 2>/dev/null || sudo \$PM2 start ecosystem.config.js --env production
+                        sudo \$PM2 save
+                        echo "Code rolled back → ${env.PREV_RELEASE}"
+                    """
+                } else {
+                    echo "Failure before symlink switch — no code rollback needed."
+                }
+            }
+            emailext(
+                to: "${env.NOTIFY_EMAIL}",
+                subject: "[${SERVICE}] Build #${BUILD_NUMBER} FAILED",
+                body: """
+                    <h2 style="color:#dc2626;">Deployment Failed</h2>
+                    <table>
+                      <tr><td><b>Service</b></td><td>${SERVICE}</td></tr>
+                      <tr><td><b>Build</b></td><td>#${BUILD_NUMBER}</td></tr>
+                      <tr><td><b>Code rollback</b></td><td>${env.DEPLOYED == 'true' ? 'automatic (previous release restored)' : 'not needed (failed before switch)'}</td></tr>
+                      <tr><td><b>DB backup for restore</b></td><td>${env.BACKUP_S3_KEY ?: 'n/a'}</td></tr>
+                    </table>
+                    <p>If a migration changed the schema, restore the DB from the backup above using the rollback pipeline (or scripts/db-restore.sh --s3 &lt;key&gt; --yes).</p>
+                    <p><a href="${BUILD_URL}console">Console</a></p>
+                """,
+                mimeType: 'text/html'
+            )
+        }
+        always {
+            cleanWs()
+        }
+    }
+}

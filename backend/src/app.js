@@ -51,6 +51,21 @@ app.get('/', (req, res) => {
   res.json({ message: 'Welcome to the platform APIs' });
 });
 
+// Liveness + release identity. Used by the CI/CD pipeline for the post-deploy
+// health check AND version verification (confirms PM2 is serving THIS release,
+// not stale code). version.json is written into the release root by Jenkins; in
+// local dev it's absent and we report 'dev'. Intentionally does NOT touch the DB
+// so a transient DB blip can never trip a false rollback.
+app.get('/health', (req, res) => {
+  let version = { release: 'dev', commit: 'unknown', build: 'local' };
+  try {
+    version = JSON.parse(
+      fs.readFileSync(require('path').join(__dirname, '..', 'version.json'), 'utf8'),
+    );
+  } catch (_) { /* version.json only exists in CI-built releases */ }
+  res.status(200).json({ status: 'ok', ...version });
+});
+
 const authRoutes = require('./routes/auth.routes');
 const userRoutes = require('./routes/user.routes');
 const tenantRoutes = require('./routes/tenant.routes');

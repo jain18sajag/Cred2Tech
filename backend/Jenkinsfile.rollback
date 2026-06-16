@@ -1,0 +1,308 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// ROLLBACK pipeline for cred2tech-backend.
+//
+// Run via "Build with Parameters". Rolls back CODE and, optionally, the DATABASE.
+//
+// CODE modes:
+//   • RELEASE — instantly re-point 'current' to an existing release folder on the
+//               server (no rebuild). Fastest.
+//   • GIT     — check out a specific commit/tag from backend/ and deploy it fresh.
+//   • NONE    — don't touch code (use when you only need to restore the DB).
+//
+// DATABASE restore (optional, off by default):
+//   • Set RESTORE_DB = true and provide DB_BACKUP_S3_KEY (the key printed by the
+//     deploy pipeline / db-backup.sh, e.g.
+//     postgres-cred2tech-backend/daily/cred2tech-backend_20260616_021500_predeploy.sql.gz.enc)
+//     or leave it blank to restore the LATEST daily backup.
+//
+// Safety: the live release is captured first; if the rolled-back code fails its
+// health check, the previous release is auto-restored. A DB restore is gated
+// behind an explicit confirmation parameter because it overwrites live data.
+//
+// Set Jenkins job "Script Path" = backend/Jenkinsfile.rollback.
+// ─────────────────────────────────────────────────────────────────────────────
+pipeline {
+    agent any
+
+    tools {
+        nodejs 'node-lts'
+    }
+
+    parameters {
+        choice(
+            name: 'ROLLBACK_MODE',
+            choices: ['RELEASE', 'GIT', 'NONE'],
+            description: 'CODE rollback: RELEASE = existing release folder, GIT = a commit/tag, NONE = leave code as-is (DB-only restore).'
+        )
+        string(name: 'RELEASE_TS', defaultValue: '', description: 'RELEASE mode: release timestamp to roll back to (e.g. 20260616_181113). Blank = just list releases.')
+        string(name: 'GIT_REF',    defaultValue: '', description: 'GIT mode: commit SHA or tag to deploy.')
+        booleanParam(name: 'RESTORE_DB', defaultValue: false, description: 'Also restore the PostgreSQL database from an S3 backup. OVERWRITES live data.')
+        string(name: 'DB_BACKUP_S3_KEY', defaultValue: '', description: 'RESTORE_DB: S3 key to restore (blank = latest daily). e.g. postgres-cred2tech-backend/daily/cred2tech-backend_...sql.gz.enc')
+        booleanParam(name: 'CONFIRM_DB_OVERWRITE', defaultValue: false, description: 'Must be TRUE to actually run the DB restore (guard against accidental data loss).')
+    }
+
+    environment {
+        SERVICE       = 'cred2tech-backend'
+        PM2_APP       = 'cred2tech-backend'
+        DEPLOY_BASE   = '/opt/cred2tech/cred2tech-backend'
+        ENV_FILE      = '/etc/cred2tech/cred2tech-backend.env'
+        BACKEND_DIR   = 'backend'
+        APP_PORT      = '5000'
+        HEALTH_URL    = 'http://localhost:5000/health'
+        NOTIFY_EMAIL  = 'adarsh.suradkar@cred2tech.com, cred2tech@gmail.com'
+        GIT_REPO      = 'https://github.com/jain18sajag/Cred2Tech.git'
+        RESTORE_SCRIPT = '/opt/cred2tech/scripts/cred2tech-backend-db-restore.sh'
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timeout(time: 30, unit: 'MINUTES')
+        timestamps()
+        ansiColor('xterm')
+    }
+
+    stages {
+
+        // ── 1. List Releases / Backups ───────────────────────────────────────────
+        stage('List Targets') {
+            steps {
+                sh """
+                    echo "================ ROLLBACK TARGET INFO ================"
+                    echo "Code mode:  ${params.ROLLBACK_MODE}    Restore DB: ${params.RESTORE_DB}"
+                    echo "Currently live → \$(readlink -f ${DEPLOY_BASE}/current 2>/dev/null || echo 'none')"
+                    echo ""
+                    echo "Available release folders (newest first):"
+                    ls -dt ${DEPLOY_BASE}/releases/*/ 2>/dev/null | sed 's#${DEPLOY_BASE}/releases/##; s#/\$##' || echo '  (none)'
+                    echo "====================================================="
+                """
+                script {
+                    if (params.RESTORE_DB) {
+                        sh """
+                            export \$(grep -E '^S3_BACKUP_BUCKET=|^AWS_REGION=|^AWS_ACCESS_KEY_ID=|^AWS_SECRET_ACCESS_KEY=' ${ENV_FILE} | xargs)
+                            echo "Recent DB backups in s3://\$S3_BACKUP_BUCKET/postgres-cred2tech-backend/daily/ :"
+                            aws s3 ls "s3://\$S3_BACKUP_BUCKET/postgres-cred2tech-backend/daily/" | sort | tail -15 || echo '  (none / no access)'
+                        """
+                    }
+                }
+            }
+        }
+
+        // ── 2. Validate Inputs ───────────────────────────────────────────────────
+        stage('Validate Inputs') {
+            steps {
+                script {
+                    if (params.ROLLBACK_MODE == 'RELEASE') {
+                        if (!params.RELEASE_TS?.trim()) {
+                            error("RELEASE mode: RELEASE_TS is empty. Pick a timestamp listed above and re-run.")
+                        }
+                        def exists = sh(script: "test -d ${DEPLOY_BASE}/releases/${params.RELEASE_TS} && echo yes || echo no", returnStdout: true).trim()
+                        if (exists != 'yes') { error("Release folder not found: ${DEPLOY_BASE}/releases/${params.RELEASE_TS}") }
+                        env.TARGET_RELEASE = "${DEPLOY_BASE}/releases/${params.RELEASE_TS}"
+                    } else if (params.ROLLBACK_MODE == 'GIT') {
+                        if (!params.GIT_REF?.trim()) { error("GIT mode: GIT_REF is empty.") }
+                    }
+                    if (params.RESTORE_DB && !params.CONFIRM_DB_OVERWRITE) {
+                        error("RESTORE_DB is set but CONFIRM_DB_OVERWRITE is false — refusing to overwrite live data. Re-run with CONFIRM_DB_OVERWRITE=true.")
+                    }
+                    env.PREV_RELEASE = sh(script: "readlink -f ${DEPLOY_BASE}/current 2>/dev/null || echo ''", returnStdout: true).trim()
+                    echo "On failure, will restore previous live release: ${env.PREV_RELEASE ?: '(none)'}"
+                }
+            }
+        }
+
+        // ── 3. Approval Gate ─────────────────────────────────────────────────────
+        stage('Approval Gate') {
+            steps {
+                script {
+                    def codeDetail = (params.ROLLBACK_MODE == 'RELEASE') ? "release ${params.RELEASE_TS}"
+                                   : (params.ROLLBACK_MODE == 'GIT')     ? "git ref ${params.GIT_REF}"
+                                   : "no code change"
+                    def dbDetail = params.RESTORE_DB ? "RESTORE DB from ${params.DB_BACKUP_S3_KEY ?: 'LATEST daily'} (OVERWRITES live data)" : "no DB change"
+                    timeout(time: 30, unit: 'MINUTES') {
+                        def approver = input(
+                            message: "Roll back ${SERVICE} PRODUCTION?\n\nCode: ${codeDetail}\nDatabase: ${dbDetail}",
+                            ok: 'Roll Back Production',
+                            submitter: 'approver',
+                            submitterParameter: 'APPROVED_BY'
+                        )
+                        echo "Rollback approved by: ${approver}"
+                    }
+                }
+            }
+        }
+
+        // ── 4. Restore Database (optional) ───────────────────────────────────────
+        stage('Restore Database') {
+            when { expression { params.RESTORE_DB } }
+            steps {
+                script {
+                    def src = params.DB_BACKUP_S3_KEY?.trim() ? "--s3 ${params.DB_BACKUP_S3_KEY.trim()}" : "--latest"
+                    sh """
+                        if [ -x "${RESTORE_SCRIPT}" ]; then
+                            "${RESTORE_SCRIPT}" ${src} --yes
+                        else
+                            echo "WARN: ${RESTORE_SCRIPT} not found — running inline restore."
+                            export \$(grep -E '^DATABASE_URL=|^BACKUP_ENCRYPTION_KEY=|^S3_BACKUP_BUCKET=|^AWS_REGION=|^AWS_ACCESS_KEY_ID=|^AWS_SECRET_ACCESS_KEY=' ${ENV_FILE} | xargs)
+                            : "\${DATABASE_URL:?}"; : "\${BACKUP_ENCRYPTION_KEY:?}"; : "\${S3_BACKUP_BUCKET:?}"
+                            BASE="s3://\$S3_BACKUP_BUCKET/postgres-cred2tech-backend"
+                            if [ -n "${params.DB_BACKUP_S3_KEY}" ]; then
+                                SRC="s3://\$S3_BACKUP_BUCKET/${params.DB_BACKUP_S3_KEY}"
+                            else
+                                LATEST=\$(aws s3 ls "\$BASE/daily/" | sort | tail -1 | awk '{print \$4}')
+                                [ -n "\$LATEST" ] || { echo "No daily backups found"; exit 1; }
+                                SRC="\$BASE/daily/\$LATEST"
+                            fi
+                            echo "Restoring DB from \$SRC"
+                            TMP=\$(mktemp)
+                            aws s3 cp "\$SRC" "\$TMP" --only-show-errors
+                            openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -pass pass:"\$BACKUP_ENCRYPTION_KEY" -in "\$TMP" | gunzip | psql "\$DATABASE_URL"
+                            rm -f "\$TMP"
+                            echo "Database restore complete."
+                        fi
+                    """
+                }
+            }
+        }
+
+        // ── 5. (GIT mode) Prepare Target From Source ─────────────────────────────
+        stage('Prepare From Git') {
+            when { expression { params.ROLLBACK_MODE == 'GIT' } }
+            steps {
+                cleanWs()
+                git branch: 'main', credentialsId: 'github-cred2tech', url: "${GIT_REPO}"
+                sh "git checkout -f ${params.GIT_REF}"
+                script {
+                    def ts = sh(script: "date +%Y%m%d_%H%M%S", returnStdout: true).trim()
+                    def ref = params.GIT_REF.replaceAll('[^a-zA-Z0-9._-]', '').take(12)
+                    env.TARGET_RELEASE = "${DEPLOY_BASE}/releases/${ts}_rollback_${ref}"
+                    sh """
+                        mkdir -p ${env.TARGET_RELEASE}
+                        cp -r ${BACKEND_DIR}/src               ${env.TARGET_RELEASE}/
+                        cp -r ${BACKEND_DIR}/config            ${env.TARGET_RELEASE}/
+                        cp -r ${BACKEND_DIR}/prisma            ${env.TARGET_RELEASE}/
+                        cp -r ${BACKEND_DIR}/scripts           ${env.TARGET_RELEASE}/ 2>/dev/null || true
+                        cp -r ${BACKEND_DIR}/docs              ${env.TARGET_RELEASE}/ 2>/dev/null || true
+                        cp    ${BACKEND_DIR}/server.js         ${env.TARGET_RELEASE}/
+                        cp    ${BACKEND_DIR}/package.json      ${env.TARGET_RELEASE}/
+                        cp    ${BACKEND_DIR}/package-lock.json ${env.TARGET_RELEASE}/
+                        cp    ${ENV_FILE}                      ${env.TARGET_RELEASE}/.env
+
+                        COMMIT=\$(git rev-parse --short HEAD)
+                        printf '{"release":"%s","commit":"%s","build":"rollback-%s"}\\n' \
+                            "\$(basename ${env.TARGET_RELEASE})" "\$COMMIT" "${BUILD_NUMBER}" > ${env.TARGET_RELEASE}/version.json
+
+                        cat > ${env.TARGET_RELEASE}/ecosystem.config.js << 'ECOEOF'
+module.exports = {
+  apps: [{
+    name: '${PM2_APP}',
+    script: '${DEPLOY_BASE}/current/server.js',
+    cwd: '${DEPLOY_BASE}/current',
+    instances: 1, exec_mode: 'fork',
+    env_production: { NODE_ENV: 'production', PORT: ${APP_PORT} },
+    max_memory_restart: '512M',
+    error_file: '/var/log/pm2/${PM2_APP}-error.log',
+    out_file: '/var/log/pm2/${PM2_APP}-out.log',
+  }],
+};
+ECOEOF
+
+                        cd ${env.TARGET_RELEASE}
+                        npm ci
+                        npx prisma generate
+                        echo "Prepared rollback release: ${env.TARGET_RELEASE}"
+                    """
+                }
+            }
+        }
+
+        // ── 6. Switch Symlink (code modes only) ──────────────────────────────────
+        stage('Switch Symlink') {
+            when { expression { params.ROLLBACK_MODE != 'NONE' } }
+            steps {
+                sh """
+                    ln -sfn ${env.TARGET_RELEASE} ${DEPLOY_BASE}/current
+                    echo "Symlink: ${DEPLOY_BASE}/current → ${env.TARGET_RELEASE}"
+                """
+            }
+        }
+
+        // ── 7. PM2 Reload (code modes, or DB restore needs an app restart) ───────
+        stage('PM2 Reload') {
+            when { expression { params.ROLLBACK_MODE != 'NONE' || params.RESTORE_DB } }
+            steps {
+                sh """
+                    PM2="\$(which pm2)"
+                    cd ${DEPLOY_BASE}/current
+                    if sudo \$PM2 show ${PM2_APP} > /dev/null 2>&1; then
+                        sudo \$PM2 reload ecosystem.config.js --env production --update-env
+                    else
+                        sudo \$PM2 start ecosystem.config.js --env production
+                    fi
+                    sudo \$PM2 save
+                    echo "PM2 process live."
+                """
+            }
+        }
+
+        // ── 8. Health Check ──────────────────────────────────────────────────────
+        stage('Health Check') {
+            steps {
+                script {
+                    def healthy = false
+                    for (int i = 1; i <= 12; i++) {
+                        def code = '000'
+                        try {
+                            code = sh(script: "curl -s -o /dev/null -w '%{http_code}' ${HEALTH_URL}", returnStdout: true).trim()
+                        } catch (Exception ignored) {}
+                        if (code == '200') { healthy = true; echo "Health check passed (attempt ${i}/12): HTTP ${code}"; break }
+                        echo "Attempt ${i}/12: HTTP ${code} — waiting 5s..."
+                        sleep(5)
+                    }
+                    if (!healthy) { error("Rolled-back version failed health check — auto-restoring previous release.") }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            emailext(
+                to: "${env.NOTIFY_EMAIL}",
+                subject: "[${SERVICE}] ROLLBACK #${BUILD_NUMBER} succeeded",
+                body: """
+                    <h2 style="color:#059669;">Rollback Successful</h2>
+                    <table>
+                      <tr><td><b>Service</b></td><td>${SERVICE}</td></tr>
+                      <tr><td><b>Code mode</b></td><td>${params.ROLLBACK_MODE}</td></tr>
+                      <tr><td><b>Code target</b></td><td>${params.ROLLBACK_MODE == 'RELEASE' ? params.RELEASE_TS : (params.ROLLBACK_MODE == 'GIT' ? params.GIT_REF : '—')}</td></tr>
+                      <tr><td><b>DB restored</b></td><td>${params.RESTORE_DB ? (params.DB_BACKUP_S3_KEY ?: 'latest daily') : 'no'}</td></tr>
+                    </table>
+                    <p><a href="${BUILD_URL}">View Build</a></p>
+                """,
+                mimeType: 'text/html'
+            )
+        }
+        failure {
+            script {
+                if (params.ROLLBACK_MODE != 'NONE' && env.PREV_RELEASE?.trim()) {
+                    echo "Restoring previous live release: ${env.PREV_RELEASE}"
+                    sh """
+                        PM2="\$(which pm2)"
+                        ln -sfn ${env.PREV_RELEASE} ${DEPLOY_BASE}/current
+                        cd ${DEPLOY_BASE}/current
+                        sudo \$PM2 reload ecosystem.config.js --env production --update-env 2>/dev/null || sudo \$PM2 start ecosystem.config.js --env production
+                        sudo \$PM2 save
+                        echo "Restored code → ${env.PREV_RELEASE}"
+                    """
+                }
+            }
+            emailext(
+                to: "${env.NOTIFY_EMAIL}",
+                subject: "[${SERVICE}] ROLLBACK #${BUILD_NUMBER} FAILED",
+                body: "<p>Rollback failed. Code was auto-restored to the previous release where possible. If a DB restore ran, verify data state manually.</p><p><a href=\"${BUILD_URL}console\">Console</a></p>",
+                mimeType: 'text/html'
+            )
+        }
+        always { cleanWs() }
+    }
+}
