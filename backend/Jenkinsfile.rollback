@@ -153,9 +153,11 @@ pipeline {
                                 SRC="\$BASE/daily/\$LATEST"
                             fi
                             echo "Restoring DB from \$SRC"
+                            # Strip Prisma-only ?schema= param that psql/libpq reject.
+                            PSQL_URL=\$(printf '%s' "\$DATABASE_URL" | sed -E 's/schema=[^&]*//g; s/&&+/\\&/g; s/\\?&/?/; s/[?&]+\$//')
                             TMP=\$(mktemp)
                             aws s3 cp "\$SRC" "\$TMP" --only-show-errors
-                            openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -pass pass:"\$BACKUP_ENCRYPTION_KEY" -in "\$TMP" | gunzip | psql "\$DATABASE_URL"
+                            openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -pass pass:"\$BACKUP_ENCRYPTION_KEY" -in "\$TMP" | gunzip | psql "\$PSQL_URL"
                             rm -f "\$TMP"
                             echo "Database restore complete."
                         fi

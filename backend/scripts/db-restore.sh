@@ -87,9 +87,13 @@ if [ "$CONFIRM" != "yes" ]; then
 fi
 
 # ── Decrypt → gunzip → psql ───────────────────────────────────────────────────
+# Strip Prisma-only query params (e.g. ?schema=public) that libpq/psql reject.
+PSQL_URL=$(printf '%s' "$TARGET_URL" \
+  | sed -E 's/schema=[^&]*//g; s/&&+/\&/g; s/\?&/?/; s/[?&]+$//')
+
 echo "Restoring..."
 openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -pass pass:"$BACKUP_ENCRYPTION_KEY" -in "$ENC_FILE" \
   | gunzip \
-  | psql "$TARGET_URL"
+  | psql "$PSQL_URL"
 
 echo "Restore complete → $TARGET_HOST"

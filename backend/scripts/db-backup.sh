@@ -64,7 +64,13 @@ BACKUP_FILE="${BACKUP_DIR}/cred2tech-backend_${TIMESTAMP}${SUFFIX}.sql.gz.enc"
 
 echo "$LOG_PREFIX Starting backup → $BACKUP_FILE"
 
-pg_dump "$DATABASE_URL" \
+# Prisma connection strings carry a `?schema=public` (and sometimes other
+# Prisma-only) query params that pg_dump/libpq reject ("invalid URI query
+# parameter"). Strip `schema=…` and tidy up any leftover ?/& separators.
+DUMP_URL=$(printf '%s' "$DATABASE_URL" \
+  | sed -E 's/schema=[^&]*//g; s/&&+/\&/g; s/\?&/?/; s/[?&]+$//')
+
+pg_dump "$DUMP_URL" \
   | gzip \
   | openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -pass pass:"$BACKUP_ENCRYPTION_KEY" \
   > "$BACKUP_FILE"
