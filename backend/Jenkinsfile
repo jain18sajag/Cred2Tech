@@ -46,6 +46,10 @@ pipeline {
         // Installed copy of scripts/db-backup.sh; the pipeline falls back to an
         // inline backup if it is not present on the server.
         BACKUP_SCRIPT = '/opt/cred2tech/scripts/cred2tech-backend-db-backup.sh'
+        // Google Chat approval bridge. The gate posts an Approve/Reject card; the
+        // bridge proceeds the input as CHAT_BOT_USER, which is how we detect that
+        // the gate was cleared from Chat. UI button + email link still work too.
+        CHAT_BOT_USER = 'chat-approver-bot'
     }
 
     options {
@@ -266,7 +270,34 @@ pipeline {
                                 mimeType: 'text/html'
                             )
 
+                            // Google Chat: post the interactive Approve/Reject card via the
+                            // approval bridge (chat-approval service). Approvers can clear the
+                            // gate from Chat — the bridge enforces the approvers@ Google Group
+                            // and drives the input API. Best-effort: the UI button + email link
+                            // still gate the deploy if this fails.
+                            try {
+                                withCredentials([string(credentialsId: 'chat-approval-secret', variable: 'CHAT_SECRET')]) {
+                                    def payload = groovy.json.JsonOutput.toJson([
+                                        service: "${SERVICE}", build: "${BUILD_NUMBER}",
+                                        releaseTs: env.RELEASE_TS, buildUrl: env.BUILD_URL,
+                                        inputId: 'DeployApproval', changes: env.CHANGELOG
+                                    ])
+                                    withEnv(["CHAT_PAYLOAD=${payload}"]) {
+                                        sh '''printf "%s" "$CHAT_PAYLOAD" | curl -fsS -X POST \
+                                          "https://deployments.cred2tech.com/chat-approval/notify" \
+                                          -H "Content-Type: application/json" \
+                                          -H "X-Approval-Secret: $CHAT_SECRET" -d @-'''
+                                    }
+                                }
+                            } catch (err) {
+                                echo "Google Chat approval card not sent (continuing with UI/email): ${err}"
+                            }
+
                             timeout(time: 30, unit: 'MINUTES') {
+                                // The fixed `id` gives the gate a stable URL for the email link
+                                // and the Chat bridge. submitterParameter captures the submitting
+                                // Jenkins user — for Chat that is CHAT_BOT_USER, which is how we
+                                // tell the approval channel apart.
                                 def approver = input(
                                     id: 'DeployApproval',
                                     message: "Deploy ${SERVICE} build #${BUILD_NUMBER} (${env.RELEASE_TS}) to production?\n\nPre-deploy backup: ${env.BACKUP_S3_KEY}\nRun migrations: ${params.RUN_MIGRATIONS}\n\nChanges:\n${env.CHANGELOG}",
@@ -274,8 +305,13 @@ pipeline {
                                     submitter: 'approver',
                                     submitterParameter: 'APPROVED_BY'
                                 )
-                                env.APPROVED_BY = approver
-                                echo "Approved by: ${approver}"
+                                // Record HOW + BY WHOM the gate was cleared. When the Chat bridge
+                                // proceeds the input it submits as CHAT_BOT_USER and stamps the
+                                // build description with the human approver.
+                                def viaChat = (approver?.toString() == env.CHAT_BOT_USER)
+                                env.APPROVAL_CHANNEL = viaChat ? 'Google Chat' : 'Jenkins Web (UI button / email link)'
+                                env.APPROVED_BY = (viaChat && currentBuild.description?.trim()) ? currentBuild.description.trim() : approver
+                                echo "Approved by: ${env.APPROVED_BY} (${env.APPROVAL_CHANNEL})"
                             }
                         }
                     }
@@ -523,6 +559,7 @@ except Exception:
                       <tr><td><b>Build</b></td><td>#${BUILD_NUMBER}</td></tr>
                       <tr><td><b>Release</b></td><td>${env.RELEASE_TS ?: '—'}</td></tr>
                       <tr><td><b>Approved by</b></td><td>${env.APPROVED_BY ?: '—'}</td></tr>
+                      <tr><td><b>Approval channel</b></td><td>${env.APPROVAL_CHANNEL ?: '—'}</td></tr>
                       <tr><td><b>Migrations</b></td><td>${params.RUN_MIGRATIONS}</td></tr>
                       <tr><td><b>Pre-deploy backup</b></td><td>${env.BACKUP_S3_KEY ?: '—'}</td></tr>
                       <tr><td><b>Duration</b></td><td>${currentBuild.durationString}</td></tr>
@@ -531,6 +568,26 @@ except Exception:
                 """,
                 mimeType: 'text/html'
             )
+            script {
+                // Post the deploy result back to Google Chat via the bridge (best-effort).
+                try {
+                    def payload = groovy.json.JsonOutput.toJson([
+                        text: "✅ *${SERVICE} #${BUILD_NUMBER} deployed successfully*\n" +
+                              "Release: ${env.RELEASE_TS}\n" +
+                              "Approved by: ${env.APPROVED_BY ?: '—'} (${env.APPROVAL_CHANNEL ?: '—'})\n" +
+                              "Backup: ${env.BACKUP_S3_KEY ?: '—'}\n" +
+                              "Duration: ${currentBuild.durationString}\n" +
+                              "<${BUILD_URL}|View build>"
+                    ])
+                    withCredentials([string(credentialsId: 'chat-approval-secret', variable: 'CHAT_SECRET')]) {
+                        withEnv(["CHAT_PAYLOAD=${payload}"]) {
+                            sh 'printf "%s" "$CHAT_PAYLOAD" | curl -fsS -X POST "https://deployments.cred2tech.com/chat-approval/post" -H "Content-Type: application/json" -H "X-Approval-Secret: $CHAT_SECRET" -d @-'
+                        }
+                    }
+                } catch (err) {
+                    echo "Chat status not sent: ${err}"
+                }
+            }
         }
         unstable {
             emailext(
@@ -572,6 +629,24 @@ except Exception:
                 """,
                 mimeType: 'text/html'
             )
+            script {
+                try {
+                    def payload = groovy.json.JsonOutput.toJson([
+                        text: "❌ *${SERVICE} #${BUILD_NUMBER} deployment FAILED*\n" +
+                              "Approved by: ${env.APPROVED_BY ?: 'not yet approved'} (${env.APPROVAL_CHANNEL ?: '—'})\n" +
+                              "Code rollback: ${env.DEPLOYED == 'true' ? 'automatic' : 'not needed (failed before switch)'}\n" +
+                              "DB backup for restore: ${env.BACKUP_S3_KEY ?: 'n/a'}\n" +
+                              "<${BUILD_URL}console|View console log>"
+                    ])
+                    withCredentials([string(credentialsId: 'chat-approval-secret', variable: 'CHAT_SECRET')]) {
+                        withEnv(["CHAT_PAYLOAD=${payload}"]) {
+                            sh 'printf "%s" "$CHAT_PAYLOAD" | curl -fsS -X POST "https://deployments.cred2tech.com/chat-approval/post" -H "Content-Type: application/json" -H "X-Approval-Secret: $CHAT_SECRET" -d @-'
+                        }
+                    }
+                } catch (err) {
+                    echo "Chat status not sent: ${err}"
+                }
+            }
         }
         always {
             cleanWs()
