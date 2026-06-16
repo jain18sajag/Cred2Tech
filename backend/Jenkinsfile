@@ -55,6 +55,29 @@ pipeline {
         ansiColor('xterm')
     }
 
+    // ── Generic Webhook Trigger ────────────────────────────────────────────────
+    // Fires on a GitHub push webhook. We only act on pushes to main (regexp
+    // filter on the ref); whether anything actually deploys is then decided by
+    // the 'Detect Backend Changes' stage, so frontend-only pushes spin up a build
+    // that exits NOT_BUILT. The shared secret lives in a Jenkins credential
+    // (tokenCredentialId) — the webhook URL is:
+    //   https://<jenkins>/generic-webhook-trigger/invoke?token=<that-secret>
+    triggers {
+        GenericTrigger(
+            genericVariables: [
+                [key: 'ref',     value: '$.ref'],
+                [key: 'deleted', value: '$.deleted', defaultValue: 'false'],
+                [key: 'pusher',  value: '$.pusher.name', defaultValue: 'unknown']
+            ],
+            causeString: 'Pushed to $ref by $pusher',
+            tokenCredentialId: 'cred2tech-backend-webhook-token',
+            printContributedVariables: false,
+            printPostContent: false,
+            regexpFilterText: '$ref:$deleted',
+            regexpFilterExpression: '^refs/heads/main:false$'
+        )
+    }
+
     stages {
 
         // ── 1. Checkout ──────────────────────────────────────────────────────────
