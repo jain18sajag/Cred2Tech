@@ -330,13 +330,15 @@ pipeline {
                 stage('Create Release') {
                     steps {
                         script {
-                            // Only capture a previous release if 'current' is an actual
-                            // symlink. (GNU `readlink -f` prints the path with exit 0 even
-                            // when the target is missing, which on a first deploy wrongly
-                            // set PREV_RELEASE to the symlink itself and made the failure
-                            // handler create a self-referential symlink.)
+                            // Only capture a previous release if 'current' is a symlink
+                            // AND its target still exists. A symlink left over from an
+                            // earlier deploy that never created a release is DANGLING:
+                            // `[ -L ]` is true but `readlink -f` returns non-zero, which
+                            // under Jenkins' `set -e` killed this stage on every run.
+                            // `[ -e ]` follows the link, so it's false for a dangling one;
+                            // the trailing `|| true` keeps any readlink quirk non-fatal.
                             env.PREV_RELEASE = sh(
-                                script: "if [ -L ${DEPLOY_BASE}/current ]; then readlink -f ${DEPLOY_BASE}/current; else echo ''; fi",
+                                script: "if [ -L ${DEPLOY_BASE}/current ] && [ -e ${DEPLOY_BASE}/current ]; then readlink -f ${DEPLOY_BASE}/current 2>/dev/null || true; else echo ''; fi",
                                 returnStdout: true
                             ).trim()
 
