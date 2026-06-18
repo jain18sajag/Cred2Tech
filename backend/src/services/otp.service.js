@@ -12,6 +12,16 @@ const otpService = {
     // 5 minutes expiry
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
     const otp = generateOtp();
+
+  console.log('[OTP GENERATED]', {
+    otp,
+    mobile,
+    purpose,
+    targetType,
+    targetId,
+    tenantId,
+    createdAt: new Date().toISOString()
+  });
     const otpHash = hashOtp(otp);
 
     await prisma.otpVerification.create({
