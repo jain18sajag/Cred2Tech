@@ -562,12 +562,17 @@ except Exception:
                 }
 
                 // ── 4n. Cleanup Old Releases ─────────────────────────────────────
+                // Non-fatal: old releases may contain uploads/logs owned by the PM2
+                // user (pre-symlink deploys). New releases use symlinks so they are
+                // always cleanable. Failures here are warnings, not deploy blockers.
                 stage('Cleanup Old Releases') {
                     steps {
                         sh """
                             cd ${DEPLOY_BASE}/releases
-                            ls -dt */ | tail -n +6 | xargs -r sudo rm -rf
-                            echo "Retained last 5 releases."
+                            ls -dt */ | tail -n +6 | while IFS= read -r dir; do
+                                rm -rf "\$dir" 2>/dev/null || echo "Warning: could not fully remove \$dir (permission denied — manual cleanup needed)"
+                            done
+                            echo "Cleanup done. Retained last 5 releases."
                         """
                     }
                 }
