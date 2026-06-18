@@ -276,6 +276,28 @@ function parseFoirRuleSafe(value, strictMode = false) {
 
 function normalizeParameter(key, rawValue) {
     const lowerKey = key.toLowerCase();
+
+    if (lowerKey === 'age_maturity_income') {
+        const text = String(rawValue || '').toLowerCase();
+        if (text.includes('income >1 lacs') && text.includes('income < 1 lacs')) {
+            return {
+                raw: rawValue,
+                normalized: rawValue,
+                type: 'conditional_age'
+            };
+        }
+    }
+
+    if (lowerKey.includes('foir')) {
+        const text = String(rawValue || '').replace(/\s+/g, '').toLowerCase();
+        if (text === '50%,60%') {
+            return {
+                raw: rawValue,
+                normalized: rawValue,
+                type: 'conditional_salary_capacity'
+            };
+        }
+    }
     
     let result;
     let type = 'string';

@@ -123,7 +123,7 @@ const valueData = {
     hl_max_tenure: { SAL: '300 Months', default: '240 Months' },
     hl_dbr_foir: { SAL: '<75k -60%, >75k - 70%', default: 'Max 100% ( Double wammy - 140%)' },
 
-    banking_abb_multiplier: { default: '2' },
+    banking_abb_multiplier: { default: '3' },
     no_dbr_months_multiplier: { default: '60' },
     npm_depreciation_fraction: { default: '66.67%' },
 
@@ -136,7 +136,7 @@ const valueData = {
     hl_ltv_plot: { default: '75%' },
     hl_ltv_other: { default: '0%' },
 
-    age_maturity_income: { SAL: '70 - in income >1 lacs, 60 if income < 1 lacs and 75', default: '75' },
+    age_maturity_income: { SAL: '70 - in income >1 lacs, 60 if income < 1 lacs', default: '75' },
     age_maturity_non_income: { default: '75' },
     bureau_cutoff: { default: '700' },
     bureau_name: { default: 'CIBIL' },
@@ -167,7 +167,7 @@ const valueData = {
     lap_max_tenure: { default: '180 Months' },
     lap_dbr_foir: { SAL: '<75k -60%, >75k - 70%', default: 'Max 100% ( Double wammy - 140%)' },
 
-    banking_abb_multiplier: { default: '2' },
+    banking_abb_multiplier: { default: '3' },
     no_dbr_months_multiplier: { default: '60' },
     grp_annual_receipts_multiplier: { default: '4' },
     npm_depreciation_fraction: { default: '66.67%' },
@@ -181,7 +181,7 @@ const valueData = {
     lap_ltv_com_vacant: { default: '70%' },
     lap_ltv_ind_self: { default: '40%' },
     lap_ltv_ind_rented: { default: '40%' },
-    lap_ltv_ind_vacant: { default: '0%' },
+    lap_ltv_ind_vacant: { default: 'MANUAL_REVIEW_REQUIRED' },
     lap_ltv_mix_self: { default: '70%' },
     lap_ltv_mix_rented: { default: '70%' },
     lap_ltv_mix_vacant: { default: '70%' },
@@ -190,7 +190,7 @@ const valueData = {
     lap_ltv_plot_vacant: { default: '40%' },
     lap_ltv_special: { default: '50%' },
 
-    age_maturity_income: { default: '75' },
+    age_maturity_income: { SAL: '70 - in income >1 lacs, 60 if income < 1 lacs', default: '75' },
     age_maturity_non_income: { default: '75' },
     bureau_cutoff: { default: '700' },
     bureau_name: { default: 'CIBIL' },

@@ -146,7 +146,7 @@ const LENDER_POLICY_REGISTRY = {
         banking: {
             mode: 'ABB_DIVISOR',
             divisorParamKeys: ['banking_abb_divisor', 'banking_abb_multiplier'],
-            defaultDivisor: 2,
+            defaultDivisor: 3,
             sampleDays: [5, 10, 15, 25]
         },
         gstMargins: {
@@ -154,7 +154,7 @@ const LENDER_POLICY_REGISTRY = {
             manufacturing: 0.07,
             wholesale: 0.04,
             retail: 0.05,
-            service: 0.15
+            specialized: 0.03
         },
         exposureFields: ['icici_exposure', 'existing_icici_exposure', 'lender_exposure']
     },
@@ -285,7 +285,7 @@ function isDscrSchemeName(name) {
 
 function isUnsupportedHdfcLapSchemeName(name) {
     const text = String(name || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
-    return text === 'LIP' || (text.includes('LOW') && text.includes('LTV')) || text.includes('NET WORTH') || text === 'NWM';
+    return text === 'LIP' || (text.includes('LOW') && text.includes('LTV'));
 }
 
 function buildVirtualParamValues(defaults = {}) {
@@ -372,6 +372,7 @@ function normalizeIndustryBucket(industryType) {
     if (text.includes('manufactur') || text.includes('factory')) return 'manufacturing';
     if (text.includes('wholesale')) return 'wholesale';
     if (text.includes('retail')) return 'retail';
+    if (text.includes('special')) return 'specialized';
     if (text.includes('service')) return 'service';
     return null;
 }
@@ -1759,12 +1760,25 @@ function calculateNetObligations(obligationsList, rawObligationRule, warnings, p
 }
 
 // ------ AGE-BASED TENURE RESTRICTION ------
-function calculateAgeBasedTenureLimit(applicants, paramMap, warnings, policyWarnings) {
+function resolveAgeMaturityParam(raw, defaultVal, monthlyIncome = 0) {
+    if (raw === undefined || raw === null || raw === '') return defaultVal;
+    const direct = Number(raw);
+    if (Number.isFinite(direct)) return direct;
+
+    const text = String(raw).toLowerCase();
+    const highIncomeMatch = text.match(/(\d+)\s*-\s*in\s*income\s*>\s*1\s*lacs?/);
+    const lowIncomeMatch = text.match(/(\d+)\s*if\s*income\s*<\s*1\s*lacs?/);
+    if (highIncomeMatch && lowIncomeMatch) {
+        return Number(monthlyIncome) > 100000 ? Number(highIncomeMatch[1]) : Number(lowIncomeMatch[1]);
+    }
+
+    return defaultVal;
+}
+
+function calculateAgeBasedTenureLimit(applicants, paramMap, warnings, policyWarnings, esr = {}) {
     const getIntParam = (key, defaultVal = null) => {
         const raw = paramMap[key];
-        if (raw === undefined || raw === null) return defaultVal;
-        const num = Number(raw);
-        return Number.isFinite(num) ? num : defaultVal;
+        return resolveAgeMaturityParam(raw, defaultVal, Number(esr.selected_monthly_income) || Number(esr.salaried_income) || 0);
     };
 
     const ageMaturityIncome = getIntParam('age_maturity_income', 60);
@@ -2132,7 +2146,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     }
 
     // 2. Resolve Allowed FOIR limit
-    const rawFoir = paramMap[`${pref}_dbr_foir`];
+    const rawFoir = isNoDoubleFoirSalariedMethod ? 'No DBR' : paramMap[`${pref}_dbr_foir`];
     const foirRes = parseDynamicFoir(rawFoir, composedIncome);
     const foir_allowed_percent_value = handleParseResult(foirRes, `${pref}_dbr_foir`);
     logger?.traceParser('parseDynamicFoir', `${pref}_dbr_foir`, rawFoir, foirRes);
@@ -2242,7 +2256,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const maxTenureRes = getParamTenure(paramMap, `${pref}_max_tenure`);
     const maxTenureMonths = handleParseResult(maxTenureRes, `${pref}_max_tenure`);
     logger?.traceParser('parseTenureSafe', `${pref}_max_tenure`, maxTenureRes.raw, maxTenureRes);
-    const ageBasedLimit = calculateAgeBasedTenureLimit(applicants, paramMap, warnings, policyWarnings);
+    const ageBasedLimit = calculateAgeBasedTenureLimit(applicants, paramMap, warnings, policyWarnings, esr);
 
     let final_tenure_used = maxTenureMonths || 0;
     if (ageBasedLimit !== null && ageBasedLimit !== Infinity) {

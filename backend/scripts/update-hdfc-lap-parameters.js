@@ -44,6 +44,14 @@ const EXTRA_PARAMETERS = [
   { key: 'dscr_obligation_multiplier', label: 'DSCR Obligation Multiplier', category: 'Eligibility Calculation', data_type: 'integer' },
   { key: 'dscr_calculation_rule', label: 'DSCR Calculation Rule', category: 'Eligibility Calculation', data_type: 'string' },
   { key: 'dscr_income_source_rule', label: 'DSCR Income Source Rule', category: 'Eligibility Calculation', data_type: 'string' },
+  { key: 'nwm_active', label: 'Net Worth Method Active', category: 'Eligibility Calculation', data_type: 'boolean' },
+  { key: 'nwm_depreciation_fraction', label: 'NWM Depreciation Fraction', category: 'Eligibility Calculation', data_type: 'percent' },
+  { key: 'nwm_property_addon_annual_pct', label: 'NWM Property Add-on Annual %', category: 'Eligibility Calculation', data_type: 'percent' },
+  { key: 'nwm_financial_asset_annual_pct', label: 'NWM Financial Asset Annual %', category: 'Eligibility Calculation', data_type: 'percent' },
+  { key: 'nwm_cibil_high', label: 'NWM CIBIL Threshold - 1.5L Income', category: 'Eligibility Calculation', data_type: 'integer' },
+  { key: 'nwm_income_high_cibil', label: 'NWM Income Threshold - CIBIL 770', category: 'Eligibility Calculation', data_type: 'money' },
+  { key: 'nwm_cibil_standard', label: 'NWM CIBIL Threshold - 3L Income', category: 'Eligibility Calculation', data_type: 'integer' },
+  { key: 'nwm_income_standard_cibil', label: 'NWM Income Threshold - CIBIL 750', category: 'Eligibility Calculation', data_type: 'money' },
   { key: 'manual_scheme_only', label: 'Manual Scheme Only', category: 'Eligibility Calculation', data_type: 'boolean' },
   { key: 'manual_scheme_notes', label: 'Manual Scheme Notes', category: 'Eligibility Calculation', data_type: 'string' },
 ];
@@ -113,17 +121,17 @@ function buildHdfcLapMapping() {
         age_maturity_income: '58',
         bureau_cutoff: '710',
         lap_max_tenure: '180 Months',
-        lap_dbr_foir: '65%',
+        lap_dbr_foir: '50%, 60%',
         hdfc_salaried_salary_threshold: '100000',
         hdfc_salaried_salary_pct_upto_1lakh: '50%',
         hdfc_salaried_salary_pct_above_1lakh: '60%',
         hdfc_salaried_bank_salary_cap_pct: '70%',
-        lap_ltv_ind_self: NOT_ALLOWED,
-        lap_ltv_ind_rented: NOT_ALLOWED,
+        lap_ltv_ind_self: MANUAL_REVIEW,
+        lap_ltv_ind_rented: MANUAL_REVIEW,
         lap_ltv_ind_vacant: NOT_ALLOWED,
-        lap_ltv_plot_self: NOT_ALLOWED,
-        lap_ltv_plot_rented: NOT_ALLOWED,
-        lap_ltv_plot_vacant: NOT_ALLOWED,
+        lap_ltv_plot_self: MANUAL_REVIEW,
+        lap_ltv_plot_rented: MANUAL_REVIEW,
+        lap_ltv_plot_vacant: MANUAL_REVIEW,
         lap_ltv_special: NOT_ALLOWED,
       },
 
@@ -174,6 +182,24 @@ function buildHdfcLapMapping() {
         hdfc_exposure_field: 'hdfc_exposure'
       },
 
+      'Net Worth Method': {
+        ...LAP_COMMON,
+        lap_min_loan: '50000000',
+        lap_max_loan: 'No Capping',
+        lap_max_tenure: '180 Months',
+        age_maturity_income: '65',
+        age_maturity_non_income: '75',
+        bureau_cutoff: '740',
+        nwm_active: 'Yes',
+        nwm_depreciation_fraction: '66.67%',
+        nwm_property_addon_annual_pct: '3%',
+        nwm_financial_asset_annual_pct: '5%',
+        nwm_cibil_high: '770',
+        nwm_income_high_cibil: '150000',
+        nwm_cibil_standard: '750',
+        nwm_income_standard_cibil: '300000'
+      },
+
       DSCR: {
         ...LAP_COMMON,
         lap_min_loan: '50000000',
@@ -195,8 +221,7 @@ const HDFC_MAPPING = buildHdfcLapMapping();
 
 const UNSUPPORTED_HDFC_LAP_SCHEMES = [
   'LIP',
-  'Low LTV',
-  'Net Worth Method'
+  'Low LTV'
 ];
 
 function isUnsupportedHdfcLapSchemeName(name) {
@@ -210,6 +235,7 @@ const REQUIRED_HDFC_LAP_SCHEMES = [
   'Banking',
   'GST',
   'GRP',
+  'Net Worth Method',
   'DSCR'
 ];
 

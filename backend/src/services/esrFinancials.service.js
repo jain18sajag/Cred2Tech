@@ -168,7 +168,7 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
 
         // ── 1.5 FETCH TENANT POLICY (Align with dynamicEligibility) ──────────────
         let banking_income_policy = null;
-        let banking_abb_divisor = 2;
+        let banking_abb_divisor = 3;
         let lender_gst_margin = null;
         let lender_policy_key = null;
         let hdfc_banking_threshold = 7500000;
@@ -916,7 +916,6 @@ function resolveGstIndustryMargin(industryType, lenderPolicyKey = 'ICICI') {
     if (text.includes('retail')) return 0.05;
     if (text.includes('wholesale')) return 0.04;
     if (text.includes('special')) return 0.03;
-    if (text.includes('service') || text.includes('supplier of service')) return 0.15;
 
     return null; // ICICI policy: no silent fallback margin. Manual review/manual industry required.
 }

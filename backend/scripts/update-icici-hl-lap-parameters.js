@@ -3,21 +3,59 @@ const { normalizeParameter, isCriticalParameter } = require('../src/utils/esrPar
 
 const prisma = new PrismaClient();
 
+const EXTRA_PARAMETERS = [
+    { key: 'lender_policy_key', label: 'Lender Policy Key', category: 'Lender Policy', data_type: 'string' },
+    { key: 'banking_profile_divisor_policy', label: 'Banking Profile Divisor Policy', category: 'Eligibility Calculation', data_type: 'string' },
+    { key: 'gst_margin_manufacturing', label: 'GST Margin - Manufacturing', category: 'Eligibility Calculation', data_type: 'percent' },
+    { key: 'gst_margin_factory', label: 'GST Margin - Factory', category: 'Eligibility Calculation', data_type: 'percent' },
+    { key: 'gst_margin_retail', label: 'GST Margin - Retail', category: 'Eligibility Calculation', data_type: 'percent' },
+    { key: 'gst_margin_wholesale', label: 'GST Margin - Wholesale', category: 'Eligibility Calculation', data_type: 'percent' },
+    { key: 'gst_margin_specialized', label: 'GST Margin - Specialized Profile', category: 'Eligibility Calculation', data_type: 'percent' },
+];
+
+async function ensureParameterMaster(extraParameters, isApply) {
+    const existing = await prisma.parameterMaster.findMany();
+    const byKey = new Map(existing.map(p => [p.parameter_key, p]));
+    const maxDisplayOrder = existing.reduce((max, p) => Math.max(max, Number(p.display_order) || 0), 0);
+    const created = [];
+
+    for (let i = 0; i < extraParameters.length; i += 1) {
+        const p = extraParameters[i];
+        if (byKey.has(p.key)) continue;
+        created.push(p.key);
+
+        if (isApply) {
+            await prisma.parameterMaster.create({
+                data: {
+                    parameter_key: p.key,
+                    parameter_label: p.label,
+                    category: p.category || 'Eligibility Calculation',
+                    data_type: p.data_type || 'string',
+                    display_order: maxDisplayOrder + i + 1,
+                    is_editable_label: false
+                }
+            });
+        }
+    }
+
+    return created;
+}
+
 function buildMapping(baseParams) {
     return {
         "HL": {
-            "Salaried": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "300 Months", "age_maturity_income": "60", "hl_dbr_foir": "<75k -60%, >75k - 70%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
+            "Salaried": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "300 Months", "age_maturity_income": "70 - in income >1 lacs, 60 if income < 1 lacs", "hl_dbr_foir": "<75k -60%, >75k - 70%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
             "Net Profit Method": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "Max 100% (Double whammy - 140%)", "npm_depreciation_fraction": "66.67%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
-            "Banking": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "No DBR", "banking_abb_multiplier": "2", "existing_obligation": "Loan availed in last 12 months to be obligated" },
-            "GST": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "Max 100% (Double whammy - 140%)", "gst_industry_margin": "10%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
+            "Banking": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "No DBR", "banking_abb_multiplier": "3", "banking_profile_divisor_policy": "ABB/3 for Others; ABB/2 only for Super HNI, Elite, Normal profiles", "existing_obligation": "Loan availed in last 12 months to be obligated" },
+            "GST": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "Max 100% (Double whammy - 140%)", "gst_margin_manufacturing": "7%", "gst_margin_factory": "7%", "gst_margin_retail": "5%", "gst_margin_wholesale": "4%", "gst_margin_specialized": "3%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
             "GRP": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "No DBR", "grp_annual_receipts_multiplier": "4", "existing_obligation": "No need to obligate any loans" },
             "Net Worth Method": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "Max 100% (Double whammy - 140%)", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
         },
         "LAP": {
-            "Salaried": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "60", "lap_dbr_foir": "<75k -60%, >75k - 70%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
-            "Net Profit Method": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "70 - in income >1 lacs, 60 if income < 1 lacs", "lap_dbr_foir": "Max 100% (Double whammy - 140%)", "npm_depreciation_fraction": "66.67%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
-            "Banking": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "No DBR", "banking_abb_multiplier": "2", "existing_obligation": "Loan availed in last 12 months to be obligated" },
-            "GST": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "Max 100% (Double whammy - 140%)", "gst_industry_margin": "10%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
+            "Salaried": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "70 - in income >1 lacs, 60 if income < 1 lacs", "lap_dbr_foir": "<75k -60%, >75k - 70%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
+            "Net Profit Method": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "Max 100% (Double whammy - 140%)", "npm_depreciation_fraction": "66.67%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
+            "Banking": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "No DBR", "banking_abb_multiplier": "3", "banking_profile_divisor_policy": "ABB/3 for Others; ABB/2 only for Super HNI, Elite, Normal profiles", "existing_obligation": "Loan availed in last 12 months to be obligated" },
+            "GST": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "Max 100% (Double whammy - 140%)", "gst_margin_manufacturing": "7%", "gst_margin_factory": "7%", "gst_margin_retail": "5%", "gst_margin_wholesale": "4%", "gst_margin_specialized": "3%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
             "GRP": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "No DBR", "grp_annual_receipts_multiplier": "4", "existing_obligation": "No need to obligate any loans" },
             "Net Worth Method": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "Max 100% (Double whammy - 140%)", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
         }
@@ -26,6 +64,7 @@ function buildMapping(baseParams) {
 
 const COMMON_PARAMS = {
     HL_COMMON: {
+        "lender_policy_key": "ICICI",
         "hl_max_loan": "No Capping",
         "hl_roi_min": "7.60%",
         "hl_roi_max": "8.35%",
@@ -41,9 +80,10 @@ const COMMON_PARAMS = {
         "hl_ltv_plot": "75%"
     },
     LAP_COMMON: {
+        "lender_policy_key": "ICICI",
         "lap_max_loan": "No Capping",
         "lap_roi_min": "8.25%",
-        "lap_roi_max": "8.5%",
+        "lap_roi_max": "10%",
         "lap_pf_min": "0.50%",
         "lap_pf_max": "1%",
         "age_maturity_non_income": "75",
@@ -90,6 +130,12 @@ async function run() {
     const unmatchedSchemes = new Set();
     const unmatchedParameters = new Set();
     const manualReviewRequired = [];
+
+    const createdParamKeys = await ensureParameterMaster(EXTRA_PARAMETERS, isApply);
+    if (createdParamKeys.length > 0) {
+        console.log(`${isApply ? 'Created' : 'Would create'} missing ParameterMaster keys:`);
+        createdParamKeys.forEach(k => console.log(`  - ${k}`));
+    }
 
     // 1. Fetch Target Lender Safely
     let lender;
