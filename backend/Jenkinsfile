@@ -357,6 +357,18 @@ pipeline {
                                 echo "Release folder ready: ${env.RELEASE_DIR}"
                             """
 
+                            // Uploads and logs must live in a shared directory outside the
+                            // release tree — symlinked in so each release sees the same data.
+                            // This prevents permission errors when rotating old releases (files
+                            // written by the PM2 process are owned by a different user).
+                            sh """
+                                mkdir -p ${DEPLOY_BASE}/shared/uploads
+                                mkdir -p ${DEPLOY_BASE}/shared/logs/esr
+                                ln -sfn ${DEPLOY_BASE}/shared/uploads ${env.RELEASE_DIR}/uploads
+                                ln -sfn ${DEPLOY_BASE}/shared/logs    ${env.RELEASE_DIR}/logs
+                                echo "Shared uploads and logs symlinked into release."
+                            """
+
                             // version.json — served by GET /health so the pipeline can prove
                             // PM2 is running THIS release (catches stale-process deploys).
                             sh """
@@ -554,7 +566,7 @@ except Exception:
                     steps {
                         sh """
                             cd ${DEPLOY_BASE}/releases
-                            ls -dt */ | tail -n +6 | xargs -r rm -rf
+                            ls -dt */ | tail -n +6 | xargs -r sudo rm -rf
                             echo "Retained last 5 releases."
                         """
                     }
