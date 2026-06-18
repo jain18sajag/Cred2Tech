@@ -28,12 +28,25 @@ const otpService = {
     });
 
     const isDev = process.env.NODE_ENV !== 'production';
+console.log('[OTP SERVICE]', {
+  nodeEnv: process.env.NODE_ENV,
+  isDev,
+  mobile,
+  targetType,
+  targetId,
+  generatedOtp: isDev ? otp : '[hidden]'
+})
+    const response = {
+  success: true,
+  otp: isDev ? otp : undefined,
+  message: isDev
+    ? 'OTP returned for development'
+    : 'OTP sent via SMS'
+};
 
-    return {
-      success: true,
-      otp: isDev ? otp : undefined,
-      message: isDev ? 'OTP returned for development' : 'OTP sent via SMS'
-    };
+console.log('[OTP RESPONSE]', response);
+
+return response;
   },
 
   verifyOtp: async (otp, targetType, targetId, tenantId) => {
