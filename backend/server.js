@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ override: true });
 const app = require('./src/app');
 const prisma = require('./config/db');
 
