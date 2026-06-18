@@ -380,7 +380,7 @@ module.exports = {
       cwd: '${DEPLOY_BASE}/current',
       instances: 1,
       exec_mode: 'fork',
-      env_production: { NODE_ENV: 'production', PORT: ${APP_PORT} },
+      env_production: { PORT: ${APP_PORT} },
       watch: false,
       max_memory_restart: '512M',
       error_file: '/var/log/pm2/${PM2_APP}-error.log',
