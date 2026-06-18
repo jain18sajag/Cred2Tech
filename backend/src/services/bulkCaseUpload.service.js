@@ -29,6 +29,36 @@ const parseDate = (val) => {
   return isNaN(date.getTime()) ? null : date;
 };
 
+const firstPresent = (row, keys, fallback = null) => {
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null && row[key] !== '') return row[key];
+  }
+  return fallback;
+};
+
+const resolveProfessionalFields = (row) => {
+  const rawProfession = firstPresent(row, [
+    'Select Your Profession',
+    'SELECT YOUR PROFESSION',
+    'Profession',
+    'Profession Type'
+  ]);
+  const rawIsProfessional = firstPresent(row, [
+    'Are You A Professional',
+    'ARE YOU A PROFESSIONAL?',
+    'Is Professional'
+  ]);
+  const professionType = rawProfession ? String(rawProfession).trim() : null;
+  const isProfessional = rawIsProfessional !== null
+    ? parseBool(rawIsProfessional, Boolean(professionType))
+    : Boolean(professionType);
+
+  return {
+    is_professional: isProfessional,
+    profession_type: isProfessional ? professionType : null
+  };
+};
+
 
 // Normalize customer category for Prisma enum CustomerCategory: MSME | SALARIED
 const normalizeCustomerCategory = (customerType, companyType) => {
@@ -145,7 +175,7 @@ class BulkCaseUploadService {
     const casesHeaders = [
       'Case Ref', 'Customer Type', 'Source', 'DSA Name', 'Assigned To Email', 'Product Type', 'Preferred Lender', 'Selected Income Method', 'Required Loan Amount', 'Required Tenure Months', 'Required ROI', 'Case Stage', 'Remarks',
       'Customer Name', 'Applicant Name', 'Applicant Role', 'Mobile', 'Email', 'PAN', 'Aadhaar Number', 'DOB', 'Gender', 'Father Name', 'Marital Status', 'Current Address', 'Current City', 'Current State', 'Current Pincode', 'Permanent Address', 'Permanent City', 'Permanent State', 'Permanent Pincode', 'Address Ownership',
-      'Company Type', 'Company Name', 'Company Mobile', 'Company Email', 'Company PAN', 'GST Number', 'CIN / LLPIN', 'Udyam Number', 'Industry Type', 'Business Vintage Years', 'Annual Turnover', 'Company Address', 'Company City', 'Company State', 'Company Pincode',
+      'Company Type', 'Company Name', 'Company Mobile', 'Company Email', 'Company PAN', 'GST Number', 'CIN / LLPIN', 'Udyam Number', 'Industry Type', 'Are You A Professional', 'Select Your Profession', 'Business Vintage Years', 'Annual Turnover', 'Company Address', 'Company City', 'Company State', 'Company Pincode',
       'Property Type', 'Occupancy Status', 'Ownership', 'Market Value', 'Property Address', 'Property City', 'Property State', 'Property Pincode', 'Property Owner Name', 'Property Title Status', 'LTV Percent', 'Property Remarks',
       'Selected Monthly Income', 'Gross Salary Monthly', 'Net Salary Monthly', 'Salary As Per Slip Monthly', 'Net Profit After Tax Current Year', 'Net Profit After Tax Previous Year', 'Depreciation Current Year', 'Depreciation Previous Year', 'Interest On Loan Current Year', 'Interest On Loan Previous Year', 'Director Remuneration Current Year', 'Director Remuneration Previous Year', 'Partner Salary Current Year', 'Partner Salary Previous Year', 'Annual Sales As Per GSTR', 'Last 12 Month Sales As Per GSTR', 'GST Average Monthly Sales', 'Turnover As Per ITR', 'Annual Gross Receipts', 'Annual Business Credits', 'Average Bank Balance', 'ABB', 'Monthly Rental Income Bank', 'Monthly Rental Income Cash', 'Annual Agriculture Income', 'Professional Fees Annual', 'Interest Income Annual', 'Dividend Income Annual', 'Other Income Annual', 'HDFC Exposure', 'ICICI Exposure', 'Existing EMI Total', 'Primary CIBIL Score', 'Lowest CIBIL Score',
       'PAN Status', 'GST Status', 'ITR Status', 'Bank Statement Status', 'Bureau Status', 'Salary OCR Status', 'Property Document Status', 'KYC Document Status'
@@ -155,7 +185,7 @@ class BulkCaseUploadService {
     sheetCases.views = [{ state: 'frozen', ySplit: 1 }];
 
     // Add Sample Case
-    sheetCases.addRow(['CASE-UPLOAD-001', 'Proprietorship', 'EXCEL_UPLOAD', '', '', 'BL', 'Any', 'Any', 0, 0, 0, 'LEAD_CREATED', 'Sample Uploaded Case', 'Acme Trading', 'Rajesh Kumar', 'PRIMARY_BORROWER', '9876543210', 'rajesh@acme.com', 'ABCDE1234F', '', '', 'Male', '', '', '123 Acme St', 'Mumbai', 'Maharashtra', '400001', '', '', '', '', 'Sole Owner', 'Proprietorship', 'Acme Trading', '9876543210', 'info@acme.com', 'ABCDE1234F', '27ABCDE1234F1Z5', '', '', 'Trading', '5', 10000000, '123 Acme St', 'Mumbai', 'Maharashtra', '400001', 'Commercial - Office / Shop', 'Self Occupied', 'Company Owned', 15000000, '123 Acme St', 'Mumbai', 'Maharashtra', '400001', 'Acme Trading', 'Clear', 0, '', 0, 0, 0, 0, 1200000, 1000000, 200000, 150000, 50000, 40000, 0, 0, 0, 0, 10000000, 10000000, 833333, 9000000, 9000000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 750, 750, 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending']);
+    sheetCases.addRow(['CASE-UPLOAD-001', 'Proprietorship', 'EXCEL_UPLOAD', '', '', 'BL', 'Any', 'Any', 0, 0, 0, 'LEAD_CREATED', 'Sample Uploaded Case', 'Acme Trading', 'Rajesh Kumar', 'PRIMARY_BORROWER', '9876543210', 'rajesh@acme.com', 'ABCDE1234F', '', '', 'Male', '', '', '123 Acme St', 'Mumbai', 'Maharashtra', '400001', '', '', '', '', 'Sole Owner', 'Proprietorship', 'Acme Trading', '9876543210', 'info@acme.com', 'ABCDE1234F', '27ABCDE1234F1Z5', '', '', 'Trading', 'No', '', '5', 10000000, '123 Acme St', 'Mumbai', 'Maharashtra', '400001', 'Commercial - Office / Shop', 'Self Occupied', 'Company Owned', 15000000, '123 Acme St', 'Mumbai', 'Maharashtra', '400001', 'Acme Trading', 'Clear', 0, '', 0, 0, 0, 0, 1200000, 1000000, 200000, 150000, 50000, 40000, 0, 0, 0, 0, 10000000, 10000000, 833333, 9000000, 9000000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 750, 750, 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending']);
 
     // 3. CoApplicants Sheet
     const sheetCoApp = workbook.addWorksheet('CoApplicants');
@@ -268,6 +298,7 @@ class BulkCaseUploadService {
         let createdInfo = null;
         await prisma.$transaction(async (tx) => {
           // 1. Find or Create Customer
+          const professionalFields = resolveProfessionalFields(row);
           let customer = await tx.customer.findFirst({
             where: { tenant_id: tenantId, business_pan: pan }
           });
@@ -284,8 +315,15 @@ class BulkCaseUploadService {
                 entity_type: row['Company Type'] || row['Customer Type'] || 'PROPRIETORSHIP',
                 industry: row['Industry Type'] || null,
                 business_vintage: row['Business Vintage Years']?.toString() || null,
+                is_professional: professionalFields.is_professional,
+                profession_type: professionalFields.profession_type,
                 created_by_user_id: userId
               }
+            });
+          } else if (professionalFields.is_professional || professionalFields.profession_type !== null) {
+            customer = await tx.customer.update({
+              where: { id: customer.id },
+              data: professionalFields
             });
           }
 

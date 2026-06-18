@@ -2699,7 +2699,21 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
     // 1. Fetch case_esr_financials natively
     const esr = await prisma.caseEsrFinancials.findFirst({
         where: { case_entity: { id: case_id, tenant_id } },
-        include: { case_entity: true }
+        include: {
+            case_entity: {
+                include: {
+                    customer: {
+                        select: {
+                            id: true,
+                            is_professional: true,
+                            profession_type: true,
+                            industry: true,
+                            entity_type: true
+                        }
+                    }
+                }
+            }
+        }
     });
 
     if (!esr) {
@@ -2711,6 +2725,13 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
     if (!esr.selected_monthly_income || esr.selected_monthly_income <= 0) {
         throw new Error("Selected monthly income missing or invalid.");
     }
+
+    const customerProfile = esr.case_entity?.customer || null;
+    esr.is_professional = customerProfile?.is_professional || false;
+    esr.profession = customerProfile?.profession_type || esr.profession || null;
+    esr.professional_type = customerProfile?.profession_type || esr.professional_type || null;
+    esr.customer_profession = customerProfile?.profession_type || esr.customer_profession || null;
+    esr.customer_industry = customerProfile?.industry || esr.customer_industry || null;
 
     const pType = esr.product_type.toUpperCase();
 
