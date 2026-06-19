@@ -295,7 +295,7 @@ pipeline {
                             // (single source of truth). Default 5000 if unset.
                             env.APP_PORT = sh(
                                 returnStdout: true,
-                                script: "grep -E '^PORT=' ${env.STAGED_ENV} 2>/dev/null | tail -1 | cut -d= -f2- | tr -dc '0-9' || true"
+                                script: "grep -E '^PORT=' \"${env.STAGED_ENV}\" 2>/dev/null | tail -1 | cut -d= -f2- | tr -dc '0-9' || true"
                             ).trim()
                             if (!env.APP_PORT) { env.APP_PORT = '5000' }
                             echo "Release ID: ${env.RELEASE_TS}"
@@ -405,7 +405,7 @@ pipeline {
                                 cp    ${BACKEND_DIR}/server.js         ${env.RELEASE_DIR}/
                                 cp    ${BACKEND_DIR}/package.json      ${env.RELEASE_DIR}/
                                 cp    ${BACKEND_DIR}/package-lock.json ${env.RELEASE_DIR}/
-                                cp    ${env.STAGED_ENV}                ${env.RELEASE_DIR}/.env
+                                cp    "${env.STAGED_ENV}"              "${env.RELEASE_DIR}/.env"
                                 echo "Release folder ready: ${env.RELEASE_DIR}"
                             """
 
