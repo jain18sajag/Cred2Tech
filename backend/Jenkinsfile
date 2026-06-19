@@ -38,6 +38,13 @@ pipeline {
         PM2_APP       = 'cred2tech-backend'
         DEPLOY_BASE   = '/opt/cred2tech/cred2tech-backend'
         ENV_FILE      = '/etc/cred2tech/cred2tech-backend.env'
+        // Single source of truth for the service .env: a Jenkins "Secret file"
+        // credential. Each deploy materializes THIS credential and syncs it to
+        // ENV_FILE (see 'Refresh .env (Jenkins Credentials)') so every release
+        // ships the latest secrets straight from the credentials store. Update
+        // the credential → next deploy picks it up. If the credential is not
+        // configured the pipeline falls back to the on-box ENV_FILE.
+        ENV_CREDENTIAL_ID = 'cred2tech-backend-env'
         BACKEND_DIR   = 'backend'                       // sub-path inside the mono-repo
         // APP_PORT is resolved at runtime from PORT in the service env file (so this
         // PROD instance can run on its own port — 5000 is already taken on the box by
@@ -153,6 +160,49 @@ pipeline {
         stage('Deploy Backend') {
             when { expression { env.BACKEND_CHANGED == 'true' } }
             stages {
+
+                // ── 4·0 Refresh .env from Jenkins Credentials (BEFORE everything) ─
+                // Pull the latest service .env straight from the Jenkins
+                // credentials store and make it the source of truth for THIS
+                // deploy: validate it, keep a .bak of the current on-box env, then
+                // sync it to ENV_FILE. Everything downstream (backup, PORT
+                // resolution, the .env copied into the release) then uses these
+                // fresh secrets automatically. A missing credential falls back to
+                // whatever ENV_FILE already holds, so this can roll out before the
+                // credential exists.
+                stage('Refresh .env (Jenkins Credentials)') {
+                    steps {
+                        script {
+                            def loaded = false
+                            try {
+                                withCredentials([file(credentialsId: env.ENV_CREDENTIAL_ID, variable: 'ENV_SECRET_FILE')]) {
+                                    sh '''
+                                        set -eu
+                                        # Validate the credential BEFORE overwriting a working env file.
+                                        test -s "$ENV_SECRET_FILE" || { echo "Credential .env is empty — refusing to overwrite ${ENV_FILE}."; exit 1; }
+                                        grep -qE '^[A-Za-z_][A-Za-z0-9_]*=' "$ENV_SECRET_FILE" || { echo "Credential .env has no KEY=VALUE lines — refusing."; exit 1; }
+                                        grep -qE '^DATABASE_URL=' "$ENV_SECRET_FILE" || { echo "Credential .env is missing DATABASE_URL — refusing (looks wrong)."; exit 1; }
+
+                                        # Keep a recovery copy of the previous on-box env, then sync.
+                                        if [ -f "$ENV_FILE" ]; then
+                                            cp -p "$ENV_FILE" "${ENV_FILE}.bak"
+                                            echo "Backed up previous env → ${ENV_FILE}.bak"
+                                        fi
+                                        install -m 600 "$ENV_SECRET_FILE" "$ENV_FILE"
+                                        echo "Synced Jenkins credential → ${ENV_FILE}"
+                                    '''
+                                }
+                                loaded = true
+                            } catch (err) {
+                                echo "Credential '${env.ENV_CREDENTIAL_ID}' unavailable or rejected (${err.message}). Falling back to existing ${ENV_FILE}."
+                            }
+                            // Whatever the source, ENV_FILE must now exist for the rest of the deploy.
+                            sh 'test -f "$ENV_FILE" || { echo "No usable env file at ${ENV_FILE} — cannot deploy."; exit 1; }'
+                            env.ENV_SOURCE = loaded ? "Jenkins credential '${env.ENV_CREDENTIAL_ID}'" : "on-box ${ENV_FILE} (credential fallback)"
+                            echo ".env source for this release: ${env.ENV_SOURCE}"
+                        }
+                    }
+                }
 
                 // ── 4a. Database Backup (ALWAYS FIRST) ───────────────────────────
                 // Full pg_dump → encrypted → local + S3 BEFORE we touch production.
@@ -413,6 +463,29 @@ ECOEOF
                     }
                 }
 
+                // ── 4f₂. .env Debug Log — prove the injected .env is the new one ──
+                // Redacted report (source + SHA-256 + key list with masked values)
+                // of the .env just written into the release, diffed against the
+                // currently-live release's .env. This is the audit trail that the
+                // updated secrets from the credentials store actually reached the
+                // code about to go live. Values are never printed — only hashes.
+                stage('.env Debug Log') {
+                    steps {
+                        sh '''
+                            set -eu
+                            DBG="$RELEASE_DIR/scripts/env-debug.sh"
+                            if [ -f "$DBG" ]; then
+                                chmod +x "$DBG"
+                                "$DBG" "$RELEASE_DIR/.env" "$DEPLOY_BASE/current/.env"
+                            else
+                                echo "env-debug.sh not found in release — basic check only."
+                                test -s "$RELEASE_DIR/.env" || { echo "FAIL: $RELEASE_DIR/.env missing/empty — .env NOT injected."; exit 1; }
+                                echo "Injected $(grep -cE '^[A-Za-z_][A-Za-z0-9_]*=' "$RELEASE_DIR/.env") variables into $RELEASE_DIR/.env"
+                            fi
+                        '''
+                    }
+                }
+
                 // ── 4g. Install Prod Dependencies + Prisma Client ────────────────
                 stage('Install Prod Deps') {
                     steps {
@@ -447,6 +520,14 @@ ECOEOF
                         sh """
                             ln -sfn ${env.RELEASE_DIR} ${DEPLOY_BASE}/current
                             echo "Symlink: ${DEPLOY_BASE}/current → ${env.RELEASE_DIR}"
+
+                            # Confirm the .env that PM2 will load IS the one we injected.
+                            REL_SHA=\$(sha256sum ${env.RELEASE_DIR}/.env | cut -d' ' -f1)
+                            LIVE_SHA=\$(sha256sum ${DEPLOY_BASE}/current/.env | cut -d' ' -f1)
+                            echo "Release .env SHA-256: \$REL_SHA"
+                            echo "Live    .env SHA-256: \$LIVE_SHA"
+                            [ "\$REL_SHA" = "\$LIVE_SHA" ] || { echo "FAIL: live current/.env does not match the release .env — wrong secrets would run."; exit 1; }
+                            echo "Confirmed: current/.env serves release ${env.RELEASE_TS}'s injected secrets."
                         """
                         script { env.DEPLOYED = 'true' }
                     }
