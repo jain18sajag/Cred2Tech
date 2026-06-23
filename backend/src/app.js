@@ -224,9 +224,6 @@ async function seedMsmePricing() {
   }
 }
 
-seedRolesIfMissing();
-seedMsmePricing();
-
 const seedLendersIfMissing = require('./utils/seed_lenders');
 const seedDataMatrix = require('./utils/seed_matrix');
 
@@ -235,3 +232,5 @@ const seedDataMatrix = require('./utils/seed_matrix');
 // });
 
 module.exports = app;
+module.exports.seedRolesIfMissing = seedRolesIfMissing;
+module.exports.seedMsmePricing = seedMsmePricing;

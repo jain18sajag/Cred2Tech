@@ -10,6 +10,10 @@ async function startServer() {
     await prisma.$connect();
     console.log('Database connected successfully.');
 
+    // Seed canonical roles + MSME pricing on startup (idempotent — safe every restart)
+    await app.seedRolesIfMissing();
+    await app.seedMsmePricing();
+
     // Safe Backfill Policy
     const { runSafeBackfill } = require('./src/utils/backfill');
     await runSafeBackfill();
