@@ -65,7 +65,9 @@ class SseService {
      * Keep-alive heartbeat to prevent reverse-proxy timeouts
      */
     startHeartbeat() {
-        // Send a comment heartbeat every 30 seconds
+        // Send a comment heartbeat every 30 seconds. unref() so this timer
+        // alone never keeps the Node process alive (e.g. CI smoke tests that
+        // just require() this module and expect the process to exit).
         this.heartbeatInterval = setInterval(() => {
             this.clients.forEach(clientsSet => {
                 clientsSet.forEach(res => {
@@ -77,6 +79,7 @@ class SseService {
                 });
             });
         }, 30000);
+        this.heartbeatInterval.unref();
     }
 
     stopHeartbeat() {
