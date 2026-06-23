@@ -4,7 +4,8 @@ import { CheckCircle2, AlertCircle, RefreshCw, UploadCloud, FileText, Briefcase,
 import api from '../api/axiosInstance';
 import { downloadDocument } from '../api/documentHelper';
 
-const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, applicantName, walletBalance, analyzeCost, existingStatus, onComplete }) => {
+const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, applicantName, walletBalance, analyzeCost, existingStatus, onComplete, mode }) => {
+    const isMsme = mode === 'MSME_SELF_SERVICE';
     const [status, setStatus] = useState(existingStatus?.status || 'INITIATED');
     const [reportId, setReportId] = useState(existingStatus?.report_id || null);
     // documentIds: our internal stored file IDs — used for secure serving via /api/documents/:id
@@ -230,7 +231,7 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
                         <span style={{ fontWeight: 600, fontSize: 14 }}>Upload Statements Securely</span>
                     </div>
 
-                    {walletBalance < analyzeCost && (
+                    {!isMsme && walletBalance < analyzeCost && (
                         <div style={{ padding: 12, borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: 'var(--error)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, marginBottom: 16 }}>
                             <AlertCircle size={16} /> Insufficient credits. Wallet has {walletBalance}, needs {analyzeCost}.
                         </div>
@@ -276,8 +277,8 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
                         </button>
                         <div style={{ display: 'flex', gap: 12 }}>
                             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setIsUploadOpen(false)}>Cancel</button>
-                            <button type="button" className="btn btn-secondary btn-sm" style={{ borderColor: '#cbd5e1', backgroundColor: '#ffffff', color: '#334155' }} onClick={handleAnalyze} disabled={loading || walletBalance < analyzeCost}>
-                                {loading ? 'Wait...' : `Analyze (~${analyzeCost} Cr)`}
+                            <button type="button" className="btn btn-secondary btn-sm" style={{ borderColor: '#cbd5e1', backgroundColor: '#ffffff', color: '#334155' }} onClick={handleAnalyze} disabled={loading || (!isMsme && walletBalance < analyzeCost)}>
+                                {loading ? 'Wait...' : isMsme ? 'Analyze' : `Analyze (~${analyzeCost} Cr)`}
                             </button>
                         </div>
                     </div>

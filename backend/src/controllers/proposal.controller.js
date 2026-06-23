@@ -4,11 +4,11 @@ const proposalService = require('../services/proposal.service');
 async function create(req, res) {
     try {
         const case_id = parseInt(req.params.id, 10);
-        const { lender_id, tenant_lender_id, scheme_id } = req.body;
+        const { lender_id, tenant_lender_id, scheme_id, other_lender } = req.body;
         
         // At least one must be provided
-        if (!lender_id && !tenant_lender_id) {
-            return res.status(400).json({ error: 'lender_id or tenant_lender_id is required' });
+        if (!lender_id && !tenant_lender_id && !other_lender) {
+            return res.status(400).json({ error: 'lender_id, tenant_lender_id, or other_lender is required' });
         }
 
         const proposal = await proposalService.createProposalDraft({
@@ -16,6 +16,7 @@ async function create(req, res) {
             lender_id,
             tenant_lender_id: tenant_lender_id ? parseInt(tenant_lender_id, 10) : null,
             scheme_id: scheme_id ? parseInt(scheme_id, 10) : null,
+            other_lender,
             user_id: req.user.id,
             tenant_id: req.user.tenant_id,
         });
@@ -67,6 +68,7 @@ async function update(req, res) {
             case_id,
             tenant_id: req.user.tenant_id,
             user_id: req.user.id,
+            user_role: req.user.role,
             fields: req.body,
         });
         res.json({ success: true, proposal: updated });
@@ -166,16 +168,17 @@ async function clone(req, res) {
     try {
         const case_id = parseInt(req.params.id, 10);
         const proposal_id = parseInt(req.params.pid, 10);
-        const { new_lender_id, new_tenant_lender_id } = req.body;
+        const { new_lender_id, new_tenant_lender_id, other_lender } = req.body;
         
-        if (!new_lender_id && !new_tenant_lender_id) {
-            return res.status(400).json({ error: 'new_lender_id or new_tenant_lender_id is required' });
+        if (!new_lender_id && !new_tenant_lender_id && !other_lender) {
+            return res.status(400).json({ error: 'new_lender_id, new_tenant_lender_id, or other_lender is required' });
         }
 
         const cloned = await proposalService.cloneProposalForLender({
             source_id: proposal_id,
             new_lender_id,
             new_tenant_lender_id: new_tenant_lender_id ? parseInt(new_tenant_lender_id, 10) : null,
+            other_lender,
             user_id: req.user.id,
             tenant_id: req.user.tenant_id,
         });

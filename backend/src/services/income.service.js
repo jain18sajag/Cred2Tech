@@ -1,5 +1,10 @@
 const prisma = require('../../config/db');
 
+const applicantDisplayName = (app) => {
+  if (!app) return '';
+  return app.name || (app.type === 'PRIMARY' ? 'Primary Applicant' : 'Co-Applicant');
+};
+
 /**
  * getIncomeSummary — assembles API-pulled income + manual entries for a case.
  * Reads from persistent FY snapshot columns stored at callback ingestion time.
@@ -13,7 +18,6 @@ async function getIncomeSummary(case_id, tenant_id) {
       gst_requests:    { orderBy: { created_at: 'desc' }, take: 1 },
       itr_analytics:   { orderBy: { created_at: 'desc' }, take: 1 },
       applicants: {
-        where: { type: 'PRIMARY' },
         include: {
           bank_statements: { orderBy: { created_at: 'desc' }, take: 1 }
         }
@@ -28,12 +32,13 @@ async function getIncomeSummary(case_id, tenant_id) {
 
   const esr = caseRecord.esr_financials;
 
-  // ── GST: prefer persisted FY snapshot columns ─────────────────────────────
-  const gstReq = caseRecord.gst_requests?.[0];
-  let gstTurnoverLatest = gstReq?.turnover_latest_year   != null ? Number(gstReq.turnover_latest_year)   : (esr?.gst_avg_monthly_sales ? esr.gst_avg_monthly_sales * 12 : null);
-  let gstTurnoverPrev   = gstReq?.turnover_previous_year != null ? Number(gstReq.turnover_previous_year)  : null;
-  const gstFyLatest       = gstReq?.financial_year_latest  || null;
-  const gstFyPrev         = gstReq?.financial_year_previous || null;
+  // ── GST: use exact FY snapshot accessor ───────────────────────────────────
+  const { getBestUsableGstSnapshot } = require('./gstAnalyticsSnapshot.service');
+  const gstSnapshot = await getBestUsableGstSnapshot({ tenantId: tenant_id, caseId: case_id });
+  let gstTurnoverLatest = gstSnapshot?.turnover_latest_year != null ? Number(gstSnapshot.turnover_latest_year) : (esr?.gst_avg_monthly_sales ? esr.gst_avg_monthly_sales * 12 : null);
+  let gstTurnoverPrev   = gstSnapshot?.turnover_previous_year != null ? Number(gstSnapshot.turnover_previous_year) : null;
+  const gstFyLatest     = gstSnapshot?.financial_year_latest || null;
+  const gstFyPrev       = gstSnapshot?.financial_year_previous || null;
 
   // ── ITR: prefer persisted FY snapshot columns ─────────────────────────────
   const itrReq = caseRecord.itr_analytics?.[0];
@@ -51,7 +56,7 @@ async function getIncomeSummary(case_id, tenant_id) {
   }
 
   // ── Bank: prefer persisted FY snapshot columns ────────────────────────────
-  const primaryApplicant = caseRecord.applicants?.[0];
+  const primaryApplicant = caseRecord.applicants?.find(a => a.type === 'PRIMARY') || caseRecord.applicants?.[0];
   const bankReq = primaryApplicant?.bank_statements?.[0] || caseRecord.bank_statements?.[0];
   let avgBalanceLatest = bankReq?.avg_bank_balance_latest_year   != null ? Number(bankReq.avg_bank_balance_latest_year)   : (esr?.bank_avg_balance ?? null);
   let avgBalancePrev   = bankReq?.avg_bank_balance_previous_year != null ? Number(bankReq.avg_bank_balance_previous_year)  : null;
@@ -59,7 +64,13 @@ async function getIncomeSummary(case_id, tenant_id) {
   const bankFyPrev       = bankReq?.financial_year_previous || null;
 
   // ── Manual income entries ─────────────────────────────────────────────────
-  const manualEntries = caseRecord.income_entries;
+  const applicantById = new Map((caseRecord.applicants || []).map(app => [app.id, app]));
+  const manualEntries = caseRecord.income_entries.map(entry => ({
+    ...entry,
+    applicant_label: entry.applicant_id
+      ? (applicantDisplayName(applicantById.get(entry.applicant_id)) || entry.applicant_label || 'Applicant')
+      : 'Entity'
+  }));
   const manualTotal = manualEntries.reduce((sum, e) => sum + (Number(e.annual_amount) || 0), 0);
 
   // ── Obligations total ─────────────────────────────────────────────────────
@@ -101,13 +112,23 @@ async function addIncomeEntry(case_id, payload, tenant_id) {
   const { income_type, applicant_id, applicant_label, annual_amount, supporting_doc_type, remarks } = payload;
   if (!income_type)    throw new Error('income_type is required.');
   if (!annual_amount || Number(annual_amount) < 0) throw new Error('annual_amount must be a positive number.');
+  const applicantId = applicant_id ? parseInt(applicant_id, 10) : null;
+  let resolvedApplicantLabel = applicant_label;
+
+  if (applicantId) {
+    const applicant = await prisma.applicant.findFirst({
+      where: { id: applicantId, case_id },
+      select: { id: true, name: true, type: true }
+    });
+    resolvedApplicantLabel = applicantDisplayName(applicant) || 'Applicant';
+  }
 
   return prisma.caseIncomeEntry.create({
     data: {
       case_id,
-      applicant_id: applicant_id ? parseInt(applicant_id, 10) : null,
+      applicant_id: applicantId,
       income_type,
-      applicant_label,
+      applicant_label: resolvedApplicantLabel,
       annual_amount:       Number(annual_amount),
       supporting_doc_type,
       remarks
@@ -134,6 +155,25 @@ async function deleteIncomeEntry(entry_id, case_id, tenant_id) {
  */
 async function confirmIncomeSummary(case_id, tenant_id, userId) {
   const { updateStage } = require('./case.service');
+  const caseRecord = await prisma.case.findFirst({
+    where: { id: case_id, tenant_id },
+    select: { stage: true }
+  });
+  if (!caseRecord) throw new Error('Case not found or unauthorized.');
+
+  if (caseRecord.stage === 'LEAD_CREATED') {
+    await updateStage(case_id, tenant_id, 'DATA_COLLECTION', userId);
+    return await updateStage(case_id, tenant_id, 'INCOME_REVIEWED', userId);
+  }
+
+  if (caseRecord.stage === 'DATA_COLLECTION') {
+    return await updateStage(case_id, tenant_id, 'INCOME_REVIEWED', userId);
+  }
+
+  if (caseRecord.stage === 'INCOME_REVIEWED') {
+    return caseRecord;
+  }
+
   return await updateStage(case_id, tenant_id, 'INCOME_REVIEWED', userId);
 }
 

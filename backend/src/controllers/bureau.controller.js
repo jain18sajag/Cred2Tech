@@ -93,6 +93,7 @@ async function runBureauVerification(req, res) {
                caseId: caseId,
                idempotencyKey: `bureau_case_${caseId}_app_${applicant.id}`,
                requestPayload: payload,
+               userRole: req.user.role,
                handlerFunction: async () => {
                   return await bureauService.runBureauCheck(payload);
                }

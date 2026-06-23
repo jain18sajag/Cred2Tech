@@ -71,6 +71,7 @@ exports.fetchPanIntelligence = async (req, res) => {
             caseId: case_id || null,
             requestPayload,
             idempotencyKey,
+            userRole: req.user.role,
             handlerFunction: async () => {
                 const apiResponse = await panService.fetchPanIntelligence(pan);
                 
@@ -214,11 +215,23 @@ exports.fetchPanIntelligence = async (req, res) => {
                 }
                 let gstRecords = recordInserts;
                 
-                // Update Customer profile with fresh data from PAN intelligence
+                // Apply Precedence Rule: GST trade name > GST legal name > PAN verification > MANUAL
+                let selectedGst = primaryGst;
+                if (req.body.selected_gstin) {
+                    selectedGst = detailed.find(d => d.gstin === req.body.selected_gstin) || primaryGst;
+                }
+                const resolvedTradeName = selectedGst?.tradeNameOfBusiness || null;
+                const resolvedLegalName = selectedGst?.legalNameOfBusiness || null;
+                const resolvedBusinessName = resolvedTradeName || resolvedLegalName;
+                const source = resolvedTradeName ? 'GST_TRADE_NAME' : (resolvedLegalName ? 'GST_LEGAL_NAME' : 'PAN_VERIFICATION');
+
                 await prisma.customer.update({
                     where: { id: customer_id },
                     data: {
-                        business_name: legalName || customer.business_name,
+                        legal_business_name: resolvedLegalName || customer.legal_business_name,
+                        trade_name: resolvedTradeName || customer.trade_name,
+                        business_name: resolvedBusinessName || customer.business_name,
+                        business_name_source: resolvedBusinessName ? source : customer.business_name_source,
                         entity_type: constitutionOfBusiness || customer.entity_type
                     }
                 });
@@ -292,10 +305,33 @@ exports.verifyPan = async (req, res) => {
 
         if (!pan) return res.status(400).json({ error: 'PAN is required' });
         if (!customer_id) return res.status(400).json({ error: 'Customer ID is required' });
+        if (!case_id) return res.status(400).json({ error: 'Case ID is required' });
 
         const customer = await prisma.customer.findUnique({ where: { id: customer_id } });
         if (!customer || customer.tenant_id !== tenantId) {
             return res.status(403).json({ error: 'Access denied to this customer' });
+        }
+
+        // Security check and lock check for co-applicant
+        if (is_coapplicant && applicant_id) {
+            const applicant = await prisma.applicant.findUnique({
+                where: { id: parseInt(applicant_id, 10) },
+                include: { case: true }
+            });
+            if (!applicant || applicant.case_id !== parseInt(case_id, 10) || applicant.case.tenant_id !== tenantId) {
+                return res.status(403).json({ error: 'Access denied to this applicant' });
+            }
+            if (applicant.pan_verified) {
+                return res.status(400).json({ error: 'PAN is already verified for this applicant and cannot be modified.' });
+            }
+        } else {
+            // Security check and lock check for primary applicant
+            const primaryApp = await prisma.applicant.findFirst({
+                where: { case_id: parseInt(case_id, 10), type: 'PRIMARY' }
+            });
+            if (primaryApp && primaryApp.pan_verified) {
+                return res.status(400).json({ error: 'PAN is already verified for this customer and cannot be modified.' });
+            }
         }
 
         const idempotencyKey = `SIGNZY_PAN_${customer_id}_${pan}`;
@@ -309,26 +345,63 @@ exports.verifyPan = async (req, res) => {
             caseId: case_id || null,
             requestPayload: { customer_id, pan },
             idempotencyKey,
+            userRole: req.user.role,
             handlerFunction: async () => {
                 const apiResponse = await signzyService.verifyPanSimple(pan);
                 
                 // Save name and dob
                 if (is_coapplicant && applicant_id) {
                     await prisma.applicant.update({
-                        where: { id: applicant_id },
+                        where: { id: parseInt(applicant_id, 10) },
                         data: {
                             name: apiResponse.name,
-                            dob: apiResponse.dob
+                            dob: apiResponse.dob,
+                            pan_verified: true,
+                            pan_verified_at: new Date(),
+                            pan_verification_status: 'SUCCESS',
+                            pan_verification_reference: apiResponse.panStatus || null,
+                            pan_verified_name: apiResponse.name,
+                            pan_verified_dob: apiResponse.dob,
+                            pan_verification_response: apiResponse.rawResponse || null,
+                            pan_verified_by_user_id: userId
                         }
                     });
                 } else {
+                    const primaryApp = await prisma.applicant.findFirst({
+                        where: { case_id: parseInt(case_id, 10), type: 'PRIMARY' }
+                    });
+                    if (primaryApp) {
+                        await prisma.applicant.update({
+                            where: { id: primaryApp.id },
+                            data: {
+                                pan_verified: true,
+                                pan_verified_at: new Date(),
+                                pan_verification_status: 'SUCCESS',
+                                pan_verification_reference: apiResponse.panStatus || null,
+                                pan_verified_name: apiResponse.name,
+                                pan_verified_dob: apiResponse.dob,
+                                pan_verification_response: apiResponse.rawResponse || null,
+                                pan_verified_by_user_id: userId
+                            }
+                        });
+                    }
+
+                    // Precedence: Only update customer business name if no GST name is set
+                    const resolvedBusinessName = customer.legal_business_name || customer.trade_name;
                     await prisma.customer.update({
                         where: { id: customer_id },
                         data: {
-                            business_name: apiResponse.name || customer.business_name,
+                            business_name: resolvedBusinessName || apiResponse.name || customer.business_name,
+                            business_name_source: resolvedBusinessName ? customer.business_name_source : 'PAN_VERIFICATION',
+                            pan_holder_name: apiResponse.name || customer.pan_holder_name,
+                            proprietor_name: apiResponse.name || customer.proprietor_name,
                             dob: apiResponse.dob || customer.dob
                         }
                     });
+
+                    // Sync Case snapshot
+                    const { syncCustomerSnapshots } = require('../services/case.service');
+                    syncCustomerSnapshots(customer_id, tenantId).catch(err => console.error('Snapshot sync failed:', err));
                 }
 
                 return {
@@ -345,5 +418,77 @@ exports.verifyPan = async (req, res) => {
     } catch (error) {
         console.error('PAN Verify error:', error);
         res.status(500).json({ status: "FAILED", error_message: error.message });
+    }
+};
+
+exports.resetPan = async (req, res) => {
+    try {
+        const { applicant_id, case_id } = req.body;
+        const tenantId = req.user.tenant_id;
+        const userRole = req.user.role;
+        const userId = req.user.id;
+
+        if (userRole !== 'DSA_ADMIN' && userRole !== 'SUPER_ADMIN') {
+            return res.status(403).json({ error: 'Unauthorized to reset PAN verification. Only admins can reset.' });
+        }
+
+        if (!applicant_id) {
+            return res.status(400).json({ error: 'Applicant ID is required.' });
+        }
+
+        const applicant = await prisma.applicant.findUnique({
+            where: { id: parseInt(applicant_id, 10) },
+            include: { case: true }
+        });
+
+        if (!applicant || applicant.case_id !== parseInt(case_id, 10) || applicant.case.tenant_id !== tenantId) {
+            return res.status(403).json({ error: 'Access denied to this applicant.' });
+        }
+
+        // Auditing reset in ActivityLog
+        await prisma.activityLog.create({
+            data: {
+                case_id: parseInt(case_id, 10),
+                customer_id: applicant.case.customer_id,
+                activity_type: 'PAN_RESET',
+                description: `PAN verification reset for applicant ${applicant.name || 'Unnamed'} (PAN: ${applicant.pan_number || 'N/A'}) by User #${userId}`,
+                performed_by_user_id: userId
+            }
+        });
+
+        // Reset applicant PAN verification columns
+        const updatedApplicant = await prisma.applicant.update({
+            where: { id: applicant.id },
+            data: {
+                pan_verified: false,
+                pan_verified_at: null,
+                pan_verification_status: null,
+                pan_verification_reference: null,
+                pan_verified_name: null,
+                pan_verified_dob: null,
+                pan_verification_response: null,
+                name: null,
+                dob: null
+            }
+        });
+
+        // If primary applicant was reset, also update Customer table
+        if (applicant.type === 'PRIMARY') {
+            await prisma.customer.update({
+                where: { id: applicant.case.customer_id },
+                data: {
+                    business_name: null,
+                    business_name_source: null,
+                    pan_holder_name: null,
+                    proprietor_name: null,
+                    dob: null
+                }
+            });
+        }
+
+        res.json({ success: true, applicant: updatedApplicant });
+    } catch (error) {
+        console.error('PAN Reset error:', error);
+        res.status(500).json({ error: 'Failed to reset PAN verification' });
     }
 };

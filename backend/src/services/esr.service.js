@@ -121,19 +121,8 @@ function _isBulkUploadSnapshot(snapshot) {
     if (!snapshot) return false;
     if (snapshot.extraction_status !== 'COMPLETED') return false;
 
-    const hasUsableIncome = [
-        snapshot.selected_monthly_income,
-        snapshot.bank_avg_balance,
-        snapshot.banking_income,
-        snapshot.gst_avg_monthly_sales,
-        snapshot.gst_income,
-        snapshot.itr_pat,
-        snapshot.net_profit_income,
-        snapshot.salaried_income
-    ].some(v => Number(v) > 0);
-
     // ANY is the bulk upload auto mode; do not refresh from vendor tables.
-    return hasUsableIncome || String(snapshot.selected_income_method || '').toUpperCase() === 'ANY';
+    return String(snapshot.selected_income_method || '').toUpperCase() === 'ANY';
 }
 
 function _snapshotNeedsRefresh(snapshot) {

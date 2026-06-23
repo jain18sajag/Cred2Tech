@@ -36,7 +36,7 @@ async function sanctionCase(caseId, tenantId, payload, userId) {
         const hasDisbursements = existingCase.disbursements.length > 0;
 
         // 2. Validate Stage Transition
-        const allowedStages = ['ESR_GENERATED', 'LEAD_SENT_TO_LENDER', 'IN_REVIEW', 'APPROVED'];
+        const allowedStages = ['ESR_GENERATED', 'APPROVED'];
         if (!allowedStages.includes(existingCase.stage)) {
             throw new Error(`Sanctioning is not allowed from current stage: ${existingCase.stage}`);
         }

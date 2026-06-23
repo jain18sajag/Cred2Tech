@@ -1,6 +1,7 @@
 require('dotenv').config({ override: true });
 const app = require('./src/app');
 const prisma = require('./config/db');
+const dataPullWorker = require('./src/workers/dataPull.worker');
 
 const PORT = process.env.PORT || 5000;
 
@@ -8,6 +9,13 @@ async function startServer() {
   try {
     await prisma.$connect();
     console.log('Database connected successfully.');
+
+    // Safe Backfill Policy
+    const { runSafeBackfill } = require('./src/utils/backfill');
+    await runSafeBackfill();
+
+    // Start Data Pull Worker
+    dataPullWorker.start();
 
     const server = app.listen(PORT);
 

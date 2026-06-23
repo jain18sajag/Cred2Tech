@@ -126,11 +126,24 @@ async function createUser(data, currentUser) {
 }
 
 async function getUsers(currentUser) {
-  // Replace findMany() with tenant_id filter
+  let whereClause = {};
+
+  if (currentUser.role === 'SUPER_ADMIN') {
+    // SUPER_ADMIN can see everyone across all tenants
+    whereClause = {};
+  } else if (currentUser.role === 'DSA_ADMIN' || currentUser.role === 'TENANT_ADMIN') {
+    // Admin for a specific tenant sees everyone in that tenant
+    whereClause = { tenant_id: currentUser.tenant_id };
+  } else {
+    // Sub-roles (DSA_MEMBER, SUB_DSA) only see themselves and their subordinates
+    whereClause = {
+      tenant_id: currentUser.tenant_id,
+      hierarchy_path: { startsWith: currentUser.hierarchy_path }
+    };
+  }
+
   const users = await prisma.user.findMany({
-    where: {
-      tenant_id: currentUser.tenant_id
-    },
+    where: whereClause,
     select: {
       id: true,
       name: true,
@@ -145,14 +158,10 @@ async function getUsers(currentUser) {
       designation: true,
       last_login_at: true,
       created_at: true,
-      role: { select: { name: true } }
+      role: { select: { name: true } },
+      tenant: { select: { name: true, type: true } }
     },
   });
-
-  if (currentUser.role === 'SUPER_ADMIN') {
-    // SUPER_ADMIN blocked from GET /users (DSA users), but the where clause tenant_id limits it to CRED2TECH implicitly
-    // because SUPER_ADMIN belongs to CRED2TECH.
-  }
 
   return users;
 }

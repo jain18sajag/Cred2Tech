@@ -496,36 +496,21 @@ const AddSalariedCustomerWizardPage = () => {
 
   if (loading) return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}><LoadingSpinner size={40} /></div>;
 
+  const sectionDescription = currentStep === 1 ? "Personal Details" : currentStep === 2 ? "Salary & Income Information" : "Product Selection";
+
   return (
     <div style={{ maxWidth: 880, margin: '0 auto', paddingBottom: 40 }}>
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)' }}>{caseId ? "Resume Salaried Case" : "Add Salaried Customer"}</h1>
-          <p style={{ color: 'var(--text-tertiary)', marginTop: 4 }}>Step {currentStep} of 3 — {currentStep === 1 ? 'PAN & Contacts' : currentStep === 2 ? 'Salary Slips & Income' : 'Product Selection'}</p>
+          <p style={{ color: 'var(--text-tertiary)', marginTop: 4 }}>{sectionDescription}</p>
         </div>
         {caseId && (
           <div style={{ color: 'var(--success)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
             <Check size={16} /> Auto-saved
           </div>
         )}
-      </div>
-
-      {/* Stepper */}
-      <div className="card" style={{ padding: '24px 40px', marginBottom: 30, display: 'flex', position: 'relative', justifyContent: 'space-between' }}>
-        <div style={{ position: 'absolute', top: '50%', left: 60, right: 60, height: 2, background: 'var(--border)', zIndex: 0, transform: 'translateY(-50%)' }} />
-        {[ { step: 1, label: "PAN & Contacts" }, { step: 2, label: "Salary Slips & Income" }, { step: 3, label: "Product & Property" } ].map((s) => {
-          const isActive = currentStep === s.step;
-          const isPast = currentStep > s.step;
-          return (
-            <div key={s.step} style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'var(--bg-surface)', zIndex: 1, padding: '0 10px' }}>
-              <div style={{ width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: isActive ? '#10B981' : isPast ? 'var(--bg-surface)' : 'var(--bg-elevated)', border: isPast ? '2px solid #10B981' : 'none', color: isActive ? 'white' : isPast ? '#10B981' : 'var(--text-tertiary)', fontWeight: 600, fontSize: 13 }}>
-                {isPast ? <Check size={16} strokeWidth={3} /> : s.step}
-              </div>
-              <span style={{ fontWeight: isActive ? 600 : 500, color: isActive ? '#10B981' : 'var(--text-secondary)', fontSize: 14 }}>{s.label}</span>
-            </div>
-          )
-        })}
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>

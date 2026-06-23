@@ -8,7 +8,7 @@ router.use(authenticate);
 
 router.post(
   '/bureau/run/:caseId',
-  requireRole('SUPER_ADMIN', 'DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA'),
+  requireRole('SUPER_ADMIN', 'DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA', 'MSME_CUSTOMER'),
   bureauController.runBureauVerification
 );
 

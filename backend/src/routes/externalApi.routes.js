@@ -37,5 +37,6 @@ router.get('/gst/requests', gstController.getRequestDetails);
 // 4. PAN Intelligence & Verify
 router.post('/pan/verify', panController.verifyPan);
 router.post('/pan/fetch', panController.fetchPanIntelligence);
+router.post('/pan/reset', panController.resetPan);
 
 module.exports = router;

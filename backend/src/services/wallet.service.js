@@ -257,7 +257,7 @@ async function topupWallet({ tenantId, amount, adminUserId }) {
 }
 
 // Wrapper for executing paid APIs
-async function executePaidApi({ apiCode, tenantId, userId, customerId, caseId, requestPayload, idempotencyKey, handlerFunction }) {
+async function executePaidApi({ apiCode, tenantId, userId, customerId, caseId, requestPayload, idempotencyKey, handlerFunction, userRole }) {
   // Idempotency check 
   if (idempotencyKey) {
     const previousLog = await prisma.apiUsageLog.findUnique({
@@ -271,8 +271,11 @@ async function executePaidApi({ apiCode, tenantId, userId, customerId, caseId, r
     }
   }
 
+  // MSME customers have paid upfront — skip all credit deductions
+  const isMsmeCustomer = userRole === 'MSME_CUSTOMER';
+
   // Free APIs immediately skip deduction
-  if (apiCode === 'PAN_FETCH') {
+  if (apiCode === 'PAN_FETCH' || isMsmeCustomer) {
     let result;
     try {
       result = await handlerFunction();

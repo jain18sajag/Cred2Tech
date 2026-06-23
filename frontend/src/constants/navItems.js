@@ -72,6 +72,13 @@ export const NAV_ITEMS = [
     icon: Settings,
     roles: ['SUPER_ADMIN', 'CRED2TECH_MEMBER'],
   },
+  {
+    id: 'admin-msme-cases',
+    label: 'Direct MSME Leads',
+    path: '/admin/msme-cases',
+    icon: Target,
+    roles: ['SUPER_ADMIN'],
+  },
 
   // DSA_ADMIN Views
   {

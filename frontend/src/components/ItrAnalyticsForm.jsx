@@ -18,8 +18,10 @@ const ItrAnalyticsForm = ({
     walletBalance,
     itrCost,
     existingRecord,
-    onComplete
+    onComplete,
+    mode
 }) => {
+    const isMsme = mode === 'MSME_SELF_SERVICE';
     const [status, setStatus] = useState(existingRecord?.status || 'INITIATED');
     const [referenceId, setReferenceId] = useState(existingRecord?.reference_id || null);
     // documentId is the internal stored file ID — use this for secure serving
@@ -298,7 +300,7 @@ const ItrAnalyticsForm = ({
                                 </button>
                             </div>
 
-                            {walletBalance < itrCost && (
+                            {!isMsme && walletBalance < itrCost && (
                                 <div style={{ padding: 12, borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: 'var(--error)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, marginBottom: 16 }}>
                                     <AlertCircle size={16} /> Insufficient credits. Wallet: {walletBalance}, Required: {itrCost}.
                                 </div>
@@ -369,11 +371,11 @@ const ItrAnalyticsForm = ({
                                 {step === 1 ? (
                                     <button
                                         type="button"
-                                        style={{ backgroundColor: '#7c3aed', color: 'white', border: 'none', padding: '8px 24px', borderRadius: 6, fontWeight: 600, fontSize: 13, cursor: 'pointer', opacity: (loading || walletBalance < itrCost) ? 0.6 : 1 }}
+                                        style={{ backgroundColor: '#7c3aed', color: 'white', border: 'none', padding: '8px 24px', borderRadius: 6, fontWeight: 600, fontSize: 13, cursor: 'pointer', opacity: (loading || (!isMsme && walletBalance < itrCost)) ? 0.6 : 1 }}
                                         onClick={handleInitiate}
-                                        disabled={loading || walletBalance < itrCost}
+                                        disabled={loading || (!isMsme && walletBalance < itrCost)}
                                     >
-                                        {loading ? 'Initiating...' : `Initiate (~${itrCost} Cr)`}
+                                        {loading ? 'Initiating...' : isMsme ? 'Initiate' : `Initiate (~${itrCost} Cr)`}
                                     </button>
                                 ) : (
                                     <button

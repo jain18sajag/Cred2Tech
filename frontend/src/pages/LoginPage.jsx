@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Navigate } from 'react-router-dom';
+import { useNavigate, Navigate, Link } from 'react-router-dom';
 import { Zap, Eye, EyeOff, AlertCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
@@ -167,7 +167,10 @@ const LoginPage = () => {
 
             <div className="form-group">
               <label className="form-label" htmlFor="password">
-                Password <span className="required">*</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                  <span>Password <span className="required">*</span></span>
+                  <Link to="/forgot-password" style={{ fontSize: 13, color: 'var(--primary)', textDecoration: 'none', fontWeight: 500 }}>Forgot password?</Link>
+                </div>
               </label>
               <div style={{ position: 'relative' }}>
                 <input
@@ -236,31 +239,58 @@ const LoginPage = () => {
               <span style={{ fontSize: 11, color: 'var(--text-tertiary)', fontWeight: 500, whiteSpace: 'nowrap' }}>New to the platform?</span>
               <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
             </div>
-            <button
-              type="button"
-              id="register-dsa-btn"
-              onClick={() => navigate('/register-dsa')}
-              style={{
-                width: '100%',
-                padding: '11px 20px',
-                background: 'transparent',
-                border: '1.5px solid rgba(99,102,241,0.5)',
-                borderRadius: 10,
-                color: 'var(--primary)',
-                fontSize: 14,
-                fontWeight: 600,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-                transition: 'all 0.2s',
-              }}
-              onMouseOver={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.08)'; e.currentTarget.style.borderColor = 'var(--primary)'; }}
-              onMouseOut={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)'; }}
-            >
-              🏢 Register as a New DSA
-            </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <button
+                type="button"
+                id="register-dsa-btn"
+                onClick={() => navigate('/register-dsa')}
+                style={{
+                  width: '100%',
+                  padding: '11px 20px',
+                  background: 'transparent',
+                  border: '1.5px solid rgba(99,102,241,0.5)',
+                  borderRadius: 10,
+                  color: 'var(--primary)',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  transition: 'all 0.2s',
+                }}
+                onMouseOver={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.08)'; e.currentTarget.style.borderColor = 'var(--primary)'; }}
+                onMouseOut={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)'; }}
+              >
+                🏢 Register as a New DSA
+              </button>
+              
+              <button
+                type="button"
+                onClick={() => navigate('/msme/login')}
+                style={{
+                  width: '100%',
+                  padding: '11px 20px',
+                  background: 'transparent',
+                  border: '1.5px solid rgba(16, 185, 129, 0.5)',
+                  borderRadius: 10,
+                  color: '#059669', // emerald-600
+                  fontSize: 14,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  transition: 'all 0.2s',
+                }}
+                onMouseOver={e => { e.currentTarget.style.background = 'rgba(16, 185, 129, 0.08)'; e.currentTarget.style.borderColor = '#059669'; }}
+                onMouseOut={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.5)'; }}
+              >
+                🚀 Apply for a Business Loan (MSME)
+              </button>
+            </div>
           </div>
         </div>
       </div>

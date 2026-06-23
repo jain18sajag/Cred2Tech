@@ -8,6 +8,8 @@ import {
   Send, Clock, CheckCircle2, AlertCircle, X, Mail, Phone
 } from 'lucide-react';
 import { sendCaseToLender, sendCaseToOtherLender, getTenantLenders } from '../api/tenantLenderService';
+import { useAuth } from '../context/AuthContext';
+import api from '../api/axiosInstance';
 
 // ─── Send Confirmation Modal ───────────────────────────────────────────────────
 function SendConfirmationModal({ isOpen, onClose, result }) {
@@ -74,11 +76,19 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, caseProductType, onSu
   const [selectedLender, setSelectedLender] = useState(null);
   const [selectedContact, setSelectedContact] = useState(null);
   const [sending, setSending] = useState(false);
+  const [manualLender, setManualLender] = useState({
+    lender_name: '',
+    contact_name: '',
+    contact_email: '',
+    contact_mobile: '',
+    dsa_code: ''
+  });
 
   useEffect(() => {
     if (isOpen) {
       setLoading(true);
       setSelectedLender(null); setSelectedContact(null);
+      setManualLender({ lender_name: '', contact_name: '', contact_email: '', contact_mobile: '', dsa_code: '' });
       getTenantLenders().then(d => setLenders(d.filter(l => l.is_active && l.contacts?.length > 0))).catch(() => toast.error('Failed to load lenders')).finally(() => setLoading(false));
     }
   }, [isOpen]);
@@ -86,17 +96,33 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, caseProductType, onSu
   if (!isOpen) return null;
 
   const handleSend = async () => {
-    if (!selectedContact) { toast.error('Select a contact first'); return; }
+    const isManualMode = lenders.length === 0;
+    if (isManualMode) {
+      if (!manualLender.lender_name.trim()) { toast.error('Enter lender name'); return; }
+      if (!manualLender.contact_name.trim()) { toast.error('Enter contact name'); return; }
+      if (!manualLender.contact_email.trim()) { toast.error('Enter contact email'); return; }
+    } else if (!selectedContact) {
+      toast.error('Select a contact first');
+      return;
+    }
     setSending(true);
     try {
-      // For "Other Lender", we create a proposal draft first
-      const r = await caseService.createProposal(caseId, {
-        tenant_lender_id: selectedLender.id,
-        lender_id: selectedLender.platform_lender_id || null,
-        scheme_id: null,
-      });
+      const payload = isManualMode
+        ? {
+            scheme_id: null,
+            other_lender: {
+              ...manualLender,
+              product_type: caseProductType || 'ALL'
+            }
+          }
+        : {
+            tenant_lender_id: selectedLender.id,
+            lender_id: selectedLender.platform_lender_id || null,
+            scheme_id: null,
+          };
+      const r = await caseService.createProposal(caseId, payload);
       const result = r.proposal;
-      toast.success(`Proposal draft created for ${selectedLender.lender_name}`);
+      toast.success(`Proposal draft created for ${isManualMode ? manualLender.lender_name : selectedLender.lender_name}`);
       window.location.href = `/cases/${caseId}/proposals/${result.id}`;
       onClose();
     } catch (e) {
@@ -108,6 +134,9 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, caseProductType, onSu
   const filteredContacts = contacts.filter(c =>
     !caseProductType || c.product_type === caseProductType || c.product_type === 'ALL'
   );
+  const canSend = lenders.length === 0
+    ? Boolean(manualLender.lender_name.trim() && manualLender.contact_name.trim() && manualLender.contact_email.trim())
+    : Boolean(selectedContact);
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -117,6 +146,18 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, caseProductType, onSu
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}><X size={18} /></button>
         </div>
         <div style={{ padding: '20px 24px' }}>
+          {!loading && lenders.length === 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+              <div style={{ fontSize: 13, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+                Enter lender details to create an Other Lender proposal.
+              </div>
+              <input value={manualLender.lender_name} onChange={e => setManualLender({ ...manualLender, lender_name: e.target.value })} placeholder="Lender name *" style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)' }} />
+              <input value={manualLender.contact_name} onChange={e => setManualLender({ ...manualLender, contact_name: e.target.value })} placeholder="Contact name *" style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)' }} />
+              <input value={manualLender.contact_email} onChange={e => setManualLender({ ...manualLender, contact_email: e.target.value })} placeholder="Contact email *" style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)' }} />
+              <input value={manualLender.contact_mobile} onChange={e => setManualLender({ ...manualLender, contact_mobile: e.target.value })} placeholder="Mobile (optional)" style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)' }} />
+              <input value={manualLender.dsa_code} onChange={e => setManualLender({ ...manualLender, dsa_code: e.target.value })} placeholder="DSA code (optional)" style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)' }} />
+            </div>
+          )}
           {loading ? <div style={{ textAlign: 'center', padding: 30 }}><LoadingSpinner size={30} /></div> : lenders.length === 0 ? (
             <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-tertiary)' }}>
               No configured lenders found. <a href='/settings/lender-contacts' style={{ color: 'var(--primary)' }}>Add contacts →</a>
@@ -170,8 +211,8 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, caseProductType, onSu
         </div>
         <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 10, background: 'var(--bg-elevated)' }}>
           <button onClick={onClose} style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Cancel</button>
-          <button onClick={handleSend} disabled={!selectedContact || sending}
-            style={{ padding: '9px 20px', borderRadius: 8, fontWeight: 700, fontSize: 14, background: selectedContact ? 'var(--primary)' : 'var(--border)', color: '#fff', border: 'none', cursor: selectedContact ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button onClick={handleSend} disabled={!canSend || sending}
+            style={{ padding: '9px 20px', borderRadius: 8, fontWeight: 700, fontSize: 14, background: canSend ? 'var(--primary)' : 'var(--border)', color: '#fff', border: 'none', cursor: canSend ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', gap: 6 }}>
             <Send size={14} /> {sending ? 'Sending...' : 'Send Proposal'}
           </button>
         </div>
@@ -701,8 +742,10 @@ const SchemeDiagnosticsPanel = ({ evaluations, lender }) => {
 };
 
 // ─── Lender Action Button (multi-proposal aware) ───────────────────────────────
-function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToLender, onSendToOtherLender }) {
+function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToLender, onSendToOtherLender, onSendToCred2TechTeam }) {
   const navigate = useNavigate();
+  const { hasRole } = useAuth();
+  const isMsme = hasRole('MSME_CUSTOMER');
   const [creating, setCreating] = useState(false);
   const [showCloneDialog, setShowCloneDialog] = useState(false);
   const [sending, setSending] = useState(false);
@@ -804,38 +847,54 @@ function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToL
       )}
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {latestProposal ? (
-          <button
-            className="btn btn-primary"
-            style={{ flex: 1, padding: '10px', fontWeight: 700 }}
-            onClick={() => navigate(`/cases/${caseId}/proposals/${latestProposal.id}`)}
-          >
-            View Proposal →
-          </button>
-        ) : (
+        {isMsme ? (
           <button
             className="btn btn-primary"
             style={{
               flex: 1, padding: '10px', fontWeight: 700,
               background: 'linear-gradient(135deg,#2B6CB0,#553C9A)'
             }}
-            onClick={handlePrepare}
+            onClick={onSendToCred2TechTeam}
             disabled={creating}
           >
-            {creating ? 'Creating...' : '📋 Prepare Proposal →'}
+            {creating ? 'Sending...' : 'Send to Cred2Tech Team →'}
           </button>
+        ) : (
+          <>
+            {latestProposal ? (
+              <button
+                className="btn btn-primary"
+                style={{ flex: 1, padding: '10px', fontWeight: 700 }}
+                onClick={() => navigate(`/cases/${caseId}/proposals/${latestProposal.id}`)}
+              >
+                View Proposal →
+              </button>
+            ) : (
+              <button
+                className="btn btn-primary"
+                style={{
+                  flex: 1, padding: '10px', fontWeight: 700,
+                  background: 'linear-gradient(135deg,#2B6CB0,#553C9A)'
+                }}
+                onClick={handlePrepare}
+                disabled={creating}
+              >
+                {creating ? 'Creating...' : '📋 Prepare Proposal →'}
+              </button>
+            )}
+            <button
+              onClick={onSendToOtherLender}
+              title="Prepare proposal for a different lender contact"
+              style={{
+                padding: '9px 12px', fontWeight: 700, fontSize: 11, borderRadius: 8,
+                background: 'transparent', color: '#553C9A', border: '1px solid #553C9A',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap'
+              }}
+            >
+              🔄 Other Lender
+            </button>
+          </>
         )}
-        <button
-          onClick={onSendToOtherLender}
-          title="Prepare proposal for a different lender contact"
-          style={{
-            padding: '9px 12px', fontWeight: 700, fontSize: 11, borderRadius: 8,
-            background: 'transparent', color: '#553C9A', border: '1px solid #553C9A',
-            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap'
-          }}
-        >
-          ↗ Other Lender
-        </button>
       </div>
     </div>
   );
@@ -845,8 +904,24 @@ function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToL
 export default function EsrPage() {
   const { id: caseId } = useParams();
   const navigate = useNavigate();
+  const { hasRole } = useAuth();
+  const isMsme = hasRole('MSME_CUSTOMER');
   const [sendConfirmResult, setSendConfirmResult] = useState(null);
   const [showOtherLenderModal, setShowOtherLenderModal] = useState(false);
+  const [submittingToTeam, setSubmittingToTeam] = useState(false);
+
+  const handleSendToCred2TechTeam = async () => {
+    try {
+      setSubmittingToTeam(true);
+      await api.post(`/msme/case/submit`, { caseId });
+      toast.success('Case submitted to Cred2Tech Team successfully!');
+      navigate('/msme/dashboard');
+    } catch(err) {
+      toast.error('Failed to submit case to team');
+    } finally {
+      setSubmittingToTeam(false);
+    }
+  };
 
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -920,6 +995,15 @@ export default function EsrPage() {
             <RefreshCw size={14} className={generating ? 'spin' : ''} />
             {generating ? 'Generating...' : (esr ? 'Regenerate ESR' : 'Generate ESR')}
           </button>
+          {esr && !isMsme && (
+            <button
+              className="btn btn-secondary"
+              onClick={() => setShowOtherLenderModal(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              <Send size={14} /> Other Lender
+            </button>
+          )}
         </div>
       </div>
 
@@ -1008,10 +1092,31 @@ export default function EsrPage() {
                     onProposalCreated={load}
                     onSendToLender={setSendConfirmResult}
                     onSendToOtherLender={() => setShowOtherLenderModal(true)}
+                    onSendToCred2TechTeam={handleSendToCred2TechTeam}
                   />
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {esr && eligibleLenders.length === 0 && ineligibleLenders.length > 0 && !isMsme && (
+        <div className="card" style={{ marginBottom: 24, padding: '18px 22px', borderLeft: '4px solid #553C9A' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: 'var(--text-primary)' }}>No eligible lender found</h3>
+              <p style={{ margin: '4px 0 0', color: 'var(--text-tertiary)', fontSize: 13 }}>
+                You can still create a proposal and send this case to another lender.
+              </p>
+            </div>
+            <button
+              className="btn btn-primary"
+              onClick={() => setShowOtherLenderModal(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              <Send size={14} /> Send to Other Lender
+            </button>
           </div>
         </div>
       )}

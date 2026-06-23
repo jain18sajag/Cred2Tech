@@ -238,51 +238,27 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
         let gst_industry_type = null;
         let gst_industry_margin = null;
 
-        const gstReq = pickBestRecord(caseRecord.gst_requests);
+        const { getBestUsableGstSnapshot } = require('./gstAnalyticsSnapshot.service');
+        const gstSnapshot = await getBestUsableGstSnapshot({ tenantId: tenant_id, caseId: case_id });
+        
+        const gstReq = pickBestRecord(caseRecord.gst_requests); // Keep for industry parsing
 
-        if (gstReq) {
-            let extracted = null;
-
-            if (gstReq.raw_gst_data) {
-                extracted = extractGstDetails(
-                    typeof gstReq.raw_gst_data === 'string'
-                        ? JSON.parse(gstReq.raw_gst_data)
-                        : gstReq.raw_gst_data
-                );
-                gst_avg_monthly_sales = extracted.avg_monthly_turnover;
-            }
-
-            // Only use stored avg_monthly_turnover as a fallback. Do not compute from generic
-            // turnover_latest_year because ICICI requires Monthly Sales&Purchase taxable value.
-            if ((gst_avg_monthly_sales === null || gst_avg_monthly_sales === undefined) && gstReq.avg_monthly_turnover != null) {
-                gst_avg_monthly_sales = toNum(gstReq.avg_monthly_turnover);
-                logger.traceExtraction('GST', {
-                    'Source': 'Stored avg_monthly_turnover fallback',
-                    'Warning': 'Raw Monthly Sales&Purchase table unavailable in this run. Ensure stored value was populated by ICICI GST extractor.',
-                    'Avg Monthly Sales': `₹${(gst_avg_monthly_sales || 0).toLocaleString()}`
-                });
-            }
-
-            if (extracted) {
-                logger.traceExtraction('GST', {
-                    'Source Path Used': extracted._trace?.source_path || 'Monthly Sales&Purchase → Monthly Sale Summary → data → Taxable Value',
-                    'Available Periods': extracted._trace?.available_periods || [],
-                    'Selected Latest 12 Periods': extracted._trace?.selected_periods || [],
-                    'Turnover': {
-                        'Total Selected Sales': `₹${(extracted._trace?.total_turnover || 0).toLocaleString()}`,
-                        'Avg Monthly Sales Formula': 'Total selected taxable sales / 12',
-                        'Calculation': `₹${(extracted._trace?.total_turnover || 0).toLocaleString()} / 12 = ₹${(gst_avg_monthly_sales || 0).toLocaleString()}`
-                    },
-                    'Skipped Rows': extracted._trace?.skipped_rows || []
-                });
-            }
+        if (gstSnapshot) {
+            gst_avg_monthly_sales = gstSnapshot.avg_monthly_turnover;
+            logger.traceExtraction('GST', {
+                'Source': 'getBestUsableGstSnapshot',
+                'Avg Monthly Sales': `₹${(gst_avg_monthly_sales || 0).toLocaleString()}`,
+                'Months Filed': gstSnapshot.months_filed_12m,
+                'Source Latest': gstSnapshot.financial_year_latest
+            });
         }
 
         // GST industry type / margin resolution.
         // Prefer GST Entity Details. If GST is unavailable, allow DSA/MSME manual customer.industry.
         let margin_source = 'missing';
-        if (gstReq?.raw_gst_data) {
-            gst_industry_type = _parseGstIndustryType(gstReq.raw_gst_data);
+        const industryPayload = gstReq?.raw_fetch_data || gstReq?.raw_gst_data;
+        if (industryPayload) {
+            gst_industry_type = _parseGstIndustryType(industryPayload);
             gst_industry_margin = resolveGstIndustryMargin(gst_industry_type, isHdfcPolicy ? 'HDFC' : 'ICICI');
             margin_source = gst_industry_margin !== null ? 'GST Entity Details industry mapping' : 'manual review required';
         }

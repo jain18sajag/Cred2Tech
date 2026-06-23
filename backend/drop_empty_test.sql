@@ -1,0 +1,2 @@
+DROP SCHEMA IF EXISTS empty_test CASCADE;
+CREATE SCHEMA empty_test;

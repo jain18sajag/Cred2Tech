@@ -4,10 +4,12 @@ const caseController = require('../controllers/case.controller');
 const { authenticate } = require('../middleware/auth.middleware');
 const { requireRole } = require('../middleware/role.middleware');
 const upload = require('../middleware/upload.middleware');
+const enforceMsmeCaseOwnership = require('../middleware/msmeCaseOwnership.middleware');
 
 // Apply authentication and RBAC to all case routes
 router.use(authenticate);
-router.use(requireRole('DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA'));
+router.use(requireRole('DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA', 'MSME_CUSTOMER'));
+router.use(enforceMsmeCaseOwnership);
 
 // ─── Sanction & Disbursement Flow ──────────────────────────────────────────
 const sanctionController = require('../controllers/sanction.controller');
@@ -33,6 +35,7 @@ router.get('/:id/loan-application-summary.xlsx', caseController.downloadLoanAppl
 
 // GET /cases/:id
 router.get('/:id', caseController.getCaseById);
+router.get('/:id/pull-statuses', caseController.getPullStatuses);
 
 // POST /cases/create
 router.post('/create', caseController.createCase);
@@ -64,6 +67,7 @@ router.patch('/:id/product', caseController.updateProduct);
 router.put('/:id/product-property', caseController.updateProductProperty);
 
 // ─── Salary Slip & OCR Endpoints ─────────────────────────────────────────────
+const sseController = require('../controllers/sse.controller');
 const salaryOcrController = require('../controllers/salaryOcr.controller');
 const documentController = require('../controllers/document.controller');
 
@@ -84,5 +88,9 @@ router.post('/:caseId/applicants/:applicantId/salary-slips/:documentId/ocr/poll'
 
 // Get salary summary for a case
 router.get('/:caseId/salary-summary', salaryOcrController.getSalarySummary);
+
+// SSE Financial Status Endpoints
+router.get('/:caseId/pull-statuses', sseController.getPullStatuses);
+router.get('/:caseId/pull-status-stream', sseController.getPullStatusStream);
 
 module.exports = router;

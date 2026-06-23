@@ -28,6 +28,7 @@ model Role {
   id    Int    @id @default(autoincrement())
   name  String @unique
   users User[]
+  permissions String[] @default([])
 
   @@map("roles")
 }
@@ -85,6 +86,9 @@ model Tenant {
   SalesIncentiveRule        SalesIncentiveRule[]
   SalesIncentiveLedger      SalesIncentiveLedger[]
 
+  data_pull_background_jobs DataPullBackgroundJob[]
+  system_notifications      SystemNotification[]
+
   @@map("tenants")
 }
 
@@ -107,6 +111,8 @@ model User {
   created_by    Int?
   updated_by    Int?
   last_login_at DateTime?
+  failed_login_attempts Int @default(0)
+  locked_until  DateTime?
 
   role         Role   @relation(fields: [role_id], references: [id])
   tenant       Tenant @relation(fields: [tenant_id], references: [id])
@@ -116,6 +122,10 @@ model User {
   created_customers         Customer[]                  @relation("CustomerCreator")
   created_cases             Case[]                      @relation("CaseCreator")
   created_otps              OtpVerification[]           @relation("OtpCreator")
+  msme_customer_cases       Case[]                      @relation("MsmeCustomerUser")
+  assigned_dsa_cases        Case[]                      @relation("AssignedDsaUser")
+  allocated_msme_cases      Case[]                      @relation("AllocatingAdmin")
+  case_payments             CasePayment[]
   api_logs                  ApiUsageLog[]
   activity_logs             ActivityLog[]
   audit_logs                AuditLog[]
@@ -129,7 +139,12 @@ model User {
   EmployeeWalletTransaction EmployeeWalletTransaction[]
   SalesIncentiveLedger      SalesIncentiveLedger[]
 
+  password_reset_tokens     PasswordResetToken[]
+  user_sessions             UserSession[]
+
   @@index([tenant_id])
+  system_notifications      SystemNotification[]
+
   @@index([manager_id])
   @@map("users")
 }
@@ -158,6 +173,12 @@ model Customer {
   mobile_verified  Boolean          @default(false)
   created_at       DateTime         @default(now())
   updated_at       DateTime         @updatedAt
+
+  legal_business_name  String?
+  trade_name           String?
+  proprietor_name      String?
+  pan_holder_name      String?
+  business_name_source String?
 
   created_by_user_id Int
 
@@ -250,6 +271,16 @@ model Case {
   esr_generated  Boolean   @default(false) // NEW Phase 1
   stage          CaseStage @default(DRAFT)
 
+  // Direct MSME Flow Fields
+  lead_source                 String?   @default("DSA") // "DSA" | "DIRECT_MSME"
+  msme_customer_user_id       Int?      // The MSME User who owns this case
+  assigned_dsa_tenant_id      Int?      // Set when admin allocates to DSA
+  assigned_dsa_user_id        Int?      // Set when admin allocates to DSA user
+  allocated_by_admin_id       Int?      // Cred2Tech admin who did allocation
+  allocated_at                DateTime?
+  msme_submitted_at           DateTime? // When MSME clicked "Submit"
+  msme_selected_lender_esr_id Int?      // EligibilityReportLender.id chosen
+
   // Pipeline Snapshot Fields (Performance Design)
   customer_name String?
   entity_type   String?
@@ -286,6 +317,10 @@ model Case {
   tenant           Tenant                         @relation(fields: [tenant_id], references: [id])
   customer         Customer                       @relation(fields: [customer_id], references: [id])
   created_by       User                           @relation("CaseCreator", fields: [created_by_user_id], references: [id])
+  msme_customer_user User?                        @relation("MsmeCustomerUser", fields: [msme_customer_user_id], references: [id])
+  assigned_dsa_user  User?                        @relation("AssignedDsaUser", fields: [assigned_dsa_user_id], references: [id])
+  allocated_by_admin User?                        @relation("AllocatingAdmin", fields: [allocated_by_admin_id], references: [id])
+  case_payment       CasePayment?
   parent_case      Case?                          @relation("ParentChildCase", fields: [parent_case_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   child_cases      Case[]                         @relation("ParentChildCase")
   applicants       Applicant[]
@@ -318,6 +353,9 @@ model Case {
 
   @@index([tenant_id, stage])
   @@index([tenant_id, lender_name])
+  data_pull_background_jobs DataPullBackgroundJob[]
+  system_notifications      SystemNotification[]
+
   @@index([tenant_id, lead_date])
   @@map("cases")
 }
@@ -352,6 +390,15 @@ model Applicant {
   updated_at          DateTime       @updatedAt
   source_applicant_id Int? // To map parent applicant to child applicant
 
+  pan_verified                 Boolean   @default(false)
+  pan_verified_at              DateTime?
+  pan_verification_status      String?
+  pan_verification_reference   String?
+  pan_verified_name            String?
+  pan_verified_dob             String?
+  pan_verification_response    Json?
+  pan_verified_by_user_id      Int?
+
   case               Case                           @relation(fields: [case_id], references: [id], onDelete: Cascade)
   bank_statements    BankStatementAnalysisRequest[]
   itr_analytics      ItrAnalyticsRequest[]
@@ -362,6 +409,8 @@ model Applicant {
   // Phase 1 relations
   income_entries     CaseIncomeEntry[]
   obligations        CaseCreditObligation[]
+
+  data_pull_background_jobs DataPullBackgroundJob[]
 
   @@map("applicants")
 }
@@ -432,6 +481,49 @@ model OtpVerification {
   @@index([tenant_id, target_type, target_id])
   @@index([mobile])
   @@map("otp_verifications")
+}
+
+model LoginOtp {
+  id            Int       @id @default(autoincrement())
+  mobile        String
+  otp_hash      String
+  purpose       String    @default("MSME_CUSTOMER_LOGIN")
+  is_verified   Boolean   @default(false)
+  attempt_count Int       @default(0)
+  expires_at    DateTime
+  verified_at   DateTime?
+  created_at    DateTime  @default(now())
+
+  @@index([mobile])
+  @@map("login_otps")
+}
+
+model CasePayment {
+  id                   Int       @id @default(autoincrement())
+  user_id              Int
+  case_id              Int?      @unique
+  purpose              String
+  amount_inr           Decimal   @db.Decimal(12, 2)
+  amount_paise         Int
+  currency             String    @default("INR")
+  razorpay_order_id    String?   @unique
+  razorpay_payment_id  String?
+  razorpay_signature   String?
+  status               String    @default("INITIATED")
+  failure_reason       String?
+  gst_amount           Decimal?  @db.Decimal(12, 2)
+  idempotency_key      String?   @unique
+  verified_at          DateTime?
+  created_at           DateTime  @default(now())
+  updated_at           DateTime  @updatedAt
+
+  user        User  @relation(fields: [user_id], references: [id])
+  case_entity Case? @relation(fields: [case_id], references: [id])
+
+  @@index([user_id])
+  @@index([case_id])
+  @@index([razorpay_order_id])
+  @@map("case_payments")
 }
 
 // --- Wallet & Credit Billing Models ---
@@ -702,7 +794,21 @@ model GstrAnalyticsRequest {
   auth_link             String?
   status                GstrAnalyticsStatus @default(INITIATED)
   provider_message      String?
-  raw_gst_data          Json?
+  provider_callback_payload Json?
+  raw_fetch_data        Json?
+  raw_report_data       Json?
+  raw_gst_data          Json? // Temporarily kept for backward compatibility
+
+  provider_name         String?
+  provider_api_version  String?
+  payload_version       String?
+  processing_version    Int                 @default(1)
+
+  report_status         String              @default("PENDING")
+  metrics_status        String              @default("PENDING")
+  metrics_extracted_at  DateTime?
+  metrics_error         String?
+
   report_json_url       String? // Source audit URL — NOT used for serving
   report_excel_url      String? // Source audit URL — NOT used for serving
   report_pdf_url        String? // Source audit URL — NOT used for serving
@@ -723,6 +829,12 @@ model GstrAnalyticsRequest {
   months_filed_12m        Int?
   nil_return_months       Int?
 
+  selected_turnover_latest_fy   Decimal? @db.Decimal(18, 2)
+  selected_turnover_previous_fy Decimal? @db.Decimal(18, 2)
+  selected_turnover_source      String?
+  rolling_12_month_turnover     Decimal? @db.Decimal(18, 2)
+  rolling_12_month_end_period   String?
+
   created_at         DateTime @default(now())
   updated_at         DateTime @updatedAt
   created_by_user_id Int
@@ -732,9 +844,47 @@ model GstrAnalyticsRequest {
   case_entity Case?      @relation(fields: [case_id], references: [id])
   applicant   Applicant? @relation(fields: [applicant_id], references: [id], onDelete: Cascade)
 
+  gst_financial_year_summaries GstFinancialYearSummary[]
+
   @@index([tenant_id])
   @@index([provider_request_id])
   @@map("gstr_analytics_requests")
+}
+
+enum GstTurnoverSource {
+  GSTR1
+  GSTR3B
+  PROVIDER_REPORT
+  BULK_UPLOAD
+  MANUAL
+}
+
+model GstFinancialYearSummary {
+  id                    Int      @id @default(autoincrement())
+  gst_request_id        Int
+  case_id               Int?
+  applicant_id          Int?
+  gstin                 String
+  financial_year        String
+  source                GstTurnoverSource
+
+  turnover              Decimal? @db.Decimal(18, 2)
+  months_available      Int      @default(0)
+  months_filed          Int      @default(0)
+  zero_filing_months    Int      @default(0)
+  unavailable_months    Int      @default(0)
+  is_complete           Boolean  @default(false)
+
+  processing_version    Int
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+
+  gst_request           GstrAnalyticsRequest @relation(fields: [gst_request_id], references: [id])
+
+  @@unique([gst_request_id, financial_year, source, processing_version])
+  @@index([case_id, financial_year, source])
+  @@index([gstin, financial_year])
+  @@map("gst_financial_year_summaries")
 }
 
 // CustomerITRProfile table kept in DB for historical data; model removed in favour of ItrAnalyticsRequest
@@ -2516,4 +2666,165 @@ model UserEligibleScheme {
   @@index([user_id], map: "idx_user_eligible_schemes_user_id")
   @@index([user_id, slug], map: "idx_user_eligible_schemes_user_id_slug")
   @@map("user_eligible_schemes")
+}
+
+model PasswordResetToken {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  token_hash String   @unique
+  expires_at DateTime
+  used       Boolean  @default(false)
+  created_at DateTime @default(now())
+
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  @@map("password_reset_tokens")
+}
+
+model UserSession {
+  id               Int      @id @default(autoincrement())
+  user_id          Int
+  session_token    String   @unique
+  device_info      String?
+  browser_info     String?
+  ip_address       String?
+  is_active        Boolean  @default(true)
+  last_activity_at DateTime @default(now())
+  created_at       DateTime @default(now())
+
+  user             User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  @@index([user_id])
+  @@map("user_sessions")
+}
+
+model LoginAttempt {
+  id         Int      @id @default(autoincrement())
+  email      String
+  ip_address String
+  success    Boolean
+  created_at DateTime @default(now())
+
+  @@index([email])
+  @@index([ip_address])
+  @@map("login_attempts")
+}
+
+enum DataPullType {
+  GST
+  ITR
+  BANK
+  BUREAU
+}
+
+enum DataPullFlowType {
+  GST_AUTH_LINK
+  GST_OTP
+  GST_PASSWORD
+  ITR_FORM
+  ITR_ANALYTICS
+  BANK_STATEMENT
+  BUREAU
+}
+
+enum DataPullJobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  EXPIRED
+  CANCELLED
+  AWAITING_CUSTOMER_ACTION
+}
+
+enum PullNotificationStatus {
+  COMPLETED
+  FAILED
+  EXPIRED
+  ACTION_REQUIRED
+}
+
+enum NotificationAudienceType {
+  USER
+  CASE_OWNER
+  CASE_ASSIGNEE
+  TENANT_PERMISSION
+  TENANT_ROLE
+}
+
+model DataPullBackgroundJob {
+  id                     Int                @id @default(autoincrement())
+  tenant_id              Int
+  case_id                Int
+  applicant_id           Int?
+  pull_type              DataPullType
+  module_request_id      Int
+  provider_request_id    String?
+  flow_type              DataPullFlowType?
+  status                 DataPullJobStatus  @default(PENDING)
+  next_run_at            DateTime?
+  attempt_count          Int                @default(0)
+  maximum_attempts       Int?
+  locked_at              DateTime?
+  locked_by              String?
+  lock_expires_at        DateTime?
+  lock_token             String?            @db.Uuid
+  processing_deadline_at DateTime?
+  last_error             String?            @db.Text
+  completed_at           DateTime?
+  created_at             DateTime           @default(now())
+  updated_at             DateTime           @updatedAt
+
+  case                   Case               @relation(fields: [case_id], references: [id])
+  applicant              Applicant?         @relation(fields: [applicant_id], references: [id])
+  tenant                 Tenant             @relation(fields: [tenant_id], references: [id])
+
+  @@unique([tenant_id, case_id, pull_type, module_request_id])
+  @@index([status, next_run_at])
+  @@index([status, lock_expires_at])
+  @@index([tenant_id, case_id])
+  @@index([pull_type, status])
+  @@index([provider_request_id])
+}
+
+model SystemNotification {
+  id                   Int                    @id @default(autoincrement())
+  tenant_id            Int
+  case_id              Int
+  applicant_id         Int?
+  pull_type            DataPullType
+  status               PullNotificationStatus
+  message              String                 @db.Text
+  audience_type        NotificationAudienceType
+  recipient_user_id    Int?
+  deduplication_key    String                 @unique
+  read_at              DateTime?
+  dismissed_at         DateTime?
+  action_url           String?
+  created_at           DateTime               @default(now())
+  updated_at           DateTime               @updatedAt
+
+  case                 Case                   @relation(fields: [case_id], references: [id])
+  tenant               Tenant                 @relation(fields: [tenant_id], references: [id])
+  recipient            User?                  @relation(fields: [recipient_user_id], references: [id])
+}
+
+model VendorApiAuditLog {
+  id                     Int       @id @default(autoincrement())
+  job_id                 Int?
+  tenant_id              Int
+  case_id                Int?
+  applicant_id           Int?
+  pull_type              String?
+  provider               String?
+  provider_request_id    String?
+  attempt_number         Int
+  provider_operation     String
+  trigger_source         String    // 'INITIAL_REQUEST', 'BACKGROUND_RECONCILIATION', etc.
+  chargeable             Boolean
+  tenant_wallet_deducted Boolean   @default(false)
+  started_at             DateTime
+  finished_at            DateTime?
+  result_status          String?   // 'SUCCESS', 'ERROR'
+  http_status            Int?
+  error_category         String?
+  created_at             DateTime  @default(now())
 }

@@ -94,6 +94,7 @@ async function getReusableSummary(customer_id, tenant_id) {
 async function createOrAttachCustomer(data, tenant_id, user_id) {
   const { business_pan, business_mobile, business_email, business_name, customer_id, is_professional, profession_type } = data;
   const normalizedPan = business_pan?.trim().toUpperCase();
+  const verifiedSources = ['GST_LEGAL_NAME', 'GST_TRADE_NAME', 'PAN_VERIFICATION'];
 
   if (customer_id) {
     const existing = await prisma.customer.findFirst({
@@ -104,12 +105,17 @@ async function createOrAttachCustomer(data, tenant_id, user_id) {
         throw new Error('Customer not found or unauthorized.');
     }
 
+    const keepVerifiedName = existing && verifiedSources.includes(existing.business_name_source);
+    const finalBusinessName = keepVerifiedName ? existing.business_name : (business_name || existing.business_name);
+    const finalSource = keepVerifiedName ? existing.business_name_source : (business_name ? 'MANUAL' : existing.business_name_source);
+
     return await prisma.customer.update({
       where: { id: existing.id },
       data: {
         business_mobile,
         business_email,
-        business_name,
+        business_name: finalBusinessName,
+        business_name_source: finalSource,
         is_professional: is_professional !== undefined ? is_professional : existing.is_professional,
         profession_type: profession_type !== undefined ? profession_type : existing.profession_type
       }
@@ -133,6 +139,7 @@ async function createOrAttachCustomer(data, tenant_id, user_id) {
         business_mobile,
         business_email,
         business_name,
+        business_name_source: business_name ? 'MANUAL' : null,
         is_professional: is_professional || false,
         profession_type: profession_type || null,
         created_by_user_id: user_id
@@ -140,12 +147,17 @@ async function createOrAttachCustomer(data, tenant_id, user_id) {
     });
   } else {
     // Dynamically update fields if the user provided new data
+    const keepVerifiedName = customer && verifiedSources.includes(customer.business_name_source);
+    const finalBusinessName = keepVerifiedName ? customer.business_name : (business_name || customer.business_name);
+    const finalSource = keepVerifiedName ? customer.business_name_source : (business_name ? 'MANUAL' : customer.business_name_source);
+
     customer = await prisma.customer.update({
       where: { id: customer.id },
       data: {
         business_mobile: business_mobile || customer.business_mobile,
         business_email: business_email || customer.business_email,
-        business_name: business_name || customer.business_name,
+        business_name: finalBusinessName,
+        business_name_source: finalSource,
         is_professional: is_professional !== undefined ? is_professional : customer.is_professional,
         profession_type: profession_type !== undefined ? profession_type : customer.profession_type
       }

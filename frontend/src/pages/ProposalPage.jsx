@@ -1095,11 +1095,19 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, proposalId, onSuccess
   const [selectedLender, setSelectedLender] = useState(null);
   const [selectedContact, setSelectedContact] = useState(null);
   const [sending, setSending] = useState(false);
+  const [manualLender, setManualLender] = useState({
+    lender_name: '',
+    contact_name: '',
+    contact_email: '',
+    contact_mobile: '',
+    dsa_code: ''
+  });
 
   useEffect(() => {
     if (!isOpen) return;
     setLoading(true);
     setSelectedLender(null); setSelectedContact(null);
+    setManualLender({ lender_name: '', contact_name: '', contact_email: '', contact_mobile: '', dsa_code: '' });
     getTenantLenders()
       .then(d => setLenders(d.filter(l => l.is_active && l.contacts?.length > 0)))
       .catch(() => toast.error('Failed to load lenders'))
@@ -1109,24 +1117,37 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, proposalId, onSuccess
   if (!isOpen) return null;
 
   const handleSend = async () => {
-    if (!selectedContact) { toast.error('Select a contact first'); return; }
+    const isManualMode = lenders.length === 0;
+    if (isManualMode) {
+      if (!manualLender.lender_name.trim()) { toast.error('Enter lender name'); return; }
+      if (!manualLender.contact_name.trim()) { toast.error('Enter contact name'); return; }
+      if (!manualLender.contact_email.trim()) { toast.error('Enter contact email'); return; }
+    } else if (!selectedContact) {
+      toast.error('Select a contact first');
+      return;
+    }
     setSending(true);
     try {
       console.log('[Clone] Triggering clone for:', { caseId, proposalId, selectedLender });
       // 1. CLONE the current proposal for this new lender
-      const r = await caseService.cloneProposal(caseId, proposalId, {
-        new_lender_id: selectedLender.platform_lender_id || null,
-        new_tenant_lender_id: selectedLender.id,
-      });
+      const clonePayload = isManualMode
+        ? { other_lender: { ...manualLender, product_type: 'ALL' } }
+        : {
+            new_lender_id: selectedLender.platform_lender_id || null,
+            new_tenant_lender_id: selectedLender.id,
+          };
+      const r = await caseService.cloneProposal(caseId, proposalId, clonePayload);
       const result = r.proposal;
       
       // 2. IMMEDIATELY send the newly cloned proposal
-      const sendResult = await caseService.sendProposal(caseId, result.id, {
-        contact_id: selectedContact.id
-      });
+      const sendResult = await caseService.sendProposal(
+        caseId,
+        result.id,
+        selectedContact ? { contact_id: selectedContact.id } : {}
+      );
       
       console.log('[Clone & Send] Success:', sendResult);
-      toast.success(`Proposal sent to ${selectedLender.lender_name}`);
+      toast.success(`Proposal sent to ${isManualMode ? manualLender.lender_name : selectedLender.lender_name}`);
       window.location.href = `/cases/${caseId}/proposals/${result.id}`;
       onClose();
     } catch (e) {
@@ -1136,6 +1157,9 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, proposalId, onSuccess
   };
 
   const contacts = selectedLender?.contacts || [];
+  const canSend = lenders.length === 0
+    ? Boolean(manualLender.lender_name.trim() && manualLender.contact_name.trim() && manualLender.contact_email.trim())
+    : Boolean(selectedContact);
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1149,6 +1173,18 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, proposalId, onSuccess
         </div>
 
         <div style={{ padding: '20px 24px', maxHeight: '60vh', overflowY: 'auto' }}>
+          {!loading && lenders.length === 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+              <div style={{ fontSize: 13, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+                Enter lender details to send this proposal to another lender.
+              </div>
+              <input value={manualLender.lender_name} onChange={e => setManualLender({ ...manualLender, lender_name: e.target.value })} placeholder="Lender name *" style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)' }} />
+              <input value={manualLender.contact_name} onChange={e => setManualLender({ ...manualLender, contact_name: e.target.value })} placeholder="Contact name *" style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)' }} />
+              <input value={manualLender.contact_email} onChange={e => setManualLender({ ...manualLender, contact_email: e.target.value })} placeholder="Contact email *" style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)' }} />
+              <input value={manualLender.contact_mobile} onChange={e => setManualLender({ ...manualLender, contact_mobile: e.target.value })} placeholder="Mobile (optional)" style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)' }} />
+              <input value={manualLender.dsa_code} onChange={e => setManualLender({ ...manualLender, dsa_code: e.target.value })} placeholder="DSA code (optional)" style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)' }} />
+            </div>
+          )}
           {loading ? (
             <div style={{ textAlign: 'center', padding: 30 }}><LoadingSpinner size={30} /></div>
           ) : lenders.length === 0 ? (
@@ -1208,12 +1244,12 @@ function SendToOtherLenderModal({ isOpen, onClose, caseId, proposalId, onSuccess
 
         <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 10, background: 'var(--bg-elevated)' }}>
           <button onClick={onClose} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Cancel</button>
-          <button onClick={handleSend} disabled={!selectedContact || sending}
+          <button onClick={handleSend} disabled={!canSend || sending}
             style={{
               padding: '10px 22px', borderRadius: 8, fontWeight: 700, fontSize: 13,
-              background: selectedContact ? '#276749' : 'var(--border)',
+              background: canSend ? '#276749' : 'var(--border)',
               color: '#fff', border: 'none',
-              cursor: selectedContact ? 'pointer' : 'not-allowed',
+              cursor: canSend ? 'pointer' : 'not-allowed',
               display: 'flex', alignItems: 'center', gap: 6,
               opacity: sending ? 0.75 : 1
             }}>

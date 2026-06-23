@@ -1,6 +1,7 @@
 const caseService = require('../services/case.service');
 const prisma = require('../../config/db');
 const { REPORT_FILE_NAME, generateLoanApplicationSummaryWorkbook } = require('../services/reports/loanApplicationSummary.service');
+const { buildBulkUploadResponse } = require('../utils/bulkUploadResponse');
 
 async function createCase(req, res) {
   try {
@@ -267,7 +268,7 @@ async function updateStage(req, res) {
       return res.status(400).json({ error: `Direct update to ${stage} is not allowed. Please use the Disbursement flow.` });
     }
 
-    const updatedCase = await caseService.updateStage(caseId, tenant_id, stage, req.user.id);
+    const updatedCase = await caseService.advanceStage(caseId, tenant_id, stage, req.user.id);
     res.json(updatedCase);
   } catch (error) {
     if (error.message === 'Case not found or unauthorized.') return res.status(403).json({ error: error.message });
@@ -399,21 +400,10 @@ async function uploadBulkCases(req, res) {
     try { fs.unlinkSync(req.file.path); } catch(e) {}
 
     if (result.failedRows > 0 && result.createdCases === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Bulk upload validation failed',
-        summary: { totalRows: result.totalRows, createdCases: result.createdCases, failedRows: result.failedRows },
-        errors: result.errors
-      });
+      return res.status(400).json(buildBulkUploadResponse(result, false, 'Bulk upload validation failed'));
     }
 
-    res.status(201).json({
-      success: true,
-      message: 'Bulk upload completed',
-      summary: { totalRows: result.totalRows, createdCases: result.createdCases, failedRows: result.failedRows },
-      createdCases: result.createdCaseRefs,
-      errors: result.errors
-    });
+    res.status(201).json(buildBulkUploadResponse(result, true, 'Bulk upload completed'));
 
   } catch (error) {
     console.error('Bulk upload error:', error);
@@ -446,6 +436,27 @@ async function downloadLoanApplicationSummary(req, res) {
   }
 }
 
+async function getPullStatuses(req, res) {
+  try {
+    const caseId = parseInt(req.params.id, 10);
+    const tenantId = req.user.tenant_id;
+
+    const existingCase = await prisma.case.findFirst({
+      where: { id: caseId, tenant_id: tenantId }
+    });
+    if (!existingCase) {
+      return res.status(403).json({ error: 'Case not found or unauthorized.' });
+    }
+
+    const { calculateRealPullStatuses } = require('../services/pullStatus.service');
+    const statuses = await calculateRealPullStatuses(caseId);
+    res.json(statuses);
+  } catch (error) {
+    console.error('[getPullStatuses] Error:', error);
+    res.status(500).json({ error: 'Failed to retrieve pull statuses.' });
+  }
+}
+
 module.exports = {
   createCase,
   createFromExisting,
@@ -464,5 +475,6 @@ module.exports = {
   rollbackStage,
   downloadBulkTemplate,
   downloadLoanApplicationSummary,
-  uploadBulkCases
+  uploadBulkCases,
+  getPullStatuses
 };

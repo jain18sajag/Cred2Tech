@@ -12,6 +12,27 @@ async function createCase(customer_id, product_type, tenant_id, user_id) {
     throw new Error('Customer not found or unauthorized.');
   }
 
+  const user = await prisma.user.findUnique({
+    where: { id: user_id },
+    include: { role: true }
+  });
+  const isMsme = user && user.role?.name === 'MSME_CUSTOMER';
+
+  // Idempotency check: Look for an existing DRAFT case for this customer in the last 24 hours
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const existingDraftCase = await prisma.case.findFirst({
+    where: {
+      customer_id: customer.id,
+      tenant_id: tenant_id,
+      stage: 'DRAFT',
+      created_at: { gte: twentyFourHoursAgo }
+    }
+  });
+
+  if (existingDraftCase) {
+    return existingDraftCase;
+  }
+
   // 2. Create the case with primary applicant (is_primary MUST be true)
   const newCase = await prisma.case.create({
     data: {
@@ -22,6 +43,8 @@ async function createCase(customer_id, product_type, tenant_id, user_id) {
       stage: 'DRAFT',
       customer_name: customer.business_name,
       entity_type: customer.entity_type,
+      lead_source: isMsme ? 'DIRECT_MSME' : 'DSA',
+      msme_customer_user_id: isMsme ? user_id : null,
       applicants: {
         create: {
           type: 'PRIMARY',
@@ -29,11 +52,30 @@ async function createCase(customer_id, product_type, tenant_id, user_id) {
           mobile: customer.business_mobile,
           email: customer.business_email,
           pan_number: customer.business_pan,
-          otp_verified: customer.mobile_verified || true // If customer was verified before createCase, mark applicant verified
+          otp_verified: customer.mobile_verified || false // Security Fix: Remove || true bypass
         }
       }
     }
   });
+
+  // 3. Link unlinked payment if MSME
+  if (isMsme) {
+    const unlinkedPayment = await prisma.casePayment.findFirst({
+      where: { user_id: user_id, case_id: null, status: 'PAID' },
+      orderBy: { created_at: 'desc' }
+    });
+
+    if (unlinkedPayment) {
+      await prisma.casePayment.update({
+        where: { id: unlinkedPayment.id },
+        data: { case_id: newCase.id }
+      });
+      await prisma.case.update({
+        where: { id: newCase.id },
+        data: { case_payment_id: unlinkedPayment.id }
+      });
+    }
+  }
 
   return newCase;
 }
@@ -75,6 +117,24 @@ async function createSalariedCase({ business_pan, business_name, business_mobile
       });
     }
 
+    // Idempotency check: Look for an existing DRAFT case for this customer in the last 24 hours
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const existingDraftCase = await tx.case.findFirst({
+      where: {
+        customer_id: customer.id,
+        tenant_id: tenant_id,
+        stage: 'DRAFT',
+        created_at: { gte: twentyFourHoursAgo }
+      },
+      include: {
+        applicants: true
+      }
+    });
+
+    if (existingDraftCase) {
+      return existingDraftCase;
+    }
+
     // Create the case with primary applicant
     const newCase = await tx.case.create({
       data: {
@@ -94,7 +154,7 @@ async function createSalariedCase({ business_pan, business_name, business_mobile
             mobile: customer.business_mobile,
             email: customer.business_email,
             pan_number: customer.business_pan,
-            otp_verified: customer.mobile_verified || true
+            otp_verified: customer.mobile_verified || false
           }
         }
       },
@@ -126,6 +186,12 @@ async function addApplicant(case_id, applicantData, tenant_id) {
   }
 
   if (applicantData.id) {
+    const existing = await prisma.applicant.findUnique({ where: { id: parseInt(applicantData.id, 10) } });
+    if (existing && existing.pan_verified) {
+      if (applicantData.pan_number !== existing.pan_number || applicantData.name !== existing.name || applicantData.dob !== existing.dob) {
+        throw new Error('Applicant details are locked because PAN is verified.');
+      }
+    }
     return await prisma.applicant.update({
       where: { id: parseInt(applicantData.id, 10) },
       data: {
@@ -136,6 +202,33 @@ async function addApplicant(case_id, applicantData, tenant_id) {
         employment_type: applicantData.employment_type || undefined
       }
     });
+  }
+
+  // Idempotent check for Co-applicants
+  if (applicantData.pan_number && applicantData.type === 'CO_APPLICANT') {
+    const existingCoApp = await prisma.applicant.findFirst({
+      where: {
+        case_id: existingCase.id,
+        pan_number: applicantData.pan_number,
+        type: 'CO_APPLICANT'
+      }
+    });
+    if (existingCoApp) {
+      if (existingCoApp.pan_verified) {
+        if (applicantData.pan_number !== existingCoApp.pan_number || applicantData.name !== existingCoApp.name || applicantData.dob !== existingCoApp.dob) {
+          throw new Error('Applicant details are locked because PAN is verified.');
+        }
+      }
+      return await prisma.applicant.update({
+        where: { id: existingCoApp.id },
+        data: {
+          name: applicantData.name || existingCoApp.name,
+          mobile: applicantData.mobile || existingCoApp.mobile,
+          email: applicantData.email || existingCoApp.email,
+          employment_type: applicantData.employment_type || existingCoApp.employment_type
+        }
+      });
+    }
   }
 
   // Enforce: only one PRIMARY applicant per case
@@ -291,11 +384,11 @@ async function getAllCases(tenant_id, currentUser) {
 }
 
 async function getCaseById(case_id, tenant_id, currentUser) {
-  const isBypassed = currentUser.role === 'DSA_ADMIN';
+  const isBypassed = ['DSA_ADMIN', 'SUPER_ADMIN', 'MSME_CUSTOMER'].includes(currentUser.role);
 
   const hierarchyFilter = isBypassed ? {} : {
     created_by: {
-      hierarchy_path: { startsWith: currentUser.hierarchy_path }
+      hierarchy_path: { startsWith: currentUser.hierarchy_path || '' }
     }
   };
 
@@ -328,8 +421,14 @@ async function getCaseById(case_id, tenant_id, currentUser) {
       property: true,
       esr_financials: true,
       data_pull_status: true,
-      stage_history: { orderBy: { changed_at: 'desc' } },
-      activity_logs: { orderBy: { created_at: 'desc' } }
+      stage_history: { 
+        orderBy: { changed_at: 'desc' },
+        include: { user: { select: { name: true, email: true } } }
+      },
+      activity_logs: { 
+        orderBy: { created_at: 'desc' },
+        include: { user: { select: { name: true, email: true } } }
+      }
     }
   });
 
@@ -424,10 +523,14 @@ async function getCaseById(case_id, tenant_id, currentUser) {
   delete existingCase.customer.itr_analytics;
   delete existingCase.customer.bank_statements;
 
+  const { calculateRealPullStatuses } = require('./pullStatus.service');
+  const real_pull_statuses = await calculateRealPullStatuses(existingCase.id);
+
   return {
     ...existingCase,
     business_financials,
-    suggested_co_applicants: suggestions
+    suggested_co_applicants: suggestions,
+    real_pull_statuses
   };
 }
 
@@ -449,10 +552,13 @@ async function getPipeline(tenantId, params, currentUser) {
   };
 
   if (search) {
-    // Only search against Case fields (ID, customer_name, lender_name) to avoid heavy joins
     where.OR = [
       { customer_name: { contains: search, mode: 'insensitive' } },
-      { lender_name: { contains: search, mode: 'insensitive' } }
+      { lender_name: { contains: search, mode: 'insensitive' } },
+      { customer: { business_pan: { contains: search, mode: 'insensitive' } } },
+      { customer: { business_mobile: { contains: search, mode: 'insensitive' } } },
+      { customer: { business_email: { contains: search, mode: 'insensitive' } } },
+      { customer: { business_name: { contains: search, mode: 'insensitive' } } }
     ];
     if (!isNaN(parseInt(search))) {
       where.OR.push({ id: parseInt(search) });
@@ -532,26 +638,29 @@ async function updateStage(caseId, tenantId, newStage, userId, tx = null) {
   // 1. Stage Change Idempotency
   if (existingCase.stage === newStage) return existingCase;
 
-  // 2. Stage Locking Rule (restrict backward transitions from financial stages)
-  const financialStages = ['DISBURSED', 'PARTLY_DISBURSED', 'CLOSED'];
-  if (financialStages.includes(existingCase.stage)) {
-    // REJECTED is blocked once case is in financial stage
-    if (newStage === 'REJECTED') {
-      throw new Error('Case cannot be rejected once disbursement has started. Please use closure or cancellation flow.');
-    }
+  // 2. Strict State Machine Dictionary
+  const STATE_TRANSITIONS = {
+    'DRAFT': ['LEAD_CREATED', 'REJECTED'],
+    'LEAD_CREATED': ['DATA_COLLECTION', 'LEAD_SENT_TO_LENDER', 'REJECTED', 'CLOSED'],
+    'DATA_COLLECTION': ['INCOME_REVIEWED', 'LEAD_SENT_TO_LENDER', 'REJECTED', 'CLOSED'],
+    'INCOME_REVIEWED': ['LEAD_SENT_TO_LENDER', 'ESR_GENERATED', 'REJECTED', 'CLOSED'],
+    'LEAD_SENT_TO_LENDER': ['ESR_GENERATED', 'IN_REVIEW', 'REJECTED', 'CLOSED'],
+    'ESR_GENERATED': ['APPROVED', 'REJECTED', 'CLOSED'],
+    'IN_REVIEW': ['APPROVED', 'REJECTED', 'CLOSED'],
+    'APPROVED': ['PARTLY_DISBURSED', 'DISBURSED', 'REJECTED', 'CLOSED'],
+    'PARTLY_DISBURSED': ['DISBURSED', 'CLOSED', 'REJECTED'],
+    'DISBURSED': ['CLOSED', 'REJECTED'],
+    'CLOSED': [],
+    'REJECTED': [] // Terminal state, unless rolled back by DSA_ADMIN
+  };
 
-    const allowedNext = {
-      'PARTLY_DISBURSED': ['DISBURSED', 'CLOSED'],
-      'DISBURSED': ['CLOSED'],
-      'CLOSED': []
-    };
-    if (!allowedNext[existingCase.stage] || !allowedNext[existingCase.stage].includes(newStage)) {
-      throw new Error(`Backward transition from ${existingCase.stage} to ${newStage} is restricted.`);
-    }
+  const allowedNext = STATE_TRANSITIONS[existingCase.stage];
+  if (!allowedNext || !allowedNext.includes(newStage)) {
+    throw new Error(`Invalid stage transition: Cannot move from ${existingCase.stage} to ${newStage}. Valid next stages are: ${allowedNext.join(', ')}`);
   }
 
   // 3. Case Lock Logic — lock on DISBURSED or PARTLY_DISBURSED (compliance requirement)
-  const lockOnDisbursement = ['DISBURSED', 'PARTLY_DISBURSED'].includes(newStage);
+  const lockOnDisbursement = ['DISBURSED', 'PARTLY_DISBURSED', 'CLOSED'].includes(newStage);
 
   // Use updateMany to safely update with tenant_id filter
   await db.case.updateMany({
@@ -591,6 +700,43 @@ async function updateStage(caseId, tenantId, newStage, userId, tx = null) {
   return updatedCase;
 }
 
+async function advanceStage(caseId, tenantId, targetStage, userId) {
+  const existingCase = await prisma.case.findFirst({
+    where: { id: caseId, tenant_id: tenantId },
+    select: { stage: true }
+  });
+  if (!existingCase) throw new Error('Case not found or unauthorized.');
+
+  const forwardPaths = {
+    LEAD_CREATED: {
+      LEAD_SENT_TO_LENDER: ['LEAD_SENT_TO_LENDER'],
+      ESR_GENERATED: ['LEAD_SENT_TO_LENDER', 'ESR_GENERATED']
+    },
+    DATA_COLLECTION: {
+      LEAD_SENT_TO_LENDER: ['LEAD_SENT_TO_LENDER'],
+      ESR_GENERATED: ['LEAD_SENT_TO_LENDER', 'ESR_GENERATED']
+    },
+    INCOME_REVIEWED: {
+      LEAD_SENT_TO_LENDER: ['LEAD_SENT_TO_LENDER'],
+      ESR_GENERATED: ['LEAD_SENT_TO_LENDER', 'ESR_GENERATED']
+    },
+    LEAD_SENT_TO_LENDER: {
+      ESR_GENERATED: ['ESR_GENERATED']
+    }
+  };
+
+  const steps = forwardPaths[existingCase.stage]?.[targetStage];
+  if (!steps) {
+    return await updateStage(caseId, tenantId, targetStage, userId);
+  }
+
+  let updatedCase = existingCase;
+  for (const stage of steps) {
+    updatedCase = await updateStage(caseId, tenantId, stage, userId);
+  }
+  return updatedCase;
+}
+
 async function rollbackStage(caseId, targetStage, reason, userId, tenantId, userRole) {
   if (userRole !== 'DSA_ADMIN') {
     throw new Error('Only DSA_ADMIN can perform stage rollback operations.');
@@ -601,8 +747,8 @@ async function rollbackStage(caseId, targetStage, reason, userId, tenantId, user
     'LEAD_CREATED': 2,
     'DATA_COLLECTION': 3,
     'INCOME_REVIEWED': 4,
-    'ESR_GENERATED': 5,
-    'LEAD_SENT_TO_LENDER': 6,
+    'LEAD_SENT_TO_LENDER': 5,
+    'ESR_GENERATED': 6,
     'IN_REVIEW': 7,
     'APPROVED': 8,
     'PARTLY_DISBURSED': 9,
@@ -889,6 +1035,9 @@ async function createCaseFromExisting(customerId, tenantId, userId, productType 
     }
 
     // 3. Create new Case
+    const user = await tx.user.findUnique({ where: { id: userId }, include: { role: true } });
+    const isMsme = user?.role?.name === 'MSME_CUSTOMER';
+
     const newCase = await tx.case.create({
       data: {
         tenant_id: tenantId,
@@ -897,7 +1046,9 @@ async function createCaseFromExisting(customerId, tenantId, userId, productType 
         product_type: productType || latestCase.product_type,
         stage: 'DRAFT',
         customer_name: customer.business_name,
-        entity_type: customer.entity_type
+        entity_type: customer.entity_type,
+        lead_source: isMsme ? 'DIRECT_MSME' : 'DSA',
+        msme_customer_user_id: isMsme ? userId : null
       }
     });
 
@@ -1447,6 +1598,7 @@ module.exports = {
   getCaseById,
   getPipeline,
   updateStage,
+  advanceStage,
   rollbackStage,
   syncCustomerSnapshots
 };

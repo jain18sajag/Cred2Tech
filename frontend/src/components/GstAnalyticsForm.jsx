@@ -5,7 +5,8 @@ import FormField from './ui/FormField';
 import api from '../api/axiosInstance';
 import { downloadDocument } from '../api/documentHelper';
 
-const GstAnalyticsForm = ({ caseId, customerId, applicantId = null, linkedGstins = [], onComplete }) => {
+const GstAnalyticsForm = ({ caseId, customerId, applicantId = null, linkedGstins = [], onComplete, onboardingMode }) => {
+    const isMsme = onboardingMode === 'MSME_SELF_SERVICE';
     const [mode, setMode] = useState('IN_SYSTEM');
     const [authType, setAuthType] = useState('OTP');
     const [isManualGstin, setIsManualGstin] = useState(false);
@@ -271,7 +272,7 @@ const GstAnalyticsForm = ({ caseId, customerId, applicantId = null, linkedGstins
             )}
 
             <button type="button" onClick={handleCreateRequest} disabled={loading || !formData.gstin} className="btn btn-primary" style={{ marginBottom: 32 }}>
-                {loading ? 'Creating...' : 'Initialize GST Request (~1 Credit)'}
+                {loading ? 'Creating...' : isMsme ? 'Initialize GST Request' : 'Initialize GST Request (~1 Credit)'}
             </button>
 
             {activeRequests.length > 0 && (

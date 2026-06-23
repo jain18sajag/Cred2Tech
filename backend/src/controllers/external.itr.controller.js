@@ -41,6 +41,7 @@ async function pullItrData(req, res) {
             caseId: case_id ? parseInt(case_id, 10) : null,
             requestPayload: sanitizedPayload,
             idempotencyKey: idempotencyKey,
+            userRole: req.user.role,
             handlerFunction: async () => {
                 const payload = { username };
                 if (password) payload.password = password;

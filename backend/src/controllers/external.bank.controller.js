@@ -2,6 +2,7 @@ const prisma = require('../../config/db');
 const bankService = require('../services/externalApis/bank.service');
 const { executePaidApi } = require('../services/wallet.service');
 const documentService = require('../services/document.service');
+const { determineNotificationRecipient } = require('../services/notification.service');
 
 const { extractBankFySnapshot } = require('../services/bankParser.service');
 
@@ -26,6 +27,7 @@ async function analyze(req, res) {
             caseId: case_id ? parseInt(case_id, 10) : null,
             requestPayload: req.body,
             idempotencyKey: idempotencyKey,
+            userRole: req.user.role,
             handlerFunction: async () => {
                 // Trigger provider API securely isolated in backend
                 const providerRes = await bankService.analyzeStatement(files);
@@ -51,6 +53,23 @@ async function analyze(req, res) {
                         created_by_user_id: userId
                     }
                 });
+
+                if (case_id) {
+                    await prisma.dataPullBackgroundJob.create({
+                        data: {
+                            tenant_id: tenantId,
+                            case_id: parseInt(case_id, 10),
+                            applicant_id: applicant_id ? parseInt(applicant_id, 10) : null,
+                            pull_type: 'BANK',
+                            module_request_id: bankRequest.id,
+                            provider_request_id: reportId.toString(),
+                            status: 'PENDING',
+                            next_run_at: new Date(Date.now() + 15 * 60000),
+                            maximum_attempts: 3,
+                            processing_deadline_at: new Date(Date.now() + 120 * 60000)
+                        }
+                    });
+                }
 
                 if (case_id) {
                     await prisma.caseDataPullStatus.upsert({
@@ -475,21 +494,47 @@ async function handleSignzyCallback(req, res) {
         }
         await Promise.allSettled(ingestionJobs);
 
-        // Persist everything — status, files, and FY snapshot columns
-        await prisma.bankStatementAnalysisRequest.update({
-            where: { report_id: reportId.toString() },
-            data: {
-                status: 'COMPLETED',
-                provider_message: 'Completed via webhook callback',
-                report_json_url: jsonUrl || existingRequest.report_json_url,
-                report_excel_url: excelUrl || existingRequest.report_excel_url,
-                raw_retrieve_response: rawRetrieveData || existingRequest.raw_retrieve_response,
-                bank_excel_document_id: excelDocId || undefined,
-                bank_json_document_id: jsonDocId || undefined,
-                avg_bank_balance_latest_year: bankFySnapshot.latest,
-                avg_bank_balance_previous_year: bankFySnapshot.previous,
-                financial_year_latest: bankFySnapshot.fy_latest,
-                financial_year_previous: bankFySnapshot.fy_previous,
+        await prisma.$transaction(async (tx) => {
+            await tx.bankStatementAnalysisRequest.update({
+                where: { report_id: reportId.toString() },
+                data: {
+                    status: 'COMPLETED',
+                    provider_message: 'Completed via webhook callback',
+                    report_json_url: jsonUrl || existingRequest.report_json_url,
+                    report_excel_url: excelUrl || existingRequest.report_excel_url,
+                    raw_retrieve_response: rawRetrieveData || existingRequest.raw_retrieve_response,
+                    bank_excel_document_id: excelDocId || undefined,
+                    bank_json_document_id: jsonDocId || undefined,
+                    avg_bank_balance_latest_year: bankFySnapshot.latest,
+                    avg_bank_balance_previous_year: bankFySnapshot.previous,
+                    financial_year_latest: bankFySnapshot.fy_latest,
+                    financial_year_previous: bankFySnapshot.fy_previous,
+                }
+            });
+
+            await tx.dataPullBackgroundJob.updateMany({
+                where: { pull_type: 'BANK', module_request_id: existingRequest.id, status: { in: ['PENDING', 'PROCESSING'] } },
+                data: { status: 'COMPLETED' }
+            });
+
+            if (existingRequest.case_id) {
+                const initiatorId = existingRequest.created_by_user_id || null;
+                const { recipient_user_id, audience_type } = await determineNotificationRecipient(existingRequest.tenant_id, existingRequest.case_id, initiatorId);
+
+                const notification = await tx.systemNotification.create({
+                    data: {
+                        tenant_id: existingRequest.tenant_id,
+                        case_id: existingRequest.case_id,
+                        pull_type: 'BANK',
+                        status: 'COMPLETED',
+                        audience_type: audience_type,
+                        recipient_user_id: recipient_user_id,
+                        message: `Bank Statement analysis COMPLETED via webhook`,
+                        deduplication_key: `BANK_${existingRequest.id}_COMPLETED_webhook`
+                    }
+                });
+                const pgPayload = { event_id: notification.id, tenant_id: existingRequest.tenant_id, case_id: existingRequest.case_id, pull_type: 'BANK', status: 'COMPLETED' };
+                await tx.$executeRawUnsafe(`SELECT pg_notify('case_status_updates', $1)`, JSON.stringify(pgPayload));
             }
         });
 

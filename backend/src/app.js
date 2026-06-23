@@ -96,19 +96,13 @@ const dashboardRoutes = require('./routes/dashboard.routes');
 const salesIncentiveRoutes = require('./routes/salesIncentive.routes');
 
 // Rate Limiting Middlewares
-const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 300, // Limit each IP to 300 requests per 15 mins
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests from this IP, please try again after 15 minutes.' }
-});
-
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // Limit each IP to 5 attempts per 15 mins
+  max: 5, // Limit each IP to 5 failed login attempts per 15 mins
   standardHeaders: true,
   legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  requestWasSuccessful: (req, res) => res.statusCode !== 401,
   message: { error: 'Too many login attempts from this IP, please try again after 15 minutes.' }
 });
 
@@ -137,9 +131,6 @@ const uploadLimiter = rateLimit({
 });
 
 const apiRouter = express.Router();
-
-// Apply global rate limiting to all API requests
-apiRouter.use(globalLimiter);
 
 // Specific rate limiters for sensitive endpoints
 apiRouter.use('/auth/login', loginLimiter);
@@ -170,6 +161,10 @@ apiRouter.use('/documents', documentRoutes);
 // Phase 1 onboarding: income, obligations, ESR — mounted under /api/cases/:id/
 apiRouter.use('/cases/:id', onboardingRoutes);
 
+const directCustomerAuthRoutes = require('./routes/direct.customer.auth.routes');
+const directCustomerRoutes = require('./routes/direct.customer.routes');
+const adminDirectCustomerRoutes = require('./routes/admin.direct.customer.routes');
+
 // Tenant-scoped lender contact configuration (DSA only)
 apiRouter.use('/tenant/lenders', tenantLenderRoutes);
 apiRouter.use('/tenant/lender-contacts', tenantLenderContactRoutes);
@@ -179,6 +174,9 @@ apiRouter.use('/pdd-tasks', pddRoutes);
 apiRouter.use('/sub-dsa', subDsaPayoutRoutes);
 apiRouter.use('/dashboard', dashboardRoutes);
 apiRouter.use('/sales-incentives', salesIncentiveRoutes);
+apiRouter.use('/msme/auth', directCustomerAuthRoutes);
+apiRouter.use('/msme', directCustomerRoutes);
+apiRouter.use('/admin/msme-cases', adminDirectCustomerRoutes);
 
 app.use((req, res, next) => { if (req.url.includes('clone')) require('fs').appendFileSync('clone_debug.json', new Date() + ' ' + req.method + ' ' + req.url + '\n'); next(); });
 app.use('/api', apiRouter);
@@ -189,7 +187,7 @@ app.use((err, req, res, next) => {
 });
 
 // Seed canonical roles on startup (idempotent — safe to run every restart)
-const CANONICAL_ROLES = ['SUPER_ADMIN', 'CRED2TECH_MEMBER', 'DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA'];
+const CANONICAL_ROLES = ['SUPER_ADMIN', 'CRED2TECH_MEMBER', 'DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA', 'MSME_CUSTOMER'];
 
 async function seedRolesIfMissing() {
   try {
@@ -206,7 +204,28 @@ async function seedRolesIfMissing() {
   }
 }
 
+async function seedMsmePricing() {
+  try {
+    await prisma.apiPricing.upsert({
+      where: { api_code: 'DIRECT_MSME_ELIGIBILITY' },
+      update: {},
+      create: {
+        api_code: 'DIRECT_MSME_ELIGIBILITY',
+        api_name: 'Direct MSME Eligibility Assessment',
+        description: 'One-time fee for individual MSME customers to run eligibility check and get lender recommendations',
+        vendor_cost: 0,
+        default_credit_cost: 99900,
+        is_active: true,
+      }
+    });
+    console.log('[startup] MSME Pricing seeded');
+  } catch (err) {
+    console.error('[startup] Failed to seed MSME Pricing:', err.message);
+  }
+}
+
 seedRolesIfMissing();
+seedMsmePricing();
 
 const seedLendersIfMissing = require('./utils/seed_lenders');
 const seedDataMatrix = require('./utils/seed_matrix');
@@ -216,4 +235,3 @@ const seedDataMatrix = require('./utils/seed_matrix');
 // });
 
 module.exports = app;
-

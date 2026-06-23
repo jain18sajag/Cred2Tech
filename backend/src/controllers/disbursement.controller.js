@@ -43,8 +43,40 @@ async function listPartialDisbursements(req, res) {
     }
 }
 
+const bulkDisbursementUploadService = require('../services/bulkDisbursementUpload.service');
+
+async function downloadTemplate(req, res) {
+    try {
+        const buffer = await bulkDisbursementUploadService.generateTemplate();
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', 'attachment; filename="disbursement_upload_template.xlsx"');
+        res.send(buffer);
+    } catch (error) {
+        console.error('[DISBURSEMENT CONTROLLER] Template Error:', error);
+        res.status(500).json({ error: 'Failed to generate template' });
+    }
+}
+
+async function uploadBulkDisbursements(req, res) {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
+        const tenantId = req.user.tenant_id;
+        const userId = req.user.id;
+        
+        const result = await bulkDisbursementUploadService.processUpload(req.file.buffer, tenantId, userId);
+        res.json(result);
+    } catch (error) {
+        console.error('[DISBURSEMENT CONTROLLER] Upload Error:', error);
+        res.status(400).json({ error: error.message });
+    }
+}
+
 module.exports = {
     recordDisbursement,
     getCaseSummary,
-    listPartialDisbursements
+    listPartialDisbursements,
+    downloadTemplate,
+    uploadBulkDisbursements
 };

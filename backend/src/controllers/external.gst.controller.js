@@ -3,6 +3,7 @@ const { executePaidApi } = require('../services/wallet.service');
 const gstService = require('../services/externalApis/gst.service');
 const documentService = require('../services/document.service');
 const { extractGstDetails } = require('../services/financial.extractor');
+const { determineNotificationRecipient } = require('../services/notification.service');
 
 
 // Helper: extract latest + previous financial year turnover from raw GST JSON
@@ -109,6 +110,7 @@ async function createGstRequest(req, res) {
             requestPayload: req.body,
             // Provide an idempotency key if we want to guard against rapid doubletaps for same case context. We can use customerId+gstin
             idempotencyKey: `gst_${customer_id}_${gstin}_${from_date}_${to_date}`,
+            userRole: req.user.role,
             handlerFunction: async () => {
 
                 let providerRes;
@@ -197,6 +199,24 @@ async function createGstRequest(req, res) {
                     }
                 });
 
+                if (case_id) {
+                    await prisma.dataPullBackgroundJob.create({
+                        data: {
+                            tenant_id: tenantId,
+                            case_id: parseInt(case_id, 10),
+                            applicant_id: applicant_id ? parseInt(applicant_id, 10) : null,
+                            pull_type: 'GST',
+                            module_request_id: dbRequest.id,
+                            provider_request_id: requestId,
+                            flow_type: mode === 'AUTH_LINK' ? 'GST_AUTH_LINK' : (auth_type === 'OTP' ? 'GST_OTP' : 'GST_PASSWORD'),
+                            status: (auth_type === 'OTP' || mode === 'AUTH_LINK') ? 'AWAITING_CUSTOMER_ACTION' : 'PENDING',
+                            next_run_at: new Date(Date.now() + 15 * 60000),
+                            maximum_attempts: 3,
+                            processing_deadline_at: new Date(Date.now() + 120 * 60000)
+                        }
+                    });
+                }
+
                 // Also sync to CustomerGSTProfile to initialize a ghost record mapped for legacy usages if desired, or skip.
                 // Let's rely entirely on GstrAnalyticsRequest table as the golden source now.
 
@@ -241,6 +261,16 @@ async function submitGstOtp(req, res) {
             }
         });
 
+        await prisma.dataPullBackgroundJob.updateMany({
+            where: { 
+                module_request_id: dbReq.id, 
+                pull_type: 'GST', 
+                flow_type: 'GST_OTP',
+                status: 'AWAITING_CUSTOMER_ACTION'
+            },
+            data: { status: 'PENDING', next_run_at: new Date() }
+        });
+
         res.json({ success: true, status: 'PROCESSING', message: providerRes.message });
     } catch (error) {
         res.status(400).json({ error: error.message });
@@ -270,25 +300,10 @@ async function syncGstData(req, res) {
                     currentStatus = 'DATA_READY';
                     
                     const updateData = { 
-                        raw_gst_data: dataRes, 
-                        status: 'DATA_READY',
-                        callback_payload: dataRes // Store whole response for audit
+                        raw_fetch_data: dataRes, 
+                        status: 'DATA_READY'
                     };
                     
-                    // Extract structured metrics
-                    try {
-                        const gstExtracted = extractGstDetails(dataRes);
-                        if (gstExtracted.turnover_latest_year !== null) {
-                            updateData.turnover_latest_year = gstExtracted.turnover_latest_year;
-                            updateData.turnover_previous_year = gstExtracted.turnover_previous_year;
-                            updateData.financial_year_latest = gstExtracted.financial_year_latest;
-                            updateData.financial_year_previous = gstExtracted.financial_year_previous;
-                            updateData.avg_monthly_turnover = gstExtracted.avg_monthly_turnover;
-                            updateData.months_filed_12m = gstExtracted.months_filed_12m;
-                            updateData.nil_return_months = gstExtracted.nil_return_months;
-                        }
-                    } catch (e) { console.error('[Sync] Metric extraction failed:', e.message); }
-
                     await prisma.gstrAnalyticsRequest.update({
                         where: { id: dbReq.id },
                         data: updateData
@@ -345,6 +360,15 @@ async function syncGstData(req, res) {
                     }
                     await Promise.allSettled(gstIngestionJobs);
 
+                    let rawReportData = undefined;
+                    if (reportRes.jsonDataUrl) {
+                        try {
+                            const axios = require('axios');
+                            const downloader = await axios.get(reportRes.jsonDataUrl);
+                            rawReportData = downloader.data;
+                        } catch (err) { console.error("[Sync] Failed to download JSON payload:", err.message); }
+                    }
+
                     await prisma.gstrAnalyticsRequest.update({
                         where: { id: dbReq.id },
                         data: {
@@ -352,7 +376,8 @@ async function syncGstData(req, res) {
                             report_excel_url: reportRes.excelUrl || dbReq.report_excel_url,   
                             report_pdf_url: reportRes.pdfUrl || dbReq.report_pdf_url,         
                             status: 'REPORT_READY',
-                            callback_payload: reportRes, // Store whole report response for audit
+                            provider_callback_payload: reportRes,
+                            raw_report_data: rawReportData || undefined,
                             gst_pdf_document_id: pdfDocId || undefined,
                             gst_excel_document_id: excelDocId || undefined,
                             gst_json_document_id: jsonDocId || undefined,
@@ -383,6 +408,11 @@ async function syncGstData(req, res) {
                 where: { id: dbReq.id },
                 data: { status: currentStatus }
             });
+        }
+        
+        if (dataSynced) {
+            const { finalizeGstAnalyticsRequest } = require('../services/gst.service');
+            await finalizeGstAnalyticsRequest(dbReq.id, dbReq.tenant_id).catch(e => console.error("Finalize error:", e.message));
         }
 
         res.json({ success: true, status: currentStatus, dataSynced });
@@ -423,24 +453,26 @@ async function handleSignzyCallback(req, res) {
         const pUrl = resultObj.data?.pdfUrl || resultObj.pdfUrl;
         const eUrl = resultObj.data?.excelUrl || resultObj.excelUrl;
 
-        let rawGstData = dbReq.raw_gst_data;
+        let rawReportData = dbReq.raw_report_data;
+        let dataDownloaded = false;
         if (jUrl) {
             try {
                 const axios = require('axios');
                 const downloader = await axios.get(jUrl);
-                rawGstData = downloader.data;
-                console.log(`[Webhook] Successfully downloaded JSON data. Size: ${JSON.stringify(rawGstData).length} chars`);
+                rawReportData = downloader.data;
+                dataDownloaded = true;
+                console.log(`[Webhook] Successfully downloaded JSON data. Size: ${JSON.stringify(rawReportData).length} chars`);
             } catch (err) {
                 console.error("[Webhook] Failed to download JSON payload:", err.message);
             }
         }
 
         const updateData = {
-            callback_payload: payload,
+            provider_callback_payload: payload,
             status: 'CALLBACK_RECEIVED',
-            provider_message: resultObj.message || 'Callback Received',
-            raw_gst_data: rawGstData
+            provider_message: resultObj.message || 'Callback Received'
         };
+        if (dataDownloaded) updateData.raw_report_data = rawReportData;
 
         if (jUrl || pUrl || eUrl) {
             updateData.report_json_url = jUrl || dbReq.report_json_url;
@@ -451,31 +483,46 @@ async function handleSignzyCallback(req, res) {
             updateData.status = 'FAILED';
         }
 
-        // Extract ALL structured columns from raw GST data (delegated to financial.extractor)
-        if (rawGstData) {
-            try {
-                const gstExtracted = extractGstDetails(
-                    typeof rawGstData === 'string' ? JSON.parse(rawGstData) : rawGstData
-                );
-                if (gstExtracted.turnover_latest_year !== null) {
-                    updateData.turnover_latest_year = gstExtracted.turnover_latest_year;
-                    updateData.turnover_previous_year = gstExtracted.turnover_previous_year;
-                    updateData.financial_year_latest = gstExtracted.financial_year_latest;
-                    updateData.financial_year_previous = gstExtracted.financial_year_previous;
-                    updateData.avg_monthly_turnover = gstExtracted.avg_monthly_turnover;
-                    updateData.months_filed_12m = gstExtracted.months_filed_12m;
-                    updateData.nil_return_months = gstExtracted.nil_return_months;
-                    console.log(`[Webhook][GST] Latest: ${gstExtracted.financial_year_latest} = ${gstExtracted.turnover_latest_year}, AvgMonthly: ${gstExtracted.avg_monthly_turnover}, Filed: ${gstExtracted.months_filed_12m}/12, Nil: ${gstExtracted.nil_return_months}`);
-                }
-            } catch (fyErr) {
-                console.error('[Webhook][GST Extract] Error:', fyErr.message);
-            }
-        }
+        await prisma.$transaction(async (tx) => {
+            await tx.gstrAnalyticsRequest.update({
+                where: { id: dbReq.id },
+                data: updateData
+            });
 
-        await prisma.gstrAnalyticsRequest.update({
-            where: { id: dbReq.id },
-            data: updateData
+            if (updateData.status === 'REPORT_READY' || updateData.status === 'FAILED') {
+                const termStatus = updateData.status === 'REPORT_READY' ? 'COMPLETED' : 'FAILED';
+                
+                await tx.dataPullBackgroundJob.updateMany({
+                    where: { pull_type: 'GST', module_request_id: dbReq.id, status: { in: ['PENDING', 'PROCESSING', 'AWAITING_CUSTOMER_ACTION'] } },
+                    data: { status: termStatus }
+                });
+
+                if (dbReq.case_id) {
+                    const initiatorId = dbReq.created_by_user_id || null;
+                    const { recipient_user_id, audience_type } = await determineNotificationRecipient(dbReq.tenant_id, dbReq.case_id, initiatorId);
+
+                    const notification = await tx.systemNotification.create({
+                        data: {
+                            tenant_id: dbReq.tenant_id,
+                            case_id: dbReq.case_id,
+                            pull_type: 'GST',
+                            status: termStatus,
+                            audience_type: audience_type,
+                            recipient_user_id: recipient_user_id,
+                            message: `GST pull ${termStatus} via webhook`,
+                            deduplication_key: `GST_${dbReq.id}_${termStatus}_webhook`
+                        }
+                    });
+                    const pgPayload = { event_id: notification.id, tenant_id: dbReq.tenant_id, case_id: dbReq.case_id, pull_type: 'GST', status: termStatus };
+                    await tx.$executeRawUnsafe(`SELECT pg_notify('case_status_updates', $1)`, JSON.stringify(pgPayload));
+                }
+            }
         });
+
+        if (dataDownloaded || updateData.status === 'REPORT_READY') {
+            const { finalizeGstAnalyticsRequest } = require('../services/gst.service');
+            await finalizeGstAnalyticsRequest(dbReq.id, dbReq.tenant_id).catch(e => console.error("Finalize error:", e.message));
+        }
 
         // Setup success cases
         if (updateData.status === 'REPORT_READY' && dbReq.case_id) {

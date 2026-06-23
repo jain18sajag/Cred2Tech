@@ -77,6 +77,7 @@ export default function CaseDetailPage() {
   const [summaryDownloading, setSummaryDownloading] = useState(false);
 
   const { hasRole } = useAuth();
+  const isMsme = hasRole('MSME_CUSTOMER');
   const [rollbackReason, setRollbackReason] = useState('');
   const [rollbackConfirmation, setRollbackConfirmation] = useState(false);
 
@@ -190,7 +191,7 @@ export default function CaseDetailPage() {
 
     const STAGE_ORDER = {
       'DRAFT': 1, 'LEAD_CREATED': 2, 'DATA_COLLECTION': 3, 'INCOME_REVIEWED': 4,
-      'ESR_GENERATED': 5, 'LEAD_SENT_TO_LENDER': 6, 'IN_REVIEW': 7,
+      'LEAD_SENT_TO_LENDER': 5, 'ESR_GENERATED': 6, 'IN_REVIEW': 7,
       'APPROVED': 8, 'PARTLY_DISBURSED': 9, 'DISBURSED': 10, 'CLOSED': 11, 'REJECTED': 11
     };
 
@@ -214,14 +215,16 @@ export default function CaseDetailPage() {
       }
       // 1. Handle Sanctioning (APPROVED)
       else if (selectedStage === 'APPROVED') {
+        if (caseData.stage !== 'ESR_GENERATED' && caseData.stage !== 'APPROVED') {
+          return toast.error('Case must be Login Done before sanction.');
+        }
         await caseService.sanctionCase(id, sanctionForm);
         toast.success('Case sanctioned successfully');
       }
       // 2. Handle Disbursement (PARTLY_DISBURSED or DISBURSED)
       else if (['PARTLY_DISBURSED', 'DISBURSED'].includes(selectedStage)) {
-        // If no sanction exists yet, create it first
         if (!disbursementSummary?.sanction) {
-          await caseService.sanctionCase(id, sanctionForm);
+          return toast.error('Case must be sanctioned before disbursement.');
         }
 
         const payload = {
@@ -260,7 +263,7 @@ export default function CaseDetailPage() {
 
   const STAGE_ORDER = {
     'DRAFT': 1, 'LEAD_CREATED': 2, 'DATA_COLLECTION': 3, 'INCOME_REVIEWED': 4,
-    'ESR_GENERATED': 5, 'LEAD_SENT_TO_LENDER': 6, 'IN_REVIEW': 7,
+    'LEAD_SENT_TO_LENDER': 5, 'ESR_GENERATED': 6, 'IN_REVIEW': 7,
     'APPROVED': 8, 'PARTLY_DISBURSED': 9, 'DISBURSED': 10, 'CLOSED': 11, 'REJECTED': 11
   };
   const isBackward = selectedStage && STAGE_ORDER[selectedStage] < STAGE_ORDER[caseData.stage];
@@ -276,8 +279,8 @@ export default function CaseDetailPage() {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20, gap: 20 }}>
         <div>
           <div style={{ fontSize: 12, color: '#8898AA', marginBottom: 4 }}>
-            ← <span style={{ cursor: 'pointer', color: 'var(--orange)' }} onClick={() => navigate('/customers')}>Customer List</span> /
-            <span style={{ cursor: 'pointer', color: 'var(--orange)' }} onClick={() => navigate('/customers')}> All Cases</span>
+            ← <span style={{ cursor: 'pointer', color: 'var(--orange)' }} onClick={() => navigate(isMsme ? '/msme/dashboard' : '/customers')}>Customer List</span> /
+            <span style={{ cursor: 'pointer', color: 'var(--orange)' }} onClick={() => navigate(isMsme ? '/msme/dashboard' : '/customers')}> All Cases</span>
           </div>
           <h2 style={{ fontSize: 22, fontWeight: 800, color: '#0A2540', margin: 0 }}>
             CASE-{caseData.id} — {caseData.customer_name || caseData.customer?.business_name}

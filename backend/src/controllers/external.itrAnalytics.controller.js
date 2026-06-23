@@ -168,6 +168,7 @@ async function analyze(req, res) {
             caseId: case_id ? parseInt(case_id, 10) : null,
             requestPayload: sanitizedPayload,
             idempotencyKey,
+            userRole: req.user.role,
             handlerFunction: async () => {
                 const providerRes = await itrAnalyticsService.getReferenceId(pan.toUpperCase(), password);
                 const referenceId = providerRes.referenceId;
@@ -188,6 +189,22 @@ async function analyze(req, res) {
                 });
 
                 if (case_id) {
+                    await prisma.dataPullBackgroundJob.create({
+                        data: {
+                            tenant_id: tenantId,
+                            case_id: parseInt(case_id, 10),
+                            applicant_id: applicant_id ? parseInt(applicant_id, 10) : null,
+                            pull_type: 'ITR',
+                            module_request_id: itrRequest.id,
+                            provider_request_id: referenceId,
+                            flow_type: 'ITR_ANALYTICS',
+                            status: 'PENDING',
+                            next_run_at: new Date(Date.now() + 2 * 60000),
+                            maximum_attempts: 5,
+                            processing_deadline_at: new Date(Date.now() + 120 * 60000)
+                        }
+                    });
+
                     await prisma.caseDataPullStatus.upsert({
                         where: { case_id: parseInt(case_id, 10) },
                         create: { case_id: parseInt(case_id, 10), itr_status: 'PENDING' },
@@ -234,6 +251,24 @@ async function initiate(req, res) {
             }
         });
 
+        if (case_id) {
+            await prisma.dataPullBackgroundJob.create({
+                data: {
+                    tenant_id: tenantId,
+                    case_id: parseInt(case_id, 10),
+                    applicant_id: applicant_id ? parseInt(applicant_id, 10) : null,
+                    pull_type: 'ITR',
+                    module_request_id: itrRequest.id,
+                    provider_request_id: requestId,
+                    flow_type: 'ITR_FORM',
+                    status: 'AWAITING_CUSTOMER_ACTION',
+                    next_run_at: new Date(Date.now() + 2 * 60000),
+                    maximum_attempts: 5,
+                    processing_deadline_at: new Date(Date.now() + 120 * 60000)
+                }
+            });
+        }
+
         res.status(200).json({
             success: true,
             requestId: itrRequest.id,
@@ -256,12 +291,23 @@ async function authorise(req, res) {
 
         const providerRes = await itrAnalyticsService.submitAuthorisation(reference_id, { otp, password });
 
-        await prisma.itrAnalyticsRequest.update({
+        const dbReq = await prisma.itrAnalyticsRequest.update({
             where: { reference_id },
             data: {
                 status: 'PROCESSING',
                 provider_message: providerRes.messageCode || null
             }
+        });
+
+        // Resume background polling for ITR_FORM
+        await prisma.dataPullBackgroundJob.updateMany({
+            where: { 
+                module_request_id: dbReq.id, 
+                pull_type: 'ITR', 
+                flow_type: 'ITR_FORM',
+                status: 'AWAITING_CUSTOMER_ACTION'
+            },
+            data: { status: 'PENDING', next_run_at: new Date() }
         });
 
         res.status(200).json({

@@ -4,6 +4,7 @@ import { caseService } from '../api/caseService';
 import { toast } from 'react-hot-toast';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { PlusCircle, Trash2, ChevronRight, ChevronLeft } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 const INCOME_TYPES = [
   'Director Salary', "Partner's Salary", 'Interest on Capital',
@@ -11,12 +12,18 @@ const INCOME_TYPES = [
   'Dividend Income', 'Agriculture Income', 'Professional Fees', 'Other'
 ];
 const DOC_TYPES = ['CA Certificate', 'Salary Slip', 'Form 16', 'Bank Credit', 'None'];
+const applicantDisplayName = (app) => {
+  if (!app) return '';
+  return app.name || (app.type === 'PRIMARY' ? 'Primary Applicant' : 'Co-Applicant');
+};
 
 const fmt = (n) => n != null ? `₹${Number(n).toLocaleString('en-IN')}` : '—';
 
 export default function IncomeSummaryPage() {
   const { id: caseId } = useParams();
   const navigate = useNavigate();
+  const { hasRole } = useAuth();
+  const isMsme = hasRole('MSME_CUSTOMER');
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -110,7 +117,7 @@ export default function IncomeSummaryPage() {
           <p style={{ color: 'var(--text-tertiary)', marginTop: 4 }}>Review API-pulled income and add any manual entries</p>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
-          <button className="btn btn-ghost" onClick={() => navigate(`/customers/add?caseId=${caseId}`)}><ChevronLeft size={16} /> Back</button>
+          <button className="btn btn-ghost" onClick={() => navigate(isMsme ? `/msme/onboarding?caseId=${caseId}` : `/customers/add?caseId=${caseId}`)}><ChevronLeft size={16} /> Back</button>
           <button className="btn btn-primary" onClick={handleNext} disabled={saving} style={{ padding: '10px 24px' }}>
             {saving ? 'Saving...' : <>Next: Bureau Details <ChevronRight size={16} /></>}
           </button>
@@ -190,10 +197,10 @@ export default function IncomeSummaryPage() {
                 <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>APPLICANT</label>
                 <select className="form-control" value={newEntry.applicant_id} onChange={e => {
                   const app = applicants.find(a => a.id === parseInt(e.target.value));
-                  setNewEntry({ ...newEntry, applicant_id: e.target.value, applicant_label: app ? (app.name || app.pan_number || app.type) : '' });
+                  setNewEntry({ ...newEntry, applicant_id: e.target.value, applicant_label: applicantDisplayName(app) });
                 }}>
                   <option value="">Entity Level</option>
-                  {applicants.map(a => <option key={a.id} value={a.id}>{a.name || a.pan_number || a.type}</option>)}
+                  {applicants.map(a => <option key={a.id} value={a.id}>{applicantDisplayName(a)}</option>)}
                 </select>
               </div>
               <div>

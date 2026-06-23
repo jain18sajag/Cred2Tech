@@ -60,12 +60,65 @@ async function validatePlatformLender(lenderId) {
     return lender ? String(lenderId) : null;
 }
 
+function normalizeOtherLenderPayload(otherLender = {}) {
+    const lenderName = String(otherLender.lender_name || otherLender.lenderName || '').trim();
+    const contactName = String(otherLender.contact_name || otherLender.contactName || '').trim();
+    const contactEmail = String(otherLender.contact_email || otherLender.contactEmail || '').trim().toLowerCase();
+    const contactMobile = String(otherLender.contact_mobile || otherLender.contactMobile || '').trim();
+    const productType = String(otherLender.product_type || otherLender.productType || 'ALL').trim() || 'ALL';
+    const dsaCode = String(otherLender.dsa_code || otherLender.dsaCode || '').trim();
+
+    if (!lenderName) throw new Error('Other lender name is required');
+    if (!contactName) throw new Error('Other lender contact name is required');
+    if (!contactEmail) throw new Error('Other lender contact email is required');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) throw new Error('Other lender contact email is invalid');
+
+    return { lenderName, contactName, contactEmail, contactMobile, productType, dsaCode };
+}
+
+async function createManualTenantLenderContact({ tenant_id, user_id, other_lender }) {
+    const payload = normalizeOtherLenderPayload(other_lender);
+
+    const tenantLender = await prisma.tenantLender.create({
+        data: {
+            tenant_id: Number(tenant_id),
+            lender_name: payload.lenderName,
+            platform_lender_id: null,
+            is_esr_enabled: false,
+            is_active: true,
+            created_by_user_id: Number(user_id)
+        }
+    });
+
+    const contact = await prisma.tenantLenderContact.create({
+        data: {
+            tenant_lender_id: tenantLender.id,
+            tenant_id: Number(tenant_id),
+            product_type: payload.productType,
+            contact_name: payload.contactName,
+            contact_email: payload.contactEmail,
+            contact_mobile: payload.contactMobile || null,
+            dsa_code: payload.dsaCode || null,
+            is_primary: true,
+            created_by_user_id: Number(user_id)
+        }
+    });
+
+    return { tenantLenderId: tenantLender.id, contactId: contact.id };
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // createProposalDraft
 // ──────────────────────────────────────────────────────────────────────────────
-async function createProposalDraft({ case_id, lender_id, tenant_lender_id, scheme_id, user_id, tenant_id }) {
+async function createProposalDraft({ case_id, lender_id, tenant_lender_id, scheme_id, other_lender, user_id, tenant_id }) {
     // 1. Validate platform lender to prevent foreign key errors
     const validLenderId = await validatePlatformLender(lender_id);
+    let resolvedTenantLenderId = tenant_lender_id;
+
+    if (!resolvedTenantLenderId && other_lender) {
+        const manual = await createManualTenantLenderContact({ tenant_id, user_id, other_lender });
+        resolvedTenantLenderId = manual.tenantLenderId;
+    }
 
     // 2. Fetch ESR financial snapshot for this case
     const esr = await prisma.caseEsrFinancials.findUnique({
@@ -96,7 +149,7 @@ async function createProposalDraft({ case_id, lender_id, tenant_lender_id, schem
         }
     }
 
-    const lenderCode = await getLenderCode(validLenderId, tenant_lender_id);
+    const lenderCode = await getLenderCode(validLenderId, resolvedTenantLenderId);
     const seq = await getNextSeq(case_id, lenderCode);
     const proposalNumber = generateProposalNumber(case_id, lenderCode, seq);
 
@@ -114,7 +167,7 @@ async function createProposalDraft({ case_id, lender_id, tenant_lender_id, schem
                 tenant_id: Number(tenant_id),
                 case_id: Number(case_id),
                 lender_id: validLenderId,
-                tenant_lender_id: tenant_lender_id ? Number(tenant_lender_id) : null,
+                tenant_lender_id: resolvedTenantLenderId ? Number(resolvedTenantLenderId) : null,
                 scheme_id: preferredSchemeId ? Number(preferredSchemeId) : null,
                 case_esr_financial_id: esr?.id || null,
                 proposal_number: proposalNumber,
@@ -209,22 +262,13 @@ async function getProposalForPrep({ proposal_id, case_id, tenant_id }) {
     }
 
     // 2. GST Analytics
-    const gstData = await prisma.gstrAnalyticsRequest.findFirst({
-        where: { case_id: Number(case_id), status: { in: ['REPORT_READY', 'COMPLETED'] } },
-        orderBy: { updated_at: 'desc' }
-    });
+    const { getBestUsableGstSnapshot } = require('./gstAnalyticsSnapshot.service');
+    const gstData = await getBestUsableGstSnapshot({ tenantId: caseData.tenant_id, caseId: Number(case_id) });
     let gstExtraStats = { months_filed: null, nil_months: null, avg_monthly_turnover: null };
-    if (gstData?.raw_gst_data) {
-        try {
-            const raw = typeof gstData.raw_gst_data === 'string' ? JSON.parse(gstData.raw_gst_data) : gstData.raw_gst_data;
-            const gstpData = raw?.result?.data || raw?.data || raw;
-            const table3b = gstpData?.table3BData || gstpData?.gstr3BData || [];
-            gstExtraStats.months_filed = Array.isArray(table3b) ? table3b.filter(m => m && m.taxableValue > 0).length : null;
-            gstExtraStats.nil_months = Array.isArray(table3b) ? table3b.filter(m => m && m.taxableValue === 0).length : null;
-            if (gstData.turnover_latest_year) gstExtraStats.avg_monthly_turnover = Number(gstData.turnover_latest_year) / 12;
-        } catch (e) { }
-    } else if (gstData?.turnover_latest_year) {
-        gstExtraStats.avg_monthly_turnover = Number(gstData.turnover_latest_year) / 12;
+    if (gstData) {
+        gstExtraStats.months_filed = gstData.months_filed_12m;
+        gstExtraStats.nil_months = gstData.nil_return_months;
+        gstExtraStats.avg_monthly_turnover = gstData.avg_monthly_turnover;
     }
 
     // 3. ITR Analytics
@@ -361,26 +405,74 @@ async function getProposalForPrep({ proposal_id, case_id, tenant_id }) {
 // ──────────────────────────────────────────────────────────────────────────────
 // updateProposalDraft
 // ──────────────────────────────────────────────────────────────────────────────
-async function updateProposalDraft({ proposal_id, case_id, tenant_id, user_id, fields }) {
-    const allowed = ['requested_amount', 'tenure_months', 'loan_purpose', 'remarks', 'additional_notes', 'preferred_banking_program'];
+async function updateProposalDraft({ proposal_id, case_id, tenant_id, user_id, user_role, fields }) {
+    const baseAllowed = ['requested_amount', 'tenure_months', 'loan_purpose', 'remarks', 'additional_notes', 'preferred_banking_program'];
+    const overrideFields = ['eligible_amount', 'roi_min', 'roi_max'];
+    
+    // Check if user has override permission (SUPER_ADMIN or DSA_ADMIN)
+    const canOverride = ['SUPER_ADMIN', 'DSA_ADMIN'].includes(user_role);
+
     const data = {};
-    for (const key of allowed) {
+    for (const key of baseAllowed) {
         if (fields[key] !== undefined) {
             data[key] = fields[key];
         }
     }
+
+    let isOverriding = false;
+    const oldValues = {};
+    
+    if (canOverride) {
+        for (const key of overrideFields) {
+            if (fields[key] !== undefined) {
+                data[key] = fields[key];
+                isOverriding = true;
+            }
+        }
+    } else {
+        // Log a warning or throw if non-admin tries to override
+        const attemptedOverride = overrideFields.some(key => fields[key] !== undefined);
+        if (attemptedOverride) {
+            throw new Error('You do not have the LENDER_ELIGIBILITY_OVERRIDE permission.');
+        }
+    }
+
     if (Object.keys(data).length === 0) throw new Error('No valid fields to update');
 
     data.updated_by_user_id = Number(user_id);
+
+    const existingProposal = await prisma.proposal.findUnique({ where: { id: Number(proposal_id) } });
+    if (!existingProposal || existingProposal.case_id !== Number(case_id) || existingProposal.tenant_id !== Number(tenant_id)) {
+        throw new Error('Proposal not found or unauthorized');
+    }
+
+    if (isOverriding) {
+        overrideFields.forEach(key => { oldValues[key] = existingProposal[key]; });
+    }
 
     const proposal = await prisma.proposal.update({
         where: { id: Number(proposal_id) },
         data
     });
 
-    // Safety check for case/tenant ownership
-    if (proposal.case_id !== Number(case_id) || proposal.tenant_id !== Number(tenant_id)) {
-        throw new Error('Unauthorized');
+    if (isOverriding) {
+        await prisma.auditLog.create({
+            data: {
+                tenant_id: Number(tenant_id),
+                user_id: Number(user_id),
+                action: 'LENDER_ELIGIBILITY_OVERRIDE',
+                description: JSON.stringify({
+                    proposal_id: proposal.id,
+                    case_id: proposal.case_id,
+                    old_values: oldValues,
+                    new_values: {
+                        eligible_amount: fields.eligible_amount,
+                        roi_min: fields.roi_min,
+                        roi_max: fields.roi_max
+                    }
+                })
+            }
+        });
     }
 
     return proposal;
@@ -487,14 +579,21 @@ async function submitProposal({ proposal_id, case_id, user_id, tenant_id, snapsh
 // ──────────────────────────────────────────────────────────────────────────────
 // cloneProposalForLender
 // ──────────────────────────────────────────────────────────────────────────────
-async function cloneProposalForLender({ source_id, new_lender_id, new_tenant_lender_id, user_id, tenant_id }) {
+async function cloneProposalForLender({ source_id, new_lender_id, new_tenant_lender_id, other_lender, user_id, tenant_id }) {
     const src = await prisma.proposal.findUnique({
         where: { id: Number(source_id) }
     });
     if (!src) throw new Error('Source proposal not found');
 
     const validLenderId = await validatePlatformLender(new_lender_id);
-    const lenderCode = await getLenderCode(validLenderId, new_tenant_lender_id);
+    let resolvedTenantLenderId = new_tenant_lender_id;
+
+    if (!resolvedTenantLenderId && other_lender) {
+        const manual = await createManualTenantLenderContact({ tenant_id, user_id, other_lender });
+        resolvedTenantLenderId = manual.tenantLenderId;
+    }
+
+    const lenderCode = await getLenderCode(validLenderId, resolvedTenantLenderId);
     const seq = await getNextSeq(src.case_id, lenderCode);
     const proposalNumber = generateProposalNumber(src.case_id, lenderCode, seq);
 
@@ -504,7 +603,7 @@ async function cloneProposalForLender({ source_id, new_lender_id, new_tenant_len
                 tenant_id: Number(tenant_id),
                 case_id: src.case_id,
                 lender_id: validLenderId,
-                tenant_lender_id: new_tenant_lender_id ? Number(new_tenant_lender_id) : null,
+                tenant_lender_id: resolvedTenantLenderId ? Number(resolvedTenantLenderId) : null,
                 scheme_id: src.scheme_id,
                 case_esr_financial_id: src.case_esr_financial_id,
                 proposal_source_id: src.id,

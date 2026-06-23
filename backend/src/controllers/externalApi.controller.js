@@ -48,6 +48,7 @@ async function bureauPull(req, res) {
       customerId: parseInt(customer_id, 10),
       caseId: case_id ? parseInt(case_id, 10) : null,
       requestPayload: req.body,
+      userRole: req.user.role,
       handlerFunction: callBureauApi
     });
     res.json({ success: true, ...result });
@@ -75,6 +76,7 @@ async function itrFetch(req, res) {
       customerId: customer.id,
       caseId: case_id ? parseInt(case_id, 10) : null,
       requestPayload: req.body,
+      userRole: req.user.role,
       handlerFunction: async () => {
          await new Promise(res => setTimeout(res, 800));
          const mockedResponse = {

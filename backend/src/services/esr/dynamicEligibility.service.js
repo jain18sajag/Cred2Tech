@@ -3357,7 +3357,7 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
     // updateStage uses the global prisma client internally (not a tx-client).
     // Calling it inside $transaction would deadlock the connection pool.
     // It handles: tenant validation + CaseStageHistory + ActivityLog + stage lock rules.
-    await updateStage(case_id, tenant_id, 'ESR_GENERATED', user_id);
+    await advanceCaseToEsrGenerated(case_id, tenant_id, user_id);
 
     // Set esr_generated flag tenant-safely (ISSUE 5: WHERE includes tenant_id)
     await prisma.case.updateMany({
@@ -3376,6 +3376,36 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         lowest_cibil_score: lowest_cibil,
         total_emi_per_month: esr.existing_obligations
     };
+}
+
+async function advanceCaseToEsrGenerated(case_id, tenant_id, user_id) {
+    const currentCase = await prisma.case.findFirst({
+        where: { id: case_id, tenant_id },
+        select: { stage: true }
+    });
+
+    if (!currentCase) {
+        throw new Error('Case not found or unauthorized.');
+    }
+
+    const transitionSteps = {
+        LEAD_CREATED: ['LEAD_SENT_TO_LENDER', 'ESR_GENERATED'],
+        DATA_COLLECTION: ['LEAD_SENT_TO_LENDER', 'ESR_GENERATED'],
+        INCOME_REVIEWED: ['LEAD_SENT_TO_LENDER', 'ESR_GENERATED'],
+        LEAD_SENT_TO_LENDER: ['ESR_GENERATED'],
+        ESR_GENERATED: []
+    };
+
+    const steps = transitionSteps[currentCase.stage];
+    if (!steps) {
+        return await updateStage(case_id, tenant_id, 'ESR_GENERATED', user_id);
+    }
+
+    let updatedCase = currentCase;
+    for (const stage of steps) {
+        updatedCase = await updateStage(case_id, tenant_id, stage, user_id);
+    }
+    return updatedCase;
 }
 
 module.exports = {

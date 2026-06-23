@@ -7,6 +7,8 @@ import LoadingSpinner from '../components/ui/LoadingSpinner';
 
 // Lazy-load pages for better performance
 const LoginPage = lazy(() => import('../pages/LoginPage'));
+const ForgotPasswordPage = lazy(() => import('../pages/ForgotPasswordPage'));
+const ResetPasswordPage = lazy(() => import('../pages/ResetPasswordPage'));
 const DashboardPage = lazy(() => import('../pages/DashboardPage'));
 const ProfilePage = lazy(() => import('../pages/ProfilePage'));
 const UsersListPage = lazy(() => import('../pages/UsersListPage'));
@@ -42,6 +44,12 @@ const LenderCommissionPage = lazy(() => import('../pages/LenderCommissionPage'))
 const SubDsaPayoutPage = lazy(() => import('../pages/SubDsaPayoutPage'));
 const DsaTeamManagementPage = lazy(() => import('../pages/DsaTeamManagementPage'));
 const DsaWalletPage = lazy(() => import('../pages/DsaWalletPage'));
+const AdminMsmeCasesPage = lazy(() => import('../pages/AdminMsmeCasesPage'));
+
+const MsmeLayout = lazy(() => import('../layouts/MsmeLayout'));
+const MsmeProtectedRoute = lazy(() => import('./MsmeProtectedRoute'));
+const MsmeLogin = lazy(() => import('../pages/MsmeLogin'));
+const MsmeDashboard = lazy(() => import('../pages/MsmeDashboard'));
 
 const PageLoader = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -56,8 +64,20 @@ const AppRouter = () => (
         <Routes>
           {/* Public */}
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/register-dsa" element={<DSARegisterPage />} />
           <Route path="/unauthorized" element={<UnauthorizedPage />} />
+
+          {/* MSME Direct Portal Routes */}
+          <Route path="/msme" element={<MsmeLayout />}>
+            <Route path="login" element={<MsmeLogin />} />
+            <Route element={<MsmeProtectedRoute />}>
+              <Route path="dashboard" element={<MsmeDashboard />} />
+              <Route path="onboarding" element={<AddCustomerWizardPage mode="MSME_SELF_SERVICE" />} />
+              <Route index element={<Navigate to="dashboard" replace />} />
+            </Route>
+          </Route>
 
           {/* Protected */}
           <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
@@ -111,6 +131,9 @@ const AppRouter = () => (
             <Route path="/admin/lenders" element={
                <ProtectedRoute allowedRoles={['SUPER_ADMIN', 'CRED2TECH_MEMBER']}><LenderConfigPage /></ProtectedRoute>
             } />
+            <Route path="/admin/msme-cases" element={
+               <ProtectedRoute allowedRoles={['SUPER_ADMIN']}><AdminMsmeCasesPage /></ProtectedRoute>
+            } />
 
             {/* Customers Pipeline / Wizard */}
             <Route
@@ -140,7 +163,7 @@ const AppRouter = () => (
             <Route
               path="/customers/:customer_id"
               element={
-                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA']}>
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA', 'MSME_CUSTOMER']}>
                   <CustomerProfilePage />
                 </ProtectedRoute>
               }
@@ -150,7 +173,7 @@ const AppRouter = () => (
             <Route
               path="/cases/:id/income-summary"
               element={
-                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA']}>
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA', 'MSME_CUSTOMER']}>
                   <IncomeSummaryPage />
                 </ProtectedRoute>
               }
@@ -158,7 +181,7 @@ const AppRouter = () => (
             <Route
               path="/cases/:id"
               element={
-                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA']}>
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA', 'MSME_CUSTOMER']}>
                   <CaseDetailPage />
                 </ProtectedRoute>
               }
@@ -166,7 +189,7 @@ const AppRouter = () => (
             <Route
               path="/cases/:id/bureau-obligations"
               element={
-                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA']}>
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA', 'MSME_CUSTOMER']}>
                   <BureauObligationsPage />
                 </ProtectedRoute>
               }
@@ -174,7 +197,7 @@ const AppRouter = () => (
             <Route
               path="/cases/:id/esr"
               element={
-                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA']}>
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA', 'MSME_CUSTOMER']}>
                   <EsrPage />
                 </ProtectedRoute>
               }
@@ -182,7 +205,7 @@ const AppRouter = () => (
             <Route
               path="/cases/:id/proposals/:pid"
               element={
-                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA']}>
+                <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA', 'MSME_CUSTOMER']}>
                   <ProposalPage />
                 </ProtectedRoute>
               }
