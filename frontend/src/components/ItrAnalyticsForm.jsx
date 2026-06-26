@@ -329,25 +329,7 @@ const ItrAnalyticsForm = ({
                                                 style={{ backgroundColor: '#f1f5f9', border: 'none', textTransform: 'uppercase' }}
                                             />
                                         </FormField>
-                                    </>
-                                ) : (
-                                    <>
-                                        <div style={{ padding: '8px 12px', background: '#f1f5f9', borderRadius: 6, fontSize: 13, color: '#475569', marginBottom: 4 }}>
-                                            Request ID: <span style={{ fontWeight: 600 }}>{referenceId}</span>
-                                        </div>
-                                        {authMode === 'OTP' ? (
-                                            <FormField label="Enter 6-digit OTP" required>
-                                                <input
-                                                    type="text"
-                                                    className="form-control"
-                                                    value={otp}
-                                                    onChange={e => setOtp(e.target.value)}
-                                                    placeholder="123456"
-                                                    maxLength={6}
-                                                    style={{ backgroundColor: '#f1f5f9', border: 'none', borderLeft: '3px solid #7c3aed', letterSpacing: '4px', textAlign: 'center', fontWeight: 700 }}
-                                                />
-                                            </FormField>
-                                        ) : (
+                                        {authMode === 'PASSWORD' && (
                                             <FormField label="ITR Portal Password" required>
                                                 <input
                                                     type="password"
@@ -359,6 +341,23 @@ const ItrAnalyticsForm = ({
                                                 />
                                             </FormField>
                                         )}
+                                    </>
+                                ) : (
+                                    <>
+                                        <div style={{ padding: '8px 12px', background: '#f1f5f9', borderRadius: 6, fontSize: 13, color: '#475569', marginBottom: 4 }}>
+                                            Request ID: <span style={{ fontWeight: 600 }}>{referenceId}</span>
+                                        </div>
+                                        <FormField label="Enter 6-digit OTP" required>
+                                            <input
+                                                type="text"
+                                                className="form-control"
+                                                value={otp}
+                                                onChange={e => setOtp(e.target.value)}
+                                                placeholder="123456"
+                                                maxLength={6}
+                                                style={{ backgroundColor: '#f1f5f9', border: 'none', borderLeft: '3px solid #7c3aed', letterSpacing: '4px', textAlign: 'center', fontWeight: 700 }}
+                                            />
+                                        </FormField>
                                     </>
                                 )}
                             </div>
@@ -372,7 +371,7 @@ const ItrAnalyticsForm = ({
                                     <button
                                         type="button"
                                         style={{ backgroundColor: '#7c3aed', color: 'white', border: 'none', padding: '8px 24px', borderRadius: 6, fontWeight: 600, fontSize: 13, cursor: 'pointer', opacity: (loading || (!isMsme && walletBalance < itrCost)) ? 0.6 : 1 }}
-                                        onClick={handleInitiate}
+                                        onClick={authMode === 'PASSWORD' ? handleAnalyze : handleInitiate}
                                         disabled={loading || (!isMsme && walletBalance < itrCost)}
                                     >
                                         {loading ? 'Initiating...' : isMsme ? 'Initiate' : `Initiate (~${itrCost} Cr)`}
