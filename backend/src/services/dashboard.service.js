@@ -106,8 +106,16 @@ async function buildCaseWhereForUser(user, dateField, dateRange) {
 
 // ─── DSA Dashboard Services ───────────────────────────────────────────────────
 
-async function getDsaWalletBalance(tenantId) {
-  const wallet = await prisma.tenantWallet.findUnique({ where: { tenant_id: tenantId } });
+async function getDsaWalletBalance(user) {
+  if (user.role === 'DSA_MEMBER' || user.role === 'SUB_DSA') {
+    const empWallet = await prisma.employeeWallet.findFirst({
+      where: { tenant_id: user.tenant_id, user_id: user.id }
+    });
+    if (!empWallet) return 0;
+    return Math.max(0, empWallet.allocated_balance - empWallet.consumed_credits);
+  }
+
+  const wallet = await prisma.tenantWallet.findUnique({ where: { tenant_id: user.tenant_id } });
   return wallet?.balance ?? 0;
 }
 

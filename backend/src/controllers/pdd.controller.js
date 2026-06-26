@@ -5,7 +5,7 @@ async function getPddTasks(req, res) {
     const tenant_id = req.user.tenant_id;
     const { status, search, case_id, customer_id, overdue, page, limit } = req.query;
 
-    const result = await pddService.listPddTasks(tenant_id, {
+    const result = await pddService.listPddTasks(req.user, {
       status, search, case_id, customer_id, overdue,
       page: parseInt(page, 10) || 1,
       limit: parseInt(limit, 10) || 20

@@ -15,7 +15,7 @@ async function getDsaSummary(req, res) {
 
 async function getDsaWallet(req, res) {
   try {
-    const balance = await svc.getDsaWalletBalance(req.user.tenant_id);
+    const balance = await svc.getDsaWalletBalance(req.user);
     res.json({ balance });
   } catch (err) {
     console.error('[dashboard/dsa/wallet]', err);

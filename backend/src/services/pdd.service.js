@@ -1,11 +1,29 @@
 const prisma = require('../../config/db');
 
-async function listPddTasks(tenantId, filters) {
+async function listPddTasks(user, filters) {
+  const tenantId = user.tenant_id;
   const { status, search, case_id, customer_id, overdue, page, limit } = filters;
 
-  const whereClause = {
+  const baseWhereClause = {
     tenant_id: tenantId
   };
+
+  if (user.role === 'DSA_MEMBER') {
+    if (user.hierarchy_path) {
+      const subordinates = await prisma.user.findMany({
+        where: { hierarchy_path: { startsWith: user.hierarchy_path }, tenant_id: tenantId },
+        select: { id: true },
+      });
+      const ids = subordinates.map((u) => u.id);
+      baseWhereClause.case_entity = { created_by_user_id: { in: ids } };
+    } else {
+      baseWhereClause.case_entity = { created_by_user_id: user.id };
+    }
+  } else if (user.role === 'SUB_DSA') {
+    baseWhereClause.case_entity = { created_by_user_id: user.id };
+  }
+
+  const whereClause = JSON.parse(JSON.stringify(baseWhereClause));
 
   if (status && status !== 'ALL') {
     whereClause.status = status === 'COLLECTED' ? 'RECEIVED' : status;
@@ -62,7 +80,7 @@ async function listPddTasks(tenantId, filters) {
 
   // Calculate summaries (need to query without pagination filters but with tenant_id)
   const allTenantTasks = await prisma.pDDTask.findMany({
-    where: { tenant_id: tenantId },
+    where: baseWhereClause,
     select: { status: true, due_date: true }
   });
 
