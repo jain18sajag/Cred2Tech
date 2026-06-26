@@ -543,6 +543,34 @@ async function getCaseById(case_id, tenant_id, currentUser) {
   delete existingCase.customer.itr_analytics;
   delete existingCase.customer.bank_statements;
 
+  // STRIP HEAVY JSON PAYLOADS to prevent frontend freezing!
+  if (business_financials.gst_request) {
+    delete business_financials.gst_request.raw_gst_data;
+  }
+  if (business_financials.itr_analytics) {
+    delete business_financials.itr_analytics.analytics_payload;
+  }
+  if (business_financials.bank_statements) {
+    delete business_financials.bank_statements.raw_analyze_response;
+    delete business_financials.bank_statements.raw_retrieve_response;
+    delete business_financials.bank_statements.raw_download_response;
+    delete business_financials.bank_statements.files_payload;
+  }
+
+  existingCase.applicants.forEach(app => {
+    if (app.itr_analytics) {
+      app.itr_analytics.forEach(itr => delete itr.analytics_payload);
+    }
+    if (app.bank_statements) {
+      app.bank_statements.forEach(bank => {
+        delete bank.raw_analyze_response;
+        delete bank.raw_retrieve_response;
+        delete bank.raw_download_response;
+        delete bank.files_payload;
+      });
+    }
+  });
+
   const { calculateRealPullStatuses } = require('./pullStatus.service');
   const real_pull_statuses = await calculateRealPullStatuses(existingCase.id);
 
