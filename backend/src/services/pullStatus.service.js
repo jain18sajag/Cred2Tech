@@ -64,11 +64,11 @@ async function calculateRealPullStatuses(caseId) {
   // Using the new GST refactoring architecture: metrics_status and report_status
   let gstStatus = 'NOT_STARTED';
   if (gstRequests.length > 0) {
-    const hasCompleted = gstRequests.some(r => r.report_status === 'COMPLETED' && r.metrics_status === 'COMPLETED');
+    const hasCompleted = gstRequests.some(r => r.status === 'COMPLETED' || (r.report_status === 'COMPLETED' && r.metrics_status === 'COMPLETED'));
     const hasFailed = gstRequests.some(r => r.report_status === 'FAILED' || r.metrics_status === 'FAILED' || r.status === 'FAILED');
     const hasProcessing = gstRequests.some(r => 
       ['INITIATED', 'PROCESSING', 'OTP_PENDING', 'OTP_VERIFIED', 'DATA_READY', 'REPORT_READY', 'CALLBACK_RECEIVED'].includes(r.status) &&
-      r.metrics_status !== 'COMPLETED' && r.metrics_status !== 'FAILED'
+      r.status !== 'COMPLETED' && r.metrics_status !== 'COMPLETED' && r.metrics_status !== 'FAILED'
     );
 
     if (hasCompleted) {

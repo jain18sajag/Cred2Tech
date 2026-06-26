@@ -58,31 +58,11 @@ exports.getPullStatuses = async (req, res) => {
             return res.status(403).json({ error: 'Forbidden or Case not found' });
         }
 
-        // Fetch authoritative database states safely WITHOUT vendor calls
-        const gst = await prisma.gstrAnalyticsRequest.findFirst({
-            where: { case_id: caseId },
-            orderBy: { created_at: 'desc' }
-        });
+        // Fetch authoritative database states safely
+        const { calculateRealPullStatuses } = require('../services/pullStatus.service');
+        const statuses = await calculateRealPullStatuses(caseId);
 
-        const bank = await prisma.bankStatementAnalysisRequest.findFirst({
-            where: { case_id: caseId },
-            orderBy: { created_at: 'desc' }
-        });
-
-        const itr = await prisma.itrAnalyticsRequest.findFirst({
-            where: { case_id: caseId },
-            orderBy: { created_at: 'desc' }
-        });
-
-        // Add bureau logic if existing model is active
-        const bureau = null; // Assuming separate bureau tracking
-
-        res.status(200).json({
-            gst: { status: gst ? gst.status : 'NOT_STARTED' },
-            bank: { status: bank ? bank.status : 'NOT_STARTED' },
-            itr: { status: itr ? itr.status : 'NOT_STARTED' },
-            bureau: { status: bureau ? bureau.status : 'NOT_STARTED', completedCount: 0, totalCount: 0 }
-        });
+        res.status(200).json(statuses);
 
     } catch (error) {
         console.error('[SSE Controller] Error fetching fallback statuses:', error);
