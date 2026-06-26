@@ -54,14 +54,14 @@ async function generateESR(case_id, user_id, tenant_id) {
     // calling the evaluation engine.
     const snapshot = await prisma.caseEsrFinancials.findUnique({
         where: { case_id },
-        select: { extraction_status: true, extracted_at: true, selected_income_method: true, selected_monthly_income: true, bank_avg_balance: true, banking_income: true, gst_avg_monthly_sales: true, gst_income: true, itr_pat: true, net_profit_income: true, salaried_income: true }
+        select: { extraction_status: true, extracted_at: true, selected_income_method: true, selected_monthly_income: true, bank_avg_balance: true, banking_income: true, gst_avg_monthly_sales: true, gst_income: true, itr_pat: true, net_profit_income: true, salaried_income: true, product_type: true }
     });
 
     if (_isBulkUploadSnapshot(snapshot)) {
         console.log(`[ESR] Case ${case_id} has completed bulk-upload/manual financials. Bypassing vendor extraction refresh.`);
     } else if (snapshot?.selected_income_method === 'LEGACY_UPLOAD') {
         console.log(`[ESR] Case ${case_id} is a LEGACY_UPLOAD. Bypassing extraction refresh.`);
-    } else if (_snapshotNeedsRefresh(snapshot)) {
+    } else if (_snapshotNeedsRefresh(snapshot, caseRecord)) {
         console.log(`[ESR] Snapshot for Case ${case_id} is ${snapshot ? snapshot.extraction_status + '/stale' : 'missing'} — re-extracting synchronously...`);
         await extractEsrFinancials(case_id, tenant_id);
 
@@ -125,11 +125,17 @@ function _isBulkUploadSnapshot(snapshot) {
     return String(snapshot.selected_income_method || '').toUpperCase() === 'ANY';
 }
 
-function _snapshotNeedsRefresh(snapshot) {
+function _snapshotNeedsRefresh(snapshot, caseRecord) {
 
     if (!snapshot) return true;
     if (snapshot.extraction_status !== 'COMPLETED') return true;
     if (!snapshot.extracted_at) return true;
+
+    // Force refresh if the user changed the product type in the UI!
+    if (caseRecord && snapshot.product_type !== caseRecord.product_type) {
+        console.log(`[ESR] Product type changed from ${snapshot.product_type} to ${caseRecord.product_type} — forcing refresh.`);
+        return true;
+    }
 
     const ageMinutes = (Date.now() - new Date(snapshot.extracted_at).getTime()) / 60000;
     if (ageMinutes > SNAPSHOT_STALE_MINUTES) {
