@@ -188,9 +188,14 @@ async function addApplicant(case_id, applicantData, tenant_id) {
   if (applicantData.id) {
     const existing = await prisma.applicant.findUnique({ where: { id: parseInt(applicantData.id, 10) } });
     if (existing && existing.pan_verified) {
-      if (applicantData.pan_number !== existing.pan_number || applicantData.name !== existing.name || applicantData.dob !== existing.dob) {
-        throw new Error('Applicant details are locked because PAN is verified.');
-      }
+      return await prisma.applicant.update({
+        where: { id: parseInt(applicantData.id, 10) },
+        data: {
+          mobile: applicantData.mobile,
+          email: applicantData.email,
+          employment_type: applicantData.employment_type || undefined
+        }
+      });
     }
     return await prisma.applicant.update({
       where: { id: parseInt(applicantData.id, 10) },
@@ -215,9 +220,14 @@ async function addApplicant(case_id, applicantData, tenant_id) {
     });
     if (existingCoApp) {
       if (existingCoApp.pan_verified) {
-        if (applicantData.pan_number !== existingCoApp.pan_number || applicantData.name !== existingCoApp.name || applicantData.dob !== existingCoApp.dob) {
-          throw new Error('Applicant details are locked because PAN is verified.');
-        }
+        return await prisma.applicant.update({
+          where: { id: existingCoApp.id },
+          data: {
+            mobile: applicantData.mobile || existingCoApp.mobile,
+            email: applicantData.email || existingCoApp.email,
+            employment_type: applicantData.employment_type || existingCoApp.employment_type
+          }
+        });
       }
       return await prisma.applicant.update({
         where: { id: existingCoApp.id },
@@ -237,6 +247,16 @@ async function addApplicant(case_id, applicantData, tenant_id) {
       where: { case_id: existingCase.id, type: 'PRIMARY' }
     });
     if (existingPrimary) {
+      if (existingPrimary.pan_verified) {
+        return await prisma.applicant.update({
+          where: { id: existingPrimary.id },
+          data: {
+            mobile: applicantData.mobile,
+            email: applicantData.email,
+            employment_type: applicantData.employment_type || undefined
+          }
+        });
+      }
       // Gracefully update instead of throwing
       return await prisma.applicant.update({
         where: { id: existingPrimary.id },
