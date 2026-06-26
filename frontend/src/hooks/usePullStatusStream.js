@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import axios from 'axios';
+import api from '../api/axiosInstance';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { useAuth } from '../context/AuthContext';
+
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
 export function usePullStatusStream(caseId) {
     const [statuses, setStatuses] = useState({
@@ -19,7 +21,7 @@ export function usePullStatusStream(caseId) {
         
         const fetchStatuses = async () => {
             try {
-                const res = await axios.get(`/api/v1/cases/${caseId}/pull-statuses`);
+                const res = await api.get(`/cases/${caseId}/pull-statuses`);
                 setStatuses(res.data);
             } catch (err) {
                 console.error('[SSE] Initial fetch failed:', err);
@@ -41,7 +43,7 @@ export function usePullStatusStream(caseId) {
 
         const connect = async () => {
             try {
-                await fetchEventSource(`/api/v1/cases/${caseId}/pull-status-stream`, {
+                await fetchEventSource(`${BASE_URL}/cases/${caseId}/pull-status-stream`, {
                     method: 'GET',
                     headers: {
                         'Authorization': `Bearer ${token}`
@@ -66,7 +68,7 @@ export function usePullStatusStream(caseId) {
                                         [data.pull_type.toLowerCase()]: { status: data.status }
                                     }));
                                     
-                                    axios.get(`/api/v1/cases/${caseId}/pull-statuses`).then(res => {
+                                    api.get(`/cases/${caseId}/pull-statuses`).then(res => {
                                         setStatuses(res.data);
                                     });
                                 }
