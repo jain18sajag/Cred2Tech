@@ -178,13 +178,16 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
 
         if (tenant_id) {
             try {
-                const firstScheme = await prisma.scheme.findFirst({
-                    where: {
-                        product: { product_type: caseRecord.product_type },
-                        status: 'ACTIVE'
-                    },
-                    include: { parameter_values: { include: { parameter: true } } }
-                });
+                let firstScheme = null;
+                if (caseRecord.product_type) {
+                    firstScheme = await prisma.scheme.findFirst({
+                        where: {
+                            product: { is: { product_type: caseRecord.product_type } },
+                            status: 'ACTIVE'
+                        },
+                        include: { parameter_values: { include: { parameter: true } } }
+                    });
+                }
 
                 if (firstScheme && Array.isArray(firstScheme.parameter_values)) {
                     for (const pv of firstScheme.parameter_values) {
