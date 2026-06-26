@@ -422,8 +422,8 @@ async function sync(req, res) {
         if (existing.case_id) {
             await prisma.caseDataPullStatus.upsert({
                 where: { case_id: existing.case_id },
-                create: { case_id: existing.case_id, itr_status: 'COMPLETED' },
-                update: { itr_status: 'COMPLETED' }
+                create: { case_id: existing.case_id, itr_status: 'COMPLETE' },
+                update: { itr_status: 'COMPLETE' }
             });
 
             // Extract ESR financials asynchronously

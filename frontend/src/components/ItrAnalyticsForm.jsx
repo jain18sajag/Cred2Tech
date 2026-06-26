@@ -35,12 +35,12 @@ const ItrAnalyticsForm = ({
     const [otp, setOtp] = useState('');
     const [authMode, setAuthMode] = useState('OTP'); // 'OTP' or 'PASSWORD'
     
-    // Auto-resume if there is an existing pending record
-    const initialStep = (existingRecord?.status === 'INITIATED' || existingRecord?.status === 'PROCESSING') ? 2 : 1;
+    // Auto-resume if there is an existing pending record (only if waiting for OTP)
+    const initialStep = existingRecord?.status === 'INITIATED' ? 2 : 1;
     const [step, setStep] = useState(initialStep); 
     
     const [loading, setLoading] = useState(false);
-    const [isOpen, setIsOpen] = useState(initialStep === 2);
+    const [isOpen, setIsOpen] = useState(existingRecord?.status === 'INITIATED');
     
     React.useEffect(() => {
         if (initialStep === 2) setIsOpen(true);
