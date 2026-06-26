@@ -117,9 +117,14 @@ async function analyzeStatement(filesPayload) {
             }
         }
 
+        const isLocal = process.env.APP_BASE_URL && process.env.APP_BASE_URL.includes('localhost');
+        const callbackUrl = isLocal
+            ? "https://webhook.site/dummy-callback-for-localhost"
+            : process.env.APP_BASE_URL + "/api/external/webhooks/signzy/bank";
+
         const response = await axios.post(
             `${apiBase}/statementanalysis/analyze-statement`,
-            { authToken: token, files: preparedFiles },
+            { authToken: token, files: preparedFiles, callbackUrl },
             {
                 headers: {
                     'Authorization': apiKey,

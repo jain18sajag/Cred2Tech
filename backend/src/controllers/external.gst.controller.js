@@ -125,7 +125,7 @@ async function createGstRequest(req, res) {
                     const isLocal = process.env.APP_BASE_URL && process.env.APP_BASE_URL.includes('localhost');
                     const callbackUrl = isLocal
                         ? "https://webhook.site/dummy-callback-for-localhost"
-                        : process.env.APP_BASE_URL + "/api/v1/external/webhooks/signzy/gst";
+                        : process.env.APP_BASE_URL + "/api/external/webhooks/signzy/gst";
 
                     const authLinkPayload = {
                         gstin,
@@ -146,7 +146,7 @@ async function createGstRequest(req, res) {
                     status = 'AUTH_LINK_CREATED';
                 } else {
                     // IN_SYSTEM setup
-                    const callbackUrl = process.env.APP_BASE_URL + "/api/v1/external/webhooks/signzy/gst";
+                    const callbackUrl = process.env.APP_BASE_URL + "/api/external/webhooks/signzy/gst";
                     const payload = {
                         gstin,
                         username,
@@ -190,7 +190,7 @@ async function createGstRequest(req, res) {
                         pdf_url_requested: pdf_url || false,
                         emails: emails || [],
                         mobile_numbers: mobile_numbers || [],
-                        callback_url: mode === 'AUTH_LINK' || mode === 'IN_SYSTEM' ? (process.env.APP_BASE_URL + "/api/v1/external/webhooks/signzy/gst") : null,
+                        callback_url: mode === 'AUTH_LINK' || mode === 'IN_SYSTEM' ? (process.env.APP_BASE_URL + "/api/external/webhooks/signzy/gst") : null,
                         provider_request_id: requestId,
                         auth_link: authLink,
                         status: status,
