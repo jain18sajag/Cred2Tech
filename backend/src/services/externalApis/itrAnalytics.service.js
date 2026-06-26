@@ -56,7 +56,7 @@ async function initiateRequestId(pan) {
                     'Authorization': authToken,
                     'Content-Type': 'application/json'
                 },
-                timeout: 30000
+                timeout: 60000
             }
         );
         return handleResponse(response);
@@ -84,7 +84,7 @@ async function submitAuthorisation(requestId, { otp, password }) {
                     'Authorization': authToken,
                     'Content-Type': 'application/json'
                 },
-                timeout: 30000
+                timeout: 60000
             }
         );
         return handleResponse(response);
@@ -135,7 +135,7 @@ async function getReferenceId(pan, password) {
                     'Authorization': authToken,
                     'Content-Type': 'application/json'
                 },
-                timeout: 30000
+                timeout: 60000
             }
         );
         return handleResponse(response);
