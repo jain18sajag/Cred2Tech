@@ -1180,7 +1180,8 @@ const handleStep3Submit = async (e) => {
                       type="button"
                       className={`btn btn-sm ${app.bureau_fetched ? 'btn-secondary' : 'btn-primary'}`}
                       onClick={() => handleRunBureau(app.id)}
-                      disabled={saving || (!app.otp_verified && !(app.type === 'PRIMARY' && mode === 'MSME_SELF_SERVICE')) || app.bureau_fetched}
+                      disabled={saving || (!(app.otp_verified || (app.type === 'PRIMARY' && formData.mobile_verified)) && !(app.type === 'PRIMARY' && mode === 'MSME_SELF_SERVICE')) || app.bureau_fetched}
+                      title={(!(app.otp_verified || (app.type === 'PRIMARY' && formData.mobile_verified)) && !(app.type === 'PRIMARY' && mode === 'MSME_SELF_SERVICE')) ? "OTP Verification required before pulling Bureau" : ""}
                     >
                       {app.bureau_fetched ? 'Verified' : 'Run Bureau'}
                     </button>
