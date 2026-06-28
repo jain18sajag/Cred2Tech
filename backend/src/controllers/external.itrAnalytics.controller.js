@@ -174,8 +174,13 @@ async function analyze(req, res) {
                 const referenceId = providerRes.referenceId;
                 if (!referenceId) throw new Error('Failed to obtain referenceId from provider');
 
-                const itrRequest = await prisma.itrAnalyticsRequest.create({
-                    data: {
+                const itrRequest = await prisma.itrAnalyticsRequest.upsert({
+                    where: { reference_id: referenceId },
+                    update: {
+                        status: 'PROCESSING',
+                        provider_message: providerRes.statusMessage || null
+                    },
+                    create: {
                         tenant_id: tenantId,
                         customer_id: parseInt(customer_id, 10),
                         case_id: case_id ? parseInt(case_id, 10) : null,
@@ -237,8 +242,13 @@ async function initiate(req, res) {
         const providerRes = await itrAnalyticsService.initiateRequestId(pan);
         const requestId = providerRes.requestId;
 
-        const itrRequest = await prisma.itrAnalyticsRequest.create({
-            data: {
+        const itrRequest = await prisma.itrAnalyticsRequest.upsert({
+            where: { reference_id: requestId },
+            update: {
+                status: 'INITIATED',
+                provider_message: providerRes.messageCode || null
+            },
+            create: {
                 tenant_id: tenantId,
                 customer_id: parseInt(customer_id, 10),
                 case_id: case_id ? parseInt(case_id, 10) : null,
