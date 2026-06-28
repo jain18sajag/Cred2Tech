@@ -188,6 +188,7 @@ async function analyze(req, res) {
                         pan: pan.toUpperCase(),
                         reference_id: referenceId,
                         status: 'PROCESSING',
+                        mode: 'PASSWORD',
                         provider_message: providerRes.statusMessage || null,
                         created_by_user_id: userId
                     }
@@ -256,6 +257,7 @@ async function initiate(req, res) {
                 pan: pan.toUpperCase(),
                 reference_id: requestId, // Mapping requestId to reference_id column
                 status: 'INITIATED',
+                mode: 'OTP',
                 provider_message: providerRes.messageCode || null,
                 created_by_user_id: userId
             }
@@ -367,7 +369,7 @@ async function sync(req, res) {
         let analyticsData;
         let excelUrl = null;
 
-        if (existing.status === 'PROCESSING' || existing.status === 'INITIATED') {
+        if (existing.mode === 'OTP') {
             providerRes = await itrAnalyticsService.fetchItrForm(reference_id);
             analyticsData = providerRes; // The whole result object
 
@@ -406,7 +408,7 @@ async function sync(req, res) {
         }
 
         // Extract FY snapshots based on flow type
-        const itrSnapshot = (existing.status === 'PROCESSING' || existing.status === 'INITIATED')
+        const itrSnapshot = (existing.mode === 'OTP')
             ? extractDataFromRawItrJson(analyticsData)
             : extractItrFySnapshot(analyticsData);
 

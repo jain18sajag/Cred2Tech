@@ -905,6 +905,7 @@ model ItrAnalyticsRequest {
   pan               String
   reference_id      String?            @unique
   status            ItrAnalyticsStatus @default(INITIATED)
+  mode              String             @default("PASSWORD") // 'PASSWORD' or 'OTP'
   excel_url         String? // Source audit URL — NOT used for serving
   analytics_payload Json?
   provider_message  String?
