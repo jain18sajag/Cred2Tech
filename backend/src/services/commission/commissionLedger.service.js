@@ -1,5 +1,6 @@
 const prisma = require('../../../config/db');
 const { calculateCommission } = require('./commissionCalculator.service');
+// const subDsaPayoutService = require('../subDsaPayout.service');
 
 /**
  * Triggered synchronously when a disbursement is successfully recorded.
@@ -43,23 +44,41 @@ async function processDisbursementCommission(tenantId, caseId, disbursement, san
             tenant_lender_id: sanction.tenant_lender_id,
             lender_name: sanction.lender_name,
             product_type: sanction.product_type,
-            
+
             entry_type: 'BASE_COMMISSION',
             payout_basis: rule.payout_basis,
             commission_type: rule.commission_type,
-            
+
             disbursed_amount: calculationResult.disbursed_amount,
             calculated_commission: calculationResult.calculated_commission,
-            
+
             slab_snapshot: calculationResult.slab_snapshot,
             calculation_snapshot: calculationResult.calculation_snapshot,
-            
+
             status: 'PENDING',
             created_by_user_id: userId
         }
     });
 
     console.log(`[COMMISSION] BASE_COMMISSION created for disbursement ${disbursement.id} (Case ${caseId}) - Amount: ${calculationResult.calculated_commission.toNumber()}`);
+
+    // 4. Trigger SubDSA payout if applicable
+    try {
+        const subDsaPayoutService = require('../subDsaPayout.service');
+        const caseRecord = await tx.case.findUnique({
+            where: { id: caseId },
+            include: { created_by: { include: { role: true } } }
+        });
+
+        if (caseRecord && caseRecord.created_by && caseRecord.created_by.role?.name === 'SUB_DSA') {
+            await subDsaPayoutService.createPayoutEntry(tenantId, caseRecord.created_by.id, ledgerEntry.id);
+            console.log(`[COMMISSION] SubDSA Payout Ledger created for Case ${caseId}`);
+        }
+    } catch (err) {
+        console.error(`[COMMISSION] Failed to create SubDSA payout for Case ${caseId}:`, err);
+        // We don't throw here to avoid failing the main disbursement transaction if the payout fails.
+    }
+
     return ledgerEntry;
 }
 
@@ -95,9 +114,9 @@ async function revertDisbursementCommission(tenantId, caseId, disbursementId, us
 
     // 3. Mark original entry as reversed (keep original status)
     await tx.commissionLedger.updateMany({
-        where: { 
+        where: {
             id: originalEntry.id,
-            tenant_id: tenantId 
+            tenant_id: tenantId
         },
         data: {
             is_reversed: true,
@@ -115,22 +134,22 @@ async function revertDisbursementCommission(tenantId, caseId, disbursementId, us
             tenant_lender_id: originalEntry.tenant_lender_id,
             lender_name: originalEntry.lender_name,
             product_type: originalEntry.product_type,
-            
+
             entry_type: 'REVERSAL',
             reversal_of_id: originalEntry.id,
             payout_basis: originalEntry.payout_basis,
             commission_type: originalEntry.commission_type,
-            
+
             // Negative amounts to cancel out the base
             disbursed_amount: originalEntry.disbursed_amount.mul(-1),
             calculated_commission: originalEntry.calculated_commission.mul(-1),
-            
+
             slab_snapshot: originalEntry.slab_snapshot,
             calculation_snapshot: {
                 logic: "REVERSAL",
                 reverses_ledger_id: originalEntry.id
             },
-            
+
             status: 'REVERSED',
             remarks: `Automatic reversal of ledger entry ${originalEntry.id}`,
             created_by_user_id: userId

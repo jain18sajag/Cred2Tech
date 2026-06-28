@@ -801,38 +801,50 @@ function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToL
     <div style={{ marginTop: 14 }}>
       {/* Clone dialog */}
       {showCloneDialog && (
-        <div style={{
-          padding: '14px', background: '#EBF8FF', borderRadius: 8,
-          border: '1px solid #BEE3F8', marginBottom: 10
-        }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#2B6CB0', marginBottom: 8 }}>
-            📋 Reuse existing proposal?
-          </div>
-          <div style={{ fontSize: 11, color: '#4A5568', marginBottom: 10 }}>
-            A proposal was already prepared (#{otherSubmitted?.proposal_number}).
-            Reuse its data and documents for {lender.lender_name}?
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              onClick={() => doCreate(otherSubmitted.id)}
-              disabled={creating}
-              style={{
-                flex: 1, padding: '8px', fontSize: 12, fontWeight: 700,
-                background: '#2B6CB0', color: '#fff', border: 'none',
-                borderRadius: 6, cursor: 'pointer'
-              }}>
-              {creating ? 'Cloning...' : '✅ Yes, Clone Proposal'}
-            </button>
-            <button
-              onClick={() => { setShowCloneDialog(false); doCreate(null); }}
-              disabled={creating}
-              style={{
-                flex: 1, padding: '8px', fontSize: 12, fontWeight: 600,
-                background: 'var(--bg-elevated)', color: 'var(--text-secondary)',
-                border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer'
-              }}>
-              No, Start Fresh
-            </button>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: 'var(--bg-primary)', width: '90%', maxWidth: 440, borderRadius: 14, overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.2)', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ width: 44, height: 44, borderRadius: '50%', background: '#EBF8FF', color: '#2B6CB0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>
+                  📋
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>Reuse Existing Proposal?</h3>
+                  <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-secondary)' }}>For {lender.lender_name}</p>
+                </div>
+              </div>
+              <button onClick={() => setShowCloneDialog(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 24, lineHeight: 1.5, background: 'var(--bg-elevated)', padding: '14px 16px', borderRadius: 8, border: '1px solid var(--border)' }}>
+              A proposal was already prepared (<strong>#{otherSubmitted?.proposal_number}</strong>). 
+              Would you like to reuse its data and documents for this new proposal?
+            </div>
+            
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => { setShowCloneDialog(false); doCreate(null); }}
+                disabled={creating}
+                style={{
+                  padding: '10px 18px', fontSize: 13, fontWeight: 600,
+                  background: 'var(--bg-elevated)', color: 'var(--text-secondary)',
+                  border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer'
+                }}>
+                No, Start Fresh
+              </button>
+              <button
+                onClick={() => doCreate(otherSubmitted.id)}
+                disabled={creating}
+                style={{
+                  padding: '10px 18px', fontSize: 13, fontWeight: 600,
+                  background: '#2B6CB0', color: '#fff', border: 'none',
+                  borderRadius: 8, cursor: 'pointer'
+                }}>
+                {creating ? 'Cloning...' : '✅ Yes, Clone Proposal'}
+              </button>
+            </div>
           </div>
         </div>
       )}

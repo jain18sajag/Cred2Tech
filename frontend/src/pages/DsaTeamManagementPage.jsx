@@ -68,7 +68,7 @@ function SubDsaPayoutSetup({ userId, lenders }) {
         }
         setConfig(cfg);
       })
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setLoading(false));
   }, [userId]);
 
@@ -401,8 +401,8 @@ function AddMemberForm({ roles, onClose, onSuccess }) {
           <input placeholder="10-digit mobile" value={form.mobile} onChange={e => setForm(p => ({ ...p, mobile: e.target.value }))} style={inputStyle} />
         </div>
         <div>
-          <label style={labelStyle}>Email Address</label>
-          <input type="email" placeholder="Work email (optional)" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} style={inputStyle} />
+          <label style={labelStyle}>Email Address *</label>
+          <input type="email" placeholder="Work email" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} style={inputStyle} />
         </div>
         <div>
           <label style={labelStyle}>Grade / Role *</label>

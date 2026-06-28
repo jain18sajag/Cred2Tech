@@ -7,9 +7,11 @@ const proposalCtrl = require('../controllers/proposal.controller');
 const sendToLenderCtrl = require('../controllers/case.sendToLender.controller');
 const { authenticate } = require('../middleware/auth.middleware');
 const { requireRole } = require('../middleware/role.middleware');
+const { requireCaseAccess } = require('../middleware/caseAccess.middleware');
 
 router.use(authenticate);
 router.use(requireRole('DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA'));
+router.use(requireCaseAccess);
 
 // ── Income Summary  (/api/cases/:id/income-summary) ──────────────────────────
 router.get('/income-summary',             incomeCtrl.getSummary);

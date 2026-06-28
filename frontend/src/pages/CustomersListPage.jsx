@@ -15,6 +15,7 @@ const STAGE_MAPPING = {
   'Data Pulled': 'DATA_COLLECTION',
   'Login Done': 'ESR_GENERATED',
   'Sanctioned': 'APPROVED',
+  'Part Disbursed': 'PARTLY_DISBURSED',
   'Disbursed': 'DISBURSED',
   'Closed': 'CLOSED',
   'Rejected': 'REJECTED'
@@ -173,7 +174,7 @@ export default function CustomersListPage() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 12 }}>
-            <button 
+            <button
               onClick={() => setIsBulkUploadModalOpen(true)}
               style={{
                 background: '#fff', color: '#374151', border: '1px solid #D1D5DB', borderRadius: 20,
@@ -183,7 +184,7 @@ export default function CustomersListPage() {
             >
               <Upload size={16} color="#4F46E5" /> Bulk Upload
             </button>
-            <button 
+            <button
               onClick={() => setIsModalOpen(true)}
               style={{
                 background: '#6366F1', color: 'white', border: 'none', borderRadius: 20,
@@ -201,7 +202,7 @@ export default function CustomersListPage() {
       <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
         <div style={{ position: 'relative', flex: 1, minWidth: 280 }}>
           <Search size={16} color="#9CA3AF" style={{ position: 'absolute', left: 12, top: 10 }} />
-          <input 
+          <input
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             placeholder="Search name, Case ID, lender, PAN..."
@@ -211,11 +212,11 @@ export default function CustomersListPage() {
             }}
           />
         </div>
-        
+
         <select value={entityType} onChange={handleFilterChange(setEntityType)} style={selectStyle}>
           {ENTITY_TYPES.map(e => <option key={e} value={e}>{e}</option>)}
         </select>
-        
+
         <select value={lender} onChange={handleFilterChange(setLender)} style={selectStyle}>
           <option value="All Lenders">All Lenders</option>
           <option value="HDFC Bank">HDFC Bank</option>
@@ -225,11 +226,11 @@ export default function CustomersListPage() {
           <option value="SBI">SBI</option>
           <option value="IDFC First">IDFC First</option>
         </select>
-        
+
         <select value={alertFilter} onChange={handleFilterChange(setAlertFilter)} style={selectStyle}>
           {ALERT_TYPES.map(a => <option key={a} value={a}>{a === 'PDD_PENDING' ? 'PDD Pending' : a}</option>)}
         </select>
-        
+
         <select value={sortIndex} onChange={handleFilterChange(setSortIndex)} style={selectStyle}>
           {SORT_OPTIONS.map((opt, i) => <option key={i} value={i}>Sort: {opt.label}</option>)}
         </select>
@@ -264,6 +265,7 @@ export default function CustomersListPage() {
             <tr style={{ borderBottom: '1px solid #E5E7EB', color: '#6B7280', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               <th style={{ padding: '16px 24px' }}>Case ID</th>
               <th style={{ padding: '16px 12px' }}>Customer</th>
+              <th style={{ padding: '16px 12px' }}>Name Of Employee/Sub-dsa</th>
               <th style={{ padding: '16px 12px' }}>CIBIL</th>
               <th style={{ padding: '16px 12px' }}>Lender</th>
               <th style={{ padding: '16px 12px' }}>Product</th>
@@ -278,13 +280,13 @@ export default function CustomersListPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan="11" style={{ padding: '40px', textAlign: 'center', color: '#6B7280' }}>
+                <td colSpan="12" style={{ padding: '40px', textAlign: 'center', color: '#6B7280' }}>
                   Loading pipeline...
                 </td>
               </tr>
             ) : cases.length === 0 ? (
               <tr>
-                <td colSpan="11" style={{ padding: '60px 24px', textAlign: 'center' }}>
+                <td colSpan="12" style={{ padding: '60px 24px', textAlign: 'center' }}>
                   <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
                   <div style={{ fontSize: 16, fontWeight: 600, color: '#374151' }}>No cases found</div>
                   <div style={{ fontSize: 14, color: '#6B7280', marginTop: 4 }}>Try adjusting your filters or search term.</div>
@@ -293,7 +295,7 @@ export default function CustomersListPage() {
             ) : (
               cases.map((c) => {
                 const stageConfig = STAGE_COLORS[c.stage] || STAGE_COLORS['DRAFT'];
-                
+
                 return (
                   <tr key={c.id} style={{ borderBottom: '1px solid #E5E7EB' }}>
                     <td style={{ padding: '16px 24px', fontWeight: 600, color: '#111827' }}>
@@ -306,12 +308,15 @@ export default function CustomersListPage() {
                     </td>
                     <td style={{ padding: '16px 12px' }}>
                       <div style={{ fontWeight: 600, color: '#6366F1', cursor: 'pointer', textDecoration: 'underline' }}
-                           onClick={() => navigate(`/customers/${c.customer_id}`)}>
+                        onClick={() => navigate(`/customers/${c.customer_id}`)}>
                         {c.customer_name || c.customer?.business_name || '-'}
                       </div>
                       <div style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>
                         {[c.entity_type || c.customer?.entity_type, c.customer?.industry, c.customer?.business_vintage ? `${c.customer.business_vintage} yrs` : null].filter(Boolean).join(' · ')}
                       </div>
+                    </td>
+                    <td style={{ padding: '16px 12px', color: '#4B5563', fontSize: 13 }}>
+                      {c.customer?.created_by?.name || '-'}
                     </td>
                     <td style={{ padding: '16px 12px', fontWeight: 700, color: getCibilColor(c.cibil_score) }}>
                       {c.cibil_score || '-'}
@@ -323,12 +328,12 @@ export default function CustomersListPage() {
                       {c.product_type || '-'}
                     </td>
                     <td style={{ padding: '16px 12px', fontWeight: 600, color: '#111827' }}>
-                      {formatCurrency(c.loan_amount)}
+                      {formatCurrency(c.sanctioned_amount || c.loan_amount || c.parent_case?.sanctioned_amount || c.parent_case?.loan_amount)}
                     </td>
                     <td style={{ padding: '16px 12px' }}>
-                      <span style={{ 
-                        background: stageConfig.bg, color: stageConfig.text, 
-                        padding: '4px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600, display: 'inline-block' 
+                      <span style={{
+                        background: stageConfig.bg, color: stageConfig.text,
+                        padding: '4px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600, display: 'inline-block'
                       }}>
                         {STAGE_LABELS[c.stage] || c.stage}
                       </span>
@@ -350,24 +355,24 @@ export default function CustomersListPage() {
                     </td>
                     <td style={{ padding: '16px 24px', textAlign: 'right' }}>
                       {c.stage === 'DRAFT' ? (
-                        <button 
+                        <button
                           onClick={() => {
-                             const path = c.customer?.category === 'SALARIED' ? '/customers/salaried/add' : '/customers/add';
-                             navigate(`${path}?caseId=${c.id}`);
+                            const path = c.customer?.category === 'SALARIED' ? '/customers/salaried/add' : '/customers/add';
+                            navigate(`${path}?caseId=${c.id}`);
                           }}
                           style={{ ...actionBtn, background: '#6366F1' }}
                         >
                           Resume
                         </button>
                       ) : c.stage === 'DATA_COLLECTION' ? (
-                        <button 
+                        <button
                           onClick={() => navigate(`/cases/${c.id}/esr`)}
                           style={{ ...actionBtn, background: '#6366F1' }}
                         >
                           ESR
                         </button>
                       ) : (
-                        <button 
+                        <button
                           onClick={() => navigate(`/cases/${c.id}`)}
                           style={{ ...actionBtn, background: '#8B5CF6' }} // Purple for View
                         >
@@ -381,7 +386,7 @@ export default function CustomersListPage() {
             )}
           </tbody>
         </table>
-        
+
         {/* Pagination */}
         {!loading && totalPages > 1 && (
           <div style={{ padding: '16px 24px', borderTop: '1px solid #E5E7EB', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

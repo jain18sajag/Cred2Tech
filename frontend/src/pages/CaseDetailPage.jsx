@@ -101,7 +101,8 @@ export default function CaseDetailPage() {
     next_disbursement_due_date: '',
     remarks: '',
     pdd_pending: false,
-    pdd_documents: [{ document_name: '', due_date: '' }]
+    pdd_documents: [{ document_name: '', due_date: '' }],
+    loan_account_number: ''
   });
 
   const fetchDisbursementSummary = useCallback(async () => {
@@ -225,6 +226,37 @@ export default function CaseDetailPage() {
       else if (['PARTLY_DISBURSED', 'DISBURSED'].includes(selectedStage)) {
         if (!disbursementSummary?.sanction) {
           return toast.error('Case must be sanctioned before disbursement.');
+        }
+
+        if (!disbursementSummary.sanction.loan_account_number && !disbursementForm.loan_account_number) {
+          return toast.error('Loan account number is required before disbursement can proceed.');
+        }
+
+        if (!disbursementForm.disbursement_date) {
+          return toast.error('Disbursement date is required.');
+        }
+
+        const sanctionDate = new Date(disbursementSummary.sanction.sanction_date);
+        const disbDate = new Date(disbursementForm.disbursement_date);
+        
+        // Remove time portion for fair date comparison
+        sanctionDate.setHours(0, 0, 0, 0);
+        disbDate.setHours(0, 0, 0, 0);
+
+        if (disbDate < sanctionDate) {
+          return toast.error('Disbursement date cannot be earlier than sanction date.');
+        }
+
+        if (selectedStage === 'PARTLY_DISBURSED') {
+          if (!disbursementForm.next_disbursement_due_date) {
+            return toast.error('Next disbursement due date is required for part disbursement.');
+          }
+          const nextDisbDate = new Date(disbursementForm.next_disbursement_due_date);
+          nextDisbDate.setHours(0, 0, 0, 0);
+          
+          if (nextDisbDate <= disbDate) {
+            return toast.error('Next disbursement date must be later than part disbursement date.');
+          }
         }
 
         const payload = {
@@ -786,7 +818,7 @@ export default function CaseDetailPage() {
                       )}
                     </div>
                     <div style={{ gridColumn: 'span 2' }}>
-                      <label style={{ display: 'block', fontSize: 11, color: '#64748B', marginBottom: 4 }}>Loan Account Number</label>
+                      <label style={{ display: 'block', fontSize: 11, color: '#64748B', marginBottom: 4 }}>Loan Account Number (Optional)</label>
                       <input
                         type="text"
                         value={sanctionForm.loan_account_number}
@@ -851,6 +883,17 @@ export default function CaseDetailPage() {
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                    <div style={{ gridColumn: 'span 2' }}>
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#9A3412', textTransform: 'uppercase', marginBottom: 4 }}>Loan Account Number *</label>
+                      <input
+                        type="text"
+                        value={disbursementSummary?.sanction?.loan_account_number || disbursementForm.loan_account_number || ''}
+                        disabled={!!disbursementSummary?.sanction?.loan_account_number || selectedStage === 'DISBURSED'}
+                        onChange={(e) => setDisbursementForm({ ...disbursementForm, loan_account_number: e.target.value })}
+                        placeholder="e.g. LN123456789"
+                        style={{ width: '100%', padding: '12px 14px', borderRadius: 10, border: '1.5px solid #FED7AA', fontSize: 15, outline: 'none', marginBottom: 16 }}
+                      />
+                    </div>
                     <div style={{ gridColumn: 'span 2' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                         <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#9A3412', textTransform: 'uppercase' }}>Amount Being Disbursed Now (₹) *</label>

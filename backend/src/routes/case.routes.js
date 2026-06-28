@@ -5,11 +5,13 @@ const { authenticate } = require('../middleware/auth.middleware');
 const { requireRole } = require('../middleware/role.middleware');
 const upload = require('../middleware/upload.middleware');
 const enforceMsmeCaseOwnership = require('../middleware/msmeCaseOwnership.middleware');
+const { requireCaseAccess } = require('../middleware/caseAccess.middleware');
 
 // Apply authentication and RBAC to all case routes
 router.use(authenticate);
 router.use(requireRole('DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA', 'MSME_CUSTOMER'));
 router.use(enforceMsmeCaseOwnership);
+router.use(requireCaseAccess);
 
 // ─── Sanction & Disbursement Flow ──────────────────────────────────────────
 const sanctionController = require('../controllers/sanction.controller');

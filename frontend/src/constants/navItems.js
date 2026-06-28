@@ -116,13 +116,13 @@ export const NAV_ITEMS = [
     icon: Briefcase,
     roles: ['DSA_ADMIN', 'DSA_MEMBER'],
   },
-  {
-    id: 'dsa-create-user',
-    label: 'Create User',
-    path: '/users/create',
-    icon: UserPlus,
-    roles: ['DSA_ADMIN'],
-  },
+  // {
+  //   id: 'dsa-create-user',
+  //   label: 'Create User',
+  //   path: '/users/create',
+  //   icon: UserPlus,
+  //   roles: ['DSA_ADMIN'],
+  // },
   {
     id: 'dsa-lender-contacts',
     label: 'Lender Contacts',
@@ -190,13 +190,13 @@ export const NAV_ITEMS = [
     icon: User,
     roles: ['SUPER_ADMIN', 'DSA_ADMIN', 'DSA_MEMBER', 'CRED2TECH_MEMBER', 'SUB_DSA'],
   },
-  {
-    id: 'my-manager',
-    label: 'My Manager',
-    path: '/manager',
-    icon: Users,
-    roles: ['DSA_MEMBER'],
-  },
+  // {
+  //   id: 'my-manager',
+  //   label: 'My Manager',
+  //   path: '/manager',
+  //   icon: Users,
+  //   roles: ['DSA_MEMBER'],
+  // },
   {
     id: 'settings',
     label: 'Settings',

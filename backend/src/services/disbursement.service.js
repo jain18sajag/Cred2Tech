@@ -50,6 +50,20 @@ async function recordDisbursement(caseId, tenantId, payload, userId, idempotency
         }
 
         const sanction = existingCase.sanction;
+
+        // Enforce loan account number at disbursement stage
+        if (!sanction.loan_account_number && !payload.loan_account_number) {
+            throw new Error('Loan account number is required before disbursement can proceed.');
+        }
+
+        if (payload.loan_account_number && !sanction.loan_account_number) {
+            await tx.caseSanction.update({
+                where: { id: sanction.id },
+                data: { loan_account_number: payload.loan_account_number }
+            });
+            sanction.loan_account_number = payload.loan_account_number;
+        }
+
         const disbursementAmount = new Decimal(amount);
 
         // 3. Re-calculate totals from DB (Source of Truth)

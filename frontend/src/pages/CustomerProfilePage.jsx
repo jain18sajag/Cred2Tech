@@ -372,7 +372,7 @@ const CustomerProfilePage = () => {
                     <td style={{ padding: '14px 24px', color: '#374151' }}>{c.lender_name || '—'}</td>
                     <td style={{ padding: '14px 24px', color: '#374151' }}>{c.product_type || '—'}</td>
                     <td style={{ padding: '14px 24px', fontWeight: 600, color: '#111827' }}>
-                      {formatCurrency(c.loan_amount)}
+                      {formatCurrency(c.sanctioned_amount || c.loan_amount || c.parent_case?.sanctioned_amount || c.parent_case?.loan_amount)}
                     </td>
                     <td style={{ padding: '14px 24px' }}>
                       <span style={{

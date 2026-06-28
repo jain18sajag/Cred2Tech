@@ -653,7 +653,8 @@ async function getPipeline(tenantId, params, currentUser) {
       skip,
       take: limit,
       include: {
-        customer: { select: { business_name: true, business_pan: true, industry: true, business_vintage: true, category: true } }
+        customer: { select: { business_name: true, business_pan: true, industry: true, business_vintage: true, category: true, created_by: { select: { name: true } } } },
+        parent_case: { select: { loan_amount: true, sanctioned_amount: true } }
       }
     }),
     prisma.case.count({ where })

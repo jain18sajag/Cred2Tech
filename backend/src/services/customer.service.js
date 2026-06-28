@@ -65,7 +65,8 @@ async function getReusableSummary(customer_id, tenant_id) {
             income_entries: true,
             obligations: true
           }
-        }
+        },
+        parent_case: { select: { loan_amount: true, sanctioned_amount: true } }
       }
     })
   ]);

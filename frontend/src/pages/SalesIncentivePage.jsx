@@ -217,7 +217,7 @@ export default function SalesIncentivePage() {
   const [updateModal, setUpdateModal] = useState(null);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [newRule, setNewRule] = useState({
-    hierarchy_level: '',
+    hierarchy_level: 'L1',
     commission_type: 'PERCENTAGE',
     commission_value: '',
     calculation_base: 'DISBURSED_AMOUNT'
@@ -252,7 +252,7 @@ export default function SalesIncentivePage() {
     e.preventDefault();
     try {
       await salesIncentiveService.createRule(newRule);
-      setNewRule({ hierarchy_level: '', commission_type: 'PERCENTAGE', commission_value: '', calculation_base: 'DISBURSED_AMOUNT' });
+      setNewRule({ hierarchy_level: 'L1', commission_type: 'PERCENTAGE', commission_value: '', calculation_base: 'DISBURSED_AMOUNT' });
       fetchData();
     } catch (err) {
       alert(err.response?.data?.error || 'Failed to create rule');
@@ -370,7 +370,12 @@ export default function SalesIncentivePage() {
               <form onSubmit={handleCreateRule} style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 24, background: '#F9FAFB', padding: 16, borderRadius: 8, border: '1px solid #E5E7EB' }}>
                 <div style={{ flex: 1 }}>
                   <label style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Level</label>
-                  <input required placeholder="e.g. L1" value={newRule.hierarchy_level} onChange={e => setNewRule({...newRule, hierarchy_level: e.target.value})} style={inputStyle} />
+                  <select required value={newRule.hierarchy_level} onChange={e => setNewRule({...newRule, hierarchy_level: e.target.value})} style={inputStyle}>
+                    <option value="L1">L1</option>
+                    <option value="L2">L2</option>
+                    <option value="L3">L3</option>
+                    <option value="L4">L4</option>
+                  </select>
                 </div>
                 <div style={{ flex: 1 }}>
                   <label style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Type</label>

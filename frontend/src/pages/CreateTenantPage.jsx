@@ -42,8 +42,23 @@ const CreateTenantPage = () => {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setForm((p) => ({ ...p, [name]: value }));
-    if (errors[name]) setErrors((p) => ({ ...p, [name]: '' }));
+    let shouldUpdateAdminEmail = false;
+
+    setForm((p) => {
+      const nextForm = { ...p, [name]: value };
+      if (name === 'email' && (!p.admin_email || p.admin_email === p.email)) {
+        nextForm.admin_email = value;
+        shouldUpdateAdminEmail = true;
+      }
+      return nextForm;
+    });
+
+    setErrors((p) => {
+      const nextErrors = { ...p };
+      if (nextErrors[name]) nextErrors[name] = '';
+      if (shouldUpdateAdminEmail && nextErrors.admin_email) nextErrors.admin_email = '';
+      return nextErrors;
+    });
     setApiError('');
   };
 
@@ -173,7 +188,7 @@ const CreateTenantPage = () => {
             {sectionHeading('DSA Organization Details')}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
               <FormField label="Organization Name" name="name" value={form.name} onChange={handleChange} placeholder="e.g. Acme FinServe" required error={errors.name} />
-              <FormField label="Official Email" name="email" type="email" value={form.email} onChange={handleChange} placeholder="e.g. admin@acme.com" required error={errors.email} />
+              <FormField label="DSA Email" name="email" type="email" value={form.email} onChange={handleChange} placeholder="e.g. admin@acme.com" required error={errors.email} />
               <FormField label="Mobile Number" name="mobile" value={form.mobile} onChange={handleChange} placeholder="e.g. 9876543210" hint="Optional contact number" />
               <FormField label="Organization Type" name="type" required error={errors.type}>
                 <select name="type" value={form.type} onChange={handleChange} className={`form-control${errors.type ? ' error-input' : ''}`}>

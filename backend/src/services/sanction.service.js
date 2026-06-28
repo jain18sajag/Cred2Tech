@@ -58,7 +58,7 @@ async function sanctionCase(caseId, tenantId, payload, userId) {
         const sanctionData = {
             tenant_id: tenantId,
             case_id: caseId,
-            loan_account_number,
+            loan_account_number: loan_account_number || null,
             sanction_date: new Date(sanction_date),
             sanctioned_amount: new Decimal(sanctioned_amount),
             confirmed_roi: new Decimal(confirmed_roi),

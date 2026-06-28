@@ -905,7 +905,7 @@ model ItrAnalyticsRequest {
   pan               String
   reference_id      String?            @unique
   status            ItrAnalyticsStatus @default(INITIATED)
-  mode              String             @default("PASSWORD") // 'PASSWORD' or 'OTP'
+  auth_mode         String             @default("PASSWORD") // 'PASSWORD' or 'OTP'
   excel_url         String? // Source audit URL — NOT used for serving
   analytics_payload Json?
   provider_message  String?
@@ -1679,7 +1679,7 @@ model CaseSanction {
   lender_name      String
   product_type     String
 
-  loan_account_number String
+  loan_account_number String?
   sanction_date       DateTime
   sanctioned_amount   Decimal  @db.Decimal(18, 2)
   confirmed_roi       Decimal  @db.Decimal(18, 4)
