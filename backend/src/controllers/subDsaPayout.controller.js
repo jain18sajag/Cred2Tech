@@ -66,7 +66,7 @@ async function updatePayoutStatus(req, res) {
 // GET /api/sub-dsa/payouts/:id/history
 async function getPayoutHistory(req, res) {
   try {
-    const history = await svc.getPayoutHistory(req.user.tenant_id, req.params.id);
+    const history = await svc.getPayoutHistory(req.user.tenant_id, req.params.id, req.user);
     res.json(history);
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });

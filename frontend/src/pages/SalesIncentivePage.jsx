@@ -21,7 +21,8 @@ const STATUS_META = {
 };
 
 const VALID_TRANSITIONS = {
-  CALCULATED: ['APPROVED', 'REJECTED'],
+  CALCULATED: ['APPROVED', 'REJECTED', 'ON_HOLD'],
+  ON_HOLD: ['CALCULATED', 'REJECTED'],
   APPROVED: ['PAID', 'REJECTED'],
   PAID: [],
   REJECTED: [],
@@ -59,7 +60,7 @@ function UpdateStatusModal({ entry, onClose, onSuccess }) {
     }
   };
 
-  const caseLabel = `${entry.case_entity?.case_number || `CASE-${entry.case_id}`} - ${entry.case_entity?.customer?.name || 'Customer'} - ${entry.user?.name || 'Employee'}`;
+  const caseLabel = `${entry.case_display_id || `CASE-${entry.case_id}`} - ${entry.customer_name || 'Customer'} - ${entry.user?.name || 'Employee'}`;
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -162,7 +163,6 @@ function EmployeeCard({ employee, ledgers, onUpdate, isAdmin }) {
                 <th style={thStyle}>Product</th>
                 <th style={{ ...thStyle, textAlign: 'right' }}>Disb. Amt</th>
                 <th style={{ ...thStyle, textAlign: 'right' }}>Payout</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>Subvention</th>
                 <th style={{ ...thStyle, textAlign: 'right' }}>Net Payable</th>
                 <th style={{ ...thStyle, textAlign: 'center' }}>Status</th>
                 {isAdmin && <th style={{ ...thStyle, textAlign: 'center' }}>Action</th>}
@@ -170,9 +170,9 @@ function EmployeeCard({ employee, ledgers, onUpdate, isAdmin }) {
             </thead>
             <tbody>
               {ledgers.map(l => {
-                const caseNum = l.case_entity?.case_number || `CASE-${l.case_id}`;
-                const customer = l.case_entity?.customer?.name || '—';
-                const product = l.case_entity?.product_type || '—';
+                const caseNum = l.case_display_id || `CASE-${l.case_id}`;
+                const customer = l.customer_name || '—';
+                const product = l.product_type || l.case_entity?.product_type || '—';
                 const disbAmt = parseFloat(l.base_amount || 0);
                 const payout = parseFloat(l.calculated_incentive || 0);
 
@@ -183,7 +183,6 @@ function EmployeeCard({ employee, ledgers, onUpdate, isAdmin }) {
                     <td style={{ padding: '12px 14px', fontSize: 13, color: '#374151' }}>{product}</td>
                     <td style={{ padding: '12px 14px', fontSize: 13, textAlign: 'right', color: '#111827' }}>{fmt(disbAmt)}</td>
                     <td style={{ padding: '12px 14px', fontSize: 13, textAlign: 'right', fontWeight: 600, color: '#059669' }}>{fmt(payout)}</td>
-                    <td style={{ padding: '12px 14px', fontSize: 13, textAlign: 'right', color: '#DC2626' }}>—</td>
                     <td style={{ padding: '12px 14px', fontSize: 13, textAlign: 'right', fontWeight: 700, color: '#111827' }}>{fmt(payout)}</td>
                     <td style={{ padding: '12px 14px', textAlign: 'center' }}><StatusBadge status={l.status} /></td>
                     {isAdmin && (
@@ -211,6 +210,7 @@ export default function SalesIncentivePage() {
 
   const [loading, setLoading] = useState(true);
   const [ledgers, setLedgers] = useState([]);
+  const [summary, setSummary] = useState({ current_month: {}, previous_month: {}, older: {} });
   const [employees, setEmployees] = useState([]);
   const [rules, setRules] = useState([]);
   const [filters, setFilters] = useState({ month: '', user_id: '', product: '', search: '' });
@@ -229,22 +229,29 @@ export default function SalesIncentivePage() {
       const params = {};
       if (filters.month) params.month = filters.month;
       if (filters.user_id) params.user_id = filters.user_id;
+      if (filters.product) params.product = filters.product;
       if (filters.search) params.search = filters.search;
       
-      const [resPayouts, resEmployees, resRules] = await Promise.all([
-        salesIncentiveService.getPayouts(params),
-        salesIncentiveService.getEmployeesConfig(),
-        salesIncentiveService.getRules()
-      ]);
-      setLedgers(resPayouts || []);
-      setEmployees(resEmployees || []);
-      setRules(resRules || []);
+      const resPayouts = await salesIncentiveService.getPayouts(params);
+      setLedgers(resPayouts.ledgers || resPayouts.data || []);
+      setSummary(resPayouts.summary || { current_month: {}, previous_month: {}, older: {} });
+      if (isAdmin) {
+        const [resEmployees, resRules] = await Promise.all([
+          salesIncentiveService.getEmployeesConfig(),
+          salesIncentiveService.getRules()
+        ]);
+        setEmployees(resEmployees || []);
+        setRules(resRules || []);
+      } else {
+        setEmployees([]);
+        setRules([]);
+      }
     } catch (e) {
       console.error('Failed to load:', e);
     } finally {
       setLoading(false);
     }
-  }, [filters]);
+  }, [filters, isAdmin]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -260,20 +267,11 @@ export default function SalesIncentivePage() {
   };
 
   const grouped = ledgers.reduce((acc, l) => {
-    const uid = l.user_id;
-    if (!acc[uid]) acc[uid] = { user: l.user, ledgers: [] };
+    const uid = l.user_id || user?.id || 'self';
+    if (!acc[uid]) acc[uid] = { user: l.user || user || { name: 'My Incentives' }, ledgers: [] };
     acc[uid].ledgers.push(l);
     return acc;
   }, {});
-
-  // Compute mock summary data from ledgers
-  const totalVolume = ledgers.reduce((s, l) => s + parseFloat(l.base_amount || 0), 0);
-  const totalPayout = ledgers.reduce((s, l) => s + parseFloat(l.calculated_incentive || 0), 0);
-  const totalPaid = ledgers.filter(l => l.status === 'PAID').reduce((s, l) => s + parseFloat(l.calculated_incentive || 0), 0);
-  
-  const summary = {
-    older: { cases: ledgers.length, volume: totalVolume, payout_eligible: totalPayout, paid_dues: totalPaid, pending: totalPayout - totalPaid }
-  };
 
   const inputStyle = { padding: '8px 14px', border: '1px solid #E5E7EB', borderRadius: 8, fontSize: 13, background: '#F9FAFB', color: '#111827', width: '100%', outline: 'none' };
 
@@ -311,9 +309,9 @@ export default function SalesIncentivePage() {
             </tr>
           </thead>
           <tbody>
-            <SummaryRow label="Current Month" data={{ cases: 0, volume: 0, payout_eligible: 0, paid_dues: 0, pending: 0 }} />
-            <SummaryRow label="Previous Month" data={{ cases: 0, volume: 0, payout_eligible: 0, paid_dues: 0, pending: 0 }} />
-            <SummaryRow label="Older" data={summary.older} />
+            <SummaryRow label="Current Month" data={summary.current_month || {}} />
+            <SummaryRow label="Previous Month" data={summary.previous_month || {}} />
+            <SummaryRow label="Older" data={summary.older || {}} />
           </tbody>
         </table>
       </div>
@@ -321,22 +319,20 @@ export default function SalesIncentivePage() {
       <div style={{ padding: '16px', background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, marginBottom: 20, display: 'flex', gap: 16 }}>
         <div style={{ flex: 1 }}>
           <label style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Month</label>
-          <select value={filters.month} onChange={e => setFilters({...filters, month: e.target.value})} style={inputStyle}>
-            <option value="">All Months</option>
-            <option value="2026-03">March 2026</option>
-            <option value="2026-02">February 2026</option>
-          </select>
+          <input type="month" value={filters.month} onChange={e => setFilters({...filters, month: e.target.value})} style={inputStyle} />
         </div>
-        <div style={{ flex: 1 }}>
-          <label style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Team Member</label>
-          <select value={filters.user_id} onChange={e => setFilters({...filters, user_id: e.target.value})} style={inputStyle}>
-            <option value="">All Members</option>
-            {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-          </select>
-        </div>
+        {isAdmin && (
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Team Member</label>
+            <select value={filters.user_id} onChange={e => setFilters({...filters, user_id: e.target.value})} style={inputStyle}>
+              <option value="">All Members</option>
+              {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+            </select>
+          </div>
+        )}
         <div style={{ flex: 1 }}>
           <label style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Product</label>
-          <select style={inputStyle}><option>All Products</option></select>
+          <input type="text" placeholder="ALL, LAP, HL..." value={filters.product} onChange={e => setFilters({...filters, product: e.target.value})} style={inputStyle} />
         </div>
         <div style={{ flex: 2 }}>
           <label style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Search</label>

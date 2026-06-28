@@ -1,6 +1,7 @@
 const prisma = require('../../config/db');
 const caseService = require('./case.service');
 const { processDisbursementCommission } = require('./commission/commissionLedger.service');
+const salesIncentiveService = require('./salesIncentive.service');
 const { Decimal } = require('@prisma/client');
 
 /**
@@ -16,7 +17,7 @@ async function recordDisbursement(caseId, tenantId, payload, userId, idempotency
         pdd_tasks = []
     } = payload;
 
-    return await prisma.$transaction(async (tx) => {
+    const disbursement = await prisma.$transaction(async (tx) => {
         // 1. Idempotency Check
         if (idempotencyKey) {
             const existing = await tx.disbursement.findFirst({
@@ -150,6 +151,12 @@ async function recordDisbursement(caseId, tenantId, payload, userId, idempotency
 
         return disbursement;
     });
+
+    await salesIncentiveService.calculateIncentives(tenantId, {
+        disbursement_ids: [disbursement.id]
+    });
+
+    return disbursement;
 }
 
 /**

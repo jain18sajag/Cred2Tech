@@ -62,21 +62,25 @@ async function processDisbursementCommission(tenantId, caseId, disbursement, san
 
     console.log(`[COMMISSION] BASE_COMMISSION created for disbursement ${disbursement.id} (Case ${caseId}) - Amount: ${calculationResult.calculated_commission.toNumber()}`);
 
-    // 4. Trigger SubDSA payout if applicable
-    try {
-        const subDsaPayoutService = require('../subDsaPayout.service');
-        const caseRecord = await tx.case.findUnique({
-            where: { id: caseId },
-            include: { created_by: { include: { role: true } } }
+    // 4. Trigger SubDSA payout atomically when the partner's rule is configured for disbursement-time payout.
+    const subDsaPayoutService = require('../subDsaPayout.service');
+    const caseRecord = await tx.case.findUnique({
+        where: { id: caseId },
+        include: { created_by: { include: { role: true } } }
+    });
+
+    if (caseRecord && caseRecord.created_by && caseRecord.created_by.role?.name === 'SUB_DSA') {
+        const payoutRule = await tx.subDsaPayoutRule.findUnique({
+            where: { sub_dsa_user_id: caseRecord.created_by.id },
+            select: { payout_trigger: true }
         });
 
-        if (caseRecord && caseRecord.created_by && caseRecord.created_by.role?.name === 'SUB_DSA') {
-            await subDsaPayoutService.createPayoutEntry(tenantId, caseRecord.created_by.id, ledgerEntry.id);
+        if (payoutRule?.payout_trigger === 'ON_DISBURSEMENT') {
+            await subDsaPayoutService.createPayoutEntry(tenantId, caseRecord.created_by.id, ledgerEntry.id, tx, { mode: 'AUTO' });
             console.log(`[COMMISSION] SubDSA Payout Ledger created for Case ${caseId}`);
+        } else {
+            console.log(`[COMMISSION] SubDSA payout not created for Case ${caseId}; trigger is ${payoutRule?.payout_trigger || 'not configured'}.`);
         }
-    } catch (err) {
-        console.error(`[COMMISSION] Failed to create SubDSA payout for Case ${caseId}:`, err);
-        // We don't throw here to avoid failing the main disbursement transaction if the payout fails.
     }
 
     return ledgerEntry;
@@ -150,7 +154,7 @@ async function revertDisbursementCommission(tenantId, caseId, disbursementId, us
                 reverses_ledger_id: originalEntry.id
             },
 
-            status: 'REVERSED',
+            status: 'CANCELLED',
             remarks: `Automatic reversal of ledger entry ${originalEntry.id}`,
             created_by_user_id: userId
         }

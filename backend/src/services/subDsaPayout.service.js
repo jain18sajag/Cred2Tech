@@ -1,250 +1,327 @@
-// subDsaPayout.service.js
-// Service layer for SubDSA payout configuration, calculation, ledger, and invoice management.
-// Strictly tenant-scoped. SubDSA partner commissions are separate from employee incentives.
-
+const { Prisma } = require('@prisma/client');
 const prisma = require('../../config/db');
 
-// ── Valid status transitions ─────────────────────────────────────────────────
 const VALID_TRANSITIONS = {
-  DRAFT: ['INVOICE_RAISED', 'PDD_PENDING', 'REJECTED'],
+  DRAFT: ['PDD_PENDING', 'REJECTED'],
   INVOICE_RAISED: ['UNDER_REVIEW', 'REJECTED'],
   UNDER_REVIEW: ['RECONCILED', 'REJECTED'],
   RECONCILED: ['PAID', 'REJECTED'],
   PDD_PENDING: ['RECONCILED', 'REJECTED'],
-  PAID: [],          // immutable
-  REJECTED: ['DRAFT'], // allow re-open to DRAFT
+  PAID: [],
+  REJECTED: ['DRAFT']
 };
+const PAYOUT_TRIGGERS = new Set(['ON_DISBURSEMENT', 'ON_DSA_RECEIPT', 'MANUAL']);
+const TDS_RATE = new Prisma.Decimal('0.05');
 
-// ── Get or upsert the payout config for a SubDSA ────────────────────────────
-async function getPayoutConfig(tenantId, subDsaUserId) {
-  const user = await prisma.user.findFirst({
-    where: { id: subDsaUserId, tenant_id: tenantId },
+function fail(message, status = 400) {
+  throw Object.assign(new Error(message), { status });
+}
+
+function dec(value, field, required = false) {
+  if (value === null || value === undefined || value === '') {
+    if (required) fail(`${field} is required`);
+    return null;
+  }
+  const d = new Prisma.Decimal(value);
+  if (!d.isFinite() || d.lt(0)) fail(`${field} must be a non-negative number`);
+  return d.toDecimalPlaces(2);
+}
+
+function intVal(value, field, required = false) {
+  if (value === null || value === undefined || value === '') {
+    if (required) fail(`${field} is required`);
+    return null;
+  }
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0) fail(`${field} must be a non-negative integer`);
+  return n;
+}
+
+function boolVal(value) {
+  if (value === true || value === false) return value;
+  if (typeof value === 'string') return value.toLowerCase() === 'true';
+  return Boolean(value);
+}
+
+function dateVal(value, field, required = false) {
+  if (!value) {
+    if (required) fail(`${field} is required`);
+    return null;
+  }
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) fail(`${field} must be a valid date`);
+  return d;
+}
+
+function monthKey(date) {
+  const d = new Date(date);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function monthRange(month) {
+  if (!/^\d{4}-\d{2}$/.test(month)) fail('month_year must be YYYY-MM');
+  const [y, m] = month.split('-').map(Number);
+  return { start: new Date(y, m - 1, 1), end: new Date(y, m, 1) };
+}
+
+function normalizeProducts(value) {
+  if (Array.isArray(value)) return value.map(v => String(v).trim().toUpperCase()).filter(Boolean).join(',');
+  return String(value || 'ALL').split(',').map(v => v.trim().toUpperCase()).filter(Boolean).join(',') || 'ALL';
+}
+
+function productMatches(csv, product) {
+  const products = normalizeProducts(csv).split(',');
+  return products.includes('ALL') || products.includes(String(product || '').toUpperCase());
+}
+
+async function ensureSubDsaUser(tenantId, subDsaUserId, client = prisma) {
+  const user = await client.user.findFirst({
+    where: { id: Number(subDsaUserId), tenant_id: tenantId, status: 'ACTIVE', role: { name: 'SUB_DSA' } },
     include: { role: true }
   });
-  if (!user) throw Object.assign(new Error('SubDSA user not found'), { status: 404 });
+  if (!user) fail('Active SUB_DSA user not found for this tenant', 404);
+  return user;
+}
 
-  let rule = await prisma.subDsaPayoutRule.findUnique({
-    where: { sub_dsa_user_id: subDsaUserId },
-    include: {
-      overrides: { include: { rule: false } },
-      case_count_slabs: true,
-      special_schemes: true
+async function ensureTenantLenders(tenantId, ids, client = prisma) {
+  const unique = [...new Set(ids.filter(Boolean).map(Number))];
+  if (!unique.length) return;
+  const count = await client.tenantLender.count({ where: { tenant_id: tenantId, id: { in: unique } } });
+  if (count !== unique.length) fail('One or more lenders do not belong to this tenant');
+}
+
+async function getPayoutConfig(tenantId, subDsaUserId) {
+  await ensureSubDsaUser(tenantId, subDsaUserId);
+  return prisma.subDsaPayoutRule.findUnique({
+    where: { sub_dsa_user_id: Number(subDsaUserId) },
+    include: { overrides: true, case_count_slabs: { orderBy: { from_cases: 'asc' } }, special_schemes: { orderBy: { valid_from: 'asc' } } }
+  });
+}
+
+function validateConfig(body) {
+  const defaultRate = dec(body.default_payout_rate, 'default_payout_rate', true);
+  if (defaultRate.gt(100)) fail('default_payout_rate cannot exceed 100');
+  const payoutTrigger = body.payout_trigger || 'ON_DSA_RECEIPT';
+  if (!PAYOUT_TRIGGERS.has(payoutTrigger)) fail('Invalid payout_trigger');
+
+  const overrides = (body.overrides || []).map((o, idx) => {
+    const rate = dec(o.override_rate, `overrides[${idx}].override_rate`, true);
+    if (rate.gt(100)) fail(`overrides[${idx}].override_rate cannot exceed 100`);
+    const from = dateVal(o.effective_from, `overrides[${idx}].effective_from`);
+    const to = dateVal(o.effective_to, `overrides[${idx}].effective_to`);
+    if (from && to && from > to) fail(`overrides[${idx}] effective_from cannot be after effective_to`);
+    return {
+      tenant_lender_id: intVal(o.tenant_lender_id, `overrides[${idx}].tenant_lender_id`, true),
+      products: normalizeProducts(o.products),
+      override_rate: rate,
+      effective_from: from,
+      effective_to: to
+    };
+  });
+  for (let i = 0; i < overrides.length; i += 1) {
+    for (let j = i + 1; j < overrides.length; j += 1) {
+      const a = overrides[i], b = overrides[j];
+      const sameLender = a.tenant_lender_id === b.tenant_lender_id;
+      const productOverlap = a.products.split(',').some(p => productMatches(b.products, p));
+      const startA = a.effective_from || new Date(0);
+      const endA = a.effective_to || new Date('9999-12-31');
+      const startB = b.effective_from || new Date(0);
+      const endB = b.effective_to || new Date('9999-12-31');
+      if (sameLender && productOverlap && startA <= endB && startB <= endA) fail('Duplicate/overlapping lender override');
     }
+  }
+
+  const slabs = (body.slabs || body.case_count_slabs || []).map((s, idx) => ({
+    from_cases: intVal(s.from_cases, `slabs[${idx}].from_cases`, true),
+    to_cases: s.to_cases === null || s.to_cases === '' || s.to_cases === undefined ? null : intVal(s.to_cases, `slabs[${idx}].to_cases`, true),
+    payout_per_case: dec(s.payout_per_case, `slabs[${idx}].payout_per_case`, true)
+  })).sort((a, b) => a.from_cases - b.from_cases);
+  for (let i = 0; i < slabs.length; i += 1) {
+    const s = slabs[i];
+    if (s.from_cases < 1) fail('slab from_cases must be positive');
+    if (s.to_cases && s.from_cases > s.to_cases) fail('slab from_cases cannot exceed to_cases');
+    if (i > 0 && slabs[i - 1].to_cases && s.from_cases <= slabs[i - 1].to_cases) fail('Slabs cannot overlap');
+    if (i < slabs.length - 1 && s.to_cases === null) fail('Only the final slab may be open-ended');
+  }
+
+  const schemes = (body.schemes || body.special_schemes || []).map((sc, idx) => {
+    const from = dateVal(sc.valid_from, `schemes[${idx}].valid_from`, true);
+    const to = dateVal(sc.valid_to, `schemes[${idx}].valid_to`, true);
+    if (from > to) fail(`schemes[${idx}] valid_from cannot be after valid_to`);
+    const bonusPerCase = dec(sc.bonus_per_case, `schemes[${idx}].bonus_per_case`);
+    const bonusPercent = dec(sc.bonus_percent, `schemes[${idx}].bonus_percent`);
+    if (!bonusPerCase && !bonusPercent) fail(`schemes[${idx}] requires bonus_per_case or bonus_percent`);
+    return {
+      scheme_name: String(sc.scheme_name || '').trim(),
+      basis: sc.basis || 'Cases',
+      tenant_lender_id: sc.tenant_lender_id ? intVal(sc.tenant_lender_id, `schemes[${idx}].tenant_lender_id`) : null,
+      products: normalizeProducts(sc.products),
+      valid_from: from,
+      valid_to: to,
+      bonus_per_case: bonusPerCase,
+      bonus_percent: bonusPercent,
+      min_case_count: sc.min_case_count ? intVal(sc.min_case_count, `schemes[${idx}].min_case_count`) : null,
+      is_active: sc.is_active === undefined ? true : boolVal(sc.is_active)
+    };
+  });
+  schemes.forEach((s, idx) => {
+    if (!s.scheme_name) fail(`schemes[${idx}].scheme_name is required`);
+    if (!['Cases', 'Volume'].includes(s.basis)) fail(`schemes[${idx}].basis must be Cases or Volume`);
   });
 
-  return rule;
+  return { defaultRate, payoutTrigger, tdsApplicable: body.tds_applicable === undefined ? true : boolVal(body.tds_applicable), overrides, slabs, schemes };
 }
 
 async function upsertPayoutConfig(tenantId, subDsaUserId, body) {
-  const { default_payout_rate, payout_trigger, tds_applicable, overrides = [], slabs = [], schemes = [] } = body;
-
-  // Find existing rule
-  const existing = await prisma.subDsaPayoutRule.findUnique({ where: { sub_dsa_user_id: subDsaUserId } });
-
-  const parseNum = (val, fallback = 0) => {
-    const parsed = parseFloat(val);
-    return isNaN(parsed) ? fallback : parsed;
-  };
-  const parseIntSafe = (val, fallback = 0) => {
-    const parsed = parseInt(val, 10);
-    return isNaN(parsed) ? fallback : parsed;
-  };
-
-  const payload = {
-    default_payout_rate: parseNum(default_payout_rate, 0),
-    payout_trigger: payout_trigger || 'ON_DSA_RECEIPT',
-    tds_applicable: !!tds_applicable,
-    overrides: {
-      create: (overrides || []).map(o => ({
-        tenant_lender_id: parseIntSafe(o.tenant_lender_id),
-        products: o.products || '',
-        override_rate: parseNum(o.override_rate, 0),
-        effective_from: o.effective_from ? new Date(o.effective_from) : null
-      }))
-    },
-    case_count_slabs: {
-      create: (slabs || []).map(s => ({
-        from_cases: parseIntSafe(s.from_cases, 1),
-        to_cases: s.to_cases ? parseIntSafe(s.to_cases, null) : null,
-        payout_per_case: parseNum(s.payout_per_case, 0)
-      }))
-    },
-    special_schemes: {
-      create: (schemes || []).map(sc => ({
-        scheme_name: sc.scheme_name || 'Bonus Scheme',
-        basis: sc.basis || 'Cases',
-        tenant_lender_id: sc.tenant_lender_id ? parseIntSafe(sc.tenant_lender_id, null) : null,
-        products: sc.products || null,
-        valid_from: sc.valid_from ? new Date(sc.valid_from) : new Date(),
-        valid_to: sc.valid_to ? new Date(sc.valid_to) : new Date(),
-        bonus_per_case: sc.bonus_per_case ? parseNum(sc.bonus_per_case, null) : null,
-        bonus_percent: sc.bonus_percent ? parseNum(sc.bonus_percent, null) : null,
-        min_case_count: sc.min_case_count ? parseIntSafe(sc.min_case_count, null) : null,
-        is_active: sc.is_active !== undefined ? !!sc.is_active : true
-      }))
-    }
-  };
-
-  if (existing) {
-    // Delete children to replace them
-    await prisma.subDsaLenderOverride.deleteMany({ where: { rule_id: existing.id } });
-    await prisma.subDsaCaseCountSlab.deleteMany({ where: { rule_id: existing.id } });
-    await prisma.subDsaSpecialScheme.deleteMany({ where: { rule_id: existing.id } });
-
-    return prisma.subDsaPayoutRule.update({
-      where: { id: existing.id },
-      data: payload,
-      include: { overrides: true, case_count_slabs: true, special_schemes: true }
-    });
-  }
-
-  return prisma.subDsaPayoutRule.create({
-    data: {
-      tenant_id: tenantId,
-      sub_dsa_user_id: subDsaUserId,
-      ...payload
-    },
-    include: { overrides: true, case_count_slabs: true, special_schemes: true }
+  const parsed = validateConfig(body);
+  return prisma.$transaction(async tx => {
+    await ensureSubDsaUser(tenantId, subDsaUserId, tx);
+    await ensureTenantLenders(tenantId, [...parsed.overrides.map(o => o.tenant_lender_id), ...parsed.schemes.map(s => s.tenant_lender_id)], tx);
+    const existing = await tx.subDsaPayoutRule.findUnique({ where: { sub_dsa_user_id: Number(subDsaUserId) } });
+    const parentData = {
+      default_payout_rate: parsed.defaultRate.toNumber(),
+      payout_trigger: parsed.payoutTrigger,
+      tds_applicable: parsed.tdsApplicable
+    };
+    const rule = existing
+      ? await tx.subDsaPayoutRule.update({ where: { id: existing.id }, data: parentData })
+      : await tx.subDsaPayoutRule.create({ data: { tenant_id: tenantId, sub_dsa_user_id: Number(subDsaUserId), ...parentData } });
+    await tx.subDsaLenderOverride.deleteMany({ where: { rule_id: rule.id } });
+    await tx.subDsaCaseCountSlab.deleteMany({ where: { rule_id: rule.id } });
+    await tx.subDsaSpecialScheme.deleteMany({ where: { rule_id: rule.id } });
+    if (parsed.overrides.length) await tx.subDsaLenderOverride.createMany({ data: parsed.overrides.map(o => ({ ...o, override_rate: o.override_rate.toNumber(), rule_id: rule.id })) });
+    if (parsed.slabs.length) await tx.subDsaCaseCountSlab.createMany({ data: parsed.slabs.map(s => ({ ...s, payout_per_case: s.payout_per_case.toNumber(), rule_id: rule.id })) });
+    if (parsed.schemes.length) await tx.subDsaSpecialScheme.createMany({ data: parsed.schemes.map(s => ({ ...s, bonus_per_case: s.bonus_per_case?.toNumber() ?? null, bonus_percent: s.bonus_percent?.toNumber() ?? null, rule_id: rule.id })) });
+    return tx.subDsaPayoutRule.findUnique({ where: { id: rule.id }, include: { overrides: true, case_count_slabs: true, special_schemes: true } });
   });
 }
 
-// ── Calculate SubDSA payout for a commission ledger entry ───────────────────
-// Priority: Base → Override → Slabs → Schemes → Subvention → Adjustment → TDS
-async function calculatePayout(tenantId, subDsaUserId, commissionLedgerId) {
-  const commLedger = await prisma.commissionLedger.findUnique({
-    where: { id: commissionLedgerId },
-    include: { case_entity: true }
+function sourceDateFor(ledger) {
+  return ledger.disbursement?.disbursement_date || ledger.created_at;
+}
+
+async function calculatePayout(tenantId, subDsaUserId, commissionLedgerId, client = prisma, mode = 'AUTO') {
+  await ensureSubDsaUser(tenantId, subDsaUserId, client);
+  const commLedger = await client.commissionLedger.findFirst({
+    where: { id: Number(commissionLedgerId), tenant_id: tenantId },
+    include: { case_entity: true, disbursement: true }
   });
-  if (!commLedger) throw new Error('Commission ledger not found');
-  if (Number(commLedger.tenant_id) !== tenantId) throw new Error('Cross-tenant access denied');
-
-  const rule = await prisma.subDsaPayoutRule.findUnique({
-    where: { sub_dsa_user_id: subDsaUserId },
-    include: { overrides: true, case_count_slabs: true, special_schemes: true }
-  });
-  if (!rule) throw new Error('No payout configuration found for this SubDSA');
-
-  const dsaEarned = parseFloat(commLedger.calculated_commission);
-  const productType = commLedger.product_type;
-  const tenantLenderId = commLedger.tenant_lender_id;
-
-  // Step 1 + 2: Base or Override rate
-  let applicableRate = rule.default_payout_rate;
-  let appliedOverride = null;
-  for (const ov of rule.overrides) {
-    if (ov.tenant_lender_id === tenantLenderId) {
-      const products = ov.products ? ov.products.split(',').map(p => p.trim()) : [];
-      if (!products.length || products.includes('ALL') || products.includes(productType)) {
-        applicableRate = ov.override_rate;
-        appliedOverride = ov;
-        break;
-      }
-    }
+  if (!commLedger) fail('Commission ledger not found', 404);
+  if (commLedger.case_entity.created_by_user_id !== Number(subDsaUserId) && commLedger.case_entity.assigned_dsa_user_id !== Number(subDsaUserId)) {
+    fail('Commission ledger does not belong to this Sub-DSA', 403);
   }
-  let subDsaPayout = (dsaEarned * applicableRate) / 100;
+  if (commLedger.entry_type !== 'BASE_COMMISSION' || commLedger.is_reversed || commLedger.status === 'CANCELLED') {
+    fail('Commission ledger is not eligible for Sub-DSA payout');
+  }
 
-  // Step 3: MTD case count slabs (cumulative fixed per case)
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const mtdCaseCount = await prisma.subDsaPayoutLedger.count({
-    where: {
-      tenant_id: tenantId,
-      sub_dsa_user_id: subDsaUserId,
-      created_at: { gte: monthStart }
-    }
+  const rule = await client.subDsaPayoutRule.findUnique({
+    where: { sub_dsa_user_id: Number(subDsaUserId) },
+    include: { overrides: true, case_count_slabs: { orderBy: { from_cases: 'asc' } }, special_schemes: true }
   });
-  const thisMonthCaseNumber = mtdCaseCount + 1; // including this new entry
+  if (!rule) fail('No payout configuration found for this Sub-DSA');
+  if (mode === 'AUTO' && rule.payout_trigger === 'MANUAL') fail('Payout trigger is MANUAL');
+  if (mode === 'AUTO' && rule.payout_trigger === 'ON_DSA_RECEIPT' && commLedger.status !== 'PAID') fail('Payout requires DSA receipt/paid commission status');
 
-  let slabBonus = 0;
+  const eventDate = sourceDateFor(commLedger);
+  const dsaEarned = new Prisma.Decimal(commLedger.calculated_commission).toDecimalPlaces(2);
+  const product = commLedger.product_type;
+  const lenderId = commLedger.tenant_lender_id;
+  const applicableOverrides = rule.overrides
+    .filter(o => Number(o.tenant_lender_id) === Number(lenderId))
+    .filter(o => productMatches(o.products, product))
+    .filter(o => (!o.effective_from || o.effective_from <= eventDate) && (!o.effective_to || o.effective_to >= eventDate))
+    .sort((a, b) => (b.effective_from || new Date(0)) - (a.effective_from || new Date(0)) || a.id - b.id);
+  const appliedOverride = applicableOverrides[0] || null;
+  const applicableRate = new Prisma.Decimal(appliedOverride?.override_rate ?? rule.default_payout_rate);
+  let subDsaPayout = dsaEarned.mul(applicableRate).div(100).toDecimalPlaces(2);
+
+  const period = monthKey(eventDate);
+  const { start, end } = monthRange(period);
+  const previousCases = await client.subDsaPayoutLedger.findMany({
+    where: { tenant_id: tenantId, sub_dsa_user_id: Number(subDsaUserId), status: { notIn: ['REJECTED'] }, created_at: { gte: start, lt: end } },
+    select: { case_id: true }
+  });
+  const distinct = new Set(previousCases.map(r => r.case_id));
+  distinct.add(commLedger.case_id);
+  const thisMonthCaseNumber = distinct.size;
+
+  let slabBonus = new Prisma.Decimal(0);
   let appliedSlab = null;
   for (const slab of rule.case_count_slabs) {
-    const from = slab.from_cases;
-    const to = slab.to_cases || Infinity;
-    if (thisMonthCaseNumber >= from && thisMonthCaseNumber <= to) {
-      slabBonus = parseFloat(slab.payout_per_case);
+    if (thisMonthCaseNumber >= slab.from_cases && (slab.to_cases === null || thisMonthCaseNumber <= slab.to_cases)) {
+      slabBonus = new Prisma.Decimal(slab.payout_per_case).toDecimalPlaces(2);
       appliedSlab = slab;
       break;
     }
   }
-  subDsaPayout += slabBonus;
+  subDsaPayout = subDsaPayout.plus(slabBonus).toDecimalPlaces(2);
 
-  // Step 4: Special Schemes (cumulative)
   const appliedSchemes = [];
-  let schemeBonus = 0;
+  let schemeBonus = new Prisma.Decimal(0);
   for (const scheme of rule.special_schemes) {
-    if (!scheme.is_active) continue;
-    if (now < scheme.valid_from || now > scheme.valid_to) continue;
+    if (!scheme.is_active || eventDate < scheme.valid_from || eventDate > scheme.valid_to) continue;
     if (scheme.min_case_count && thisMonthCaseNumber < scheme.min_case_count) continue;
-    if (scheme.tenant_lender_id && scheme.tenant_lender_id !== tenantLenderId) continue;
-    if (scheme.products) {
-      const sp = scheme.products.split(',').map(p => p.trim());
-      if (!sp.includes('ALL') && !sp.includes(productType)) continue;
-    }
-
-    let bonus = 0;
-    if (scheme.bonus_per_case) bonus = parseFloat(scheme.bonus_per_case);
-    if (scheme.bonus_percent) bonus += (dsaEarned * parseFloat(scheme.bonus_percent)) / 100;
-    schemeBonus += bonus;
-    appliedSchemes.push({ id: scheme.id, scheme_name: scheme.scheme_name, bonus });
+    if (scheme.tenant_lender_id && Number(scheme.tenant_lender_id) !== Number(lenderId)) continue;
+    if (!productMatches(scheme.products, product)) continue;
+    let bonus = new Prisma.Decimal(0);
+    if (scheme.basis === 'Cases' && scheme.bonus_per_case) bonus = bonus.plus(scheme.bonus_per_case);
+    if (scheme.basis === 'Volume' && scheme.bonus_percent) bonus = bonus.plus(dsaEarned.mul(scheme.bonus_percent).div(100));
+    bonus = bonus.toDecimalPlaces(2);
+    schemeBonus = schemeBonus.plus(bonus);
+    appliedSchemes.push({ id: scheme.id, scheme_name: scheme.scheme_name, basis: scheme.basis, bonus: bonus.toFixed(2) });
   }
-  subDsaPayout += schemeBonus;
+  subDsaPayout = subDsaPayout.plus(schemeBonus).toDecimalPlaces(2);
 
-  // Step 5: Subvention (not auto-calculated here — set to 0, DSA admin updates manually)
-  const subventionAmount = 0;
-
-  // Step 6: Adjustment (manual — set to 0 initially)
-  const adjustmentAmount = 0;
-
-  // Step 7: TDS
-  const TDS_RATE = 0.05; // 5% under Section 194H
-  const tdsAmount = rule.tds_applicable ? subDsaPayout * TDS_RATE : 0;
-
-  const netPayable = subDsaPayout - subventionAmount + adjustmentAmount - tdsAmount;
-
-  const calculationMetadata = {
-    dsa_earned: dsaEarned,
-    applicable_rate: applicableRate,
-    applied_override: appliedOverride,
-    mtd_case_number: thisMonthCaseNumber,
-    slab_bonus: slabBonus,
-    applied_slab: appliedSlab,
-    scheme_bonus: schemeBonus,
-    applied_schemes: appliedSchemes,
-    tds_rate: rule.tds_applicable ? TDS_RATE : 0,
-    tds_amount: tdsAmount,
-    net_payable: netPayable
+  const tdsAmount = rule.tds_applicable ? subDsaPayout.mul(TDS_RATE).toDecimalPlaces(2) : new Prisma.Decimal(0);
+  const netPayable = subDsaPayout.minus(tdsAmount).toDecimalPlaces(2);
+  const metadata = {
+    product_type: product,
+    lender_id: lenderId,
+    lender_name: commLedger.lender_name,
+    source_date: eventDate.toISOString(),
+    payout_period: period,
+    rule_id: rule.id,
+    payout_trigger: rule.payout_trigger,
+    default_rate: rule.default_payout_rate,
+    override_snapshot: appliedOverride,
+    slab_snapshot: appliedSlab,
+    scheme_snapshots: appliedSchemes,
+    tds_rate: rule.tds_applicable ? TDS_RATE.toString() : '0',
+    tds_base: subDsaPayout.toFixed(2),
+    formula_components: {
+      dsa_earned: dsaEarned.toFixed(2),
+      rate_payout: dsaEarned.mul(applicableRate).div(100).toDecimalPlaces(2).toFixed(2),
+      slab_bonus: slabBonus.toFixed(2),
+      scheme_bonus: schemeBonus.toDecimalPlaces(2).toFixed(2)
+    }
   };
-
   return {
     dsa_earned_amount: dsaEarned,
     sub_dsa_payout: subDsaPayout,
-    subvention_amount: subventionAmount,
-    adjustment_amount: adjustmentAmount,
+    subvention_amount: new Prisma.Decimal(0),
+    adjustment_amount: new Prisma.Decimal(0),
     tds_amount: tdsAmount,
     net_payable: netPayable,
     applied_scheme_snapshot: appliedSchemes,
-    calculation_metadata: calculationMetadata,
+    calculation_metadata: metadata,
     case_id: commLedger.case_id,
-    commission_ledger_id: commissionLedgerId
+    commission_ledger_id: Number(commissionLedgerId)
   };
 }
 
-// ── Create a payout ledger entry (triggered after commission is recorded) ────
-async function createPayoutEntry(tenantId, subDsaUserId, commissionLedgerId) {
-  // Idempotency check
-  const existing = await prisma.subDsaPayoutLedger.findUnique({
-    where: { commission_ledger_id: commissionLedgerId }
-  });
-  if (existing) return existing;
-
-  const calc = await calculatePayout(tenantId, subDsaUserId, commissionLedgerId);
-
-  return prisma.subDsaPayoutLedger.create({
+async function createPayoutEntry(tenantId, subDsaUserId, commissionLedgerId, client = prisma, options = {}) {
+  const existing = await client.subDsaPayoutLedger.findUnique({ where: { commission_ledger_id: Number(commissionLedgerId) } });
+  if (existing) {
+    if (existing.tenant_id !== tenantId || existing.sub_dsa_user_id !== Number(subDsaUserId)) fail('Existing payout source belongs to a different tenant or Sub-DSA', 409);
+    return existing;
+  }
+  const calc = await calculatePayout(tenantId, subDsaUserId, commissionLedgerId, client, options.mode || 'AUTO');
+  return client.subDsaPayoutLedger.create({
     data: {
       tenant_id: tenantId,
-      sub_dsa_user_id: subDsaUserId,
+      sub_dsa_user_id: Number(subDsaUserId),
       case_id: calc.case_id,
-      commission_ledger_id: commissionLedgerId,
+      commission_ledger_id: calc.commission_ledger_id,
       dsa_earned_amount: calc.dsa_earned_amount,
       sub_dsa_payout: calc.sub_dsa_payout,
       subvention_amount: calc.subvention_amount,
@@ -257,213 +334,147 @@ async function createPayoutEntry(tenantId, subDsaUserId, commissionLedgerId) {
   });
 }
 
-// ── List payout ledgers with aggregates ─────────────────────────────────────
+function customerName(customer) {
+  return customer?.business_name || customer?.legal_business_name || customer?.trade_name || customer?.proprietor_name || 'Customer';
+}
+
+function payoutDto(row) {
+  return {
+    ...row,
+    case_display_id: `CASE-${row.case_id}`,
+    customer_name: customerName(row.case_entity?.customer),
+    product_type: row.calculation_metadata?.product_type || row.case_entity?.product_type || null,
+    lender: row.calculation_metadata?.lender_name || row.case_entity?.lender_name || null,
+    source_date: row.calculation_metadata?.source_date || null,
+    payout_period: row.calculation_metadata?.payout_period || monthKey(row.created_at)
+  };
+}
+
 async function listPayouts(tenantId, filters, currentUser) {
   const { month, sub_dsa_user_id, status, product, search, page = 1, limit = 50 } = filters;
-
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const take = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
   const where = { tenant_id: tenantId };
-
-  // SubDSA isolation: they can only see their own records
-  if (currentUser.role === 'SUB_DSA') {
-    where.sub_dsa_user_id = currentUser.id;
-  } else if (sub_dsa_user_id) {
-    where.sub_dsa_user_id = parseInt(sub_dsa_user_id);
-  }
-
+  if (currentUser.role === 'SUB_DSA') where.sub_dsa_user_id = currentUser.id;
+  else if (sub_dsa_user_id) where.sub_dsa_user_id = Number(sub_dsa_user_id);
   if (status) where.status = status;
-
   if (month) {
-    const [year, mon] = month.split('-').map(Number);
-    const start = new Date(year, mon - 1, 1);
-    const end = new Date(year, mon, 1);
-    where.created_at = { gte: start, lt: end };
+    monthRange(month);
+    where.calculation_metadata = { path: ['payout_period'], equals: month };
   }
-
-  if (product) {
-    where.calculation_metadata = { path: ['product_type'], equals: product };
+  if (product) where.calculation_metadata = { path: ['product_type'], equals: String(product).toUpperCase() };
+  if (search) {
+    const q = String(search);
+    const id = q.replace(/^CASE-/i, '');
+    where.OR = [
+      ...(Number.isInteger(Number(id)) ? [{ case_id: Number(id) }] : []),
+      { user: { name: { contains: q, mode: 'insensitive' } } },
+      { case_entity: { customer: { business_name: { contains: q, mode: 'insensitive' } } } },
+      { case_entity: { customer: { legal_business_name: { contains: q, mode: 'insensitive' } } } }
+    ];
   }
-
-  const ledgers = await prisma.subDsaPayoutLedger.findMany({
-    where,
-    include: {
-      user: { select: { id: true, name: true, email: true } },
-      case_entity: {
-        select: {
-          id: true,
-          case_number: true,
-          customer: { select: { name: true, id: true } }
-        }
-      },
-      invoice: { select: { id: true, invoice_number: true, month_year: true } }
-    },
-    orderBy: { created_at: 'desc' },
-    skip: (parseInt(page) - 1) * parseInt(limit),
-    take: parseInt(limit)
-  });
-
-  // Aggregate summary
-  const allForTenant = await prisma.subDsaPayoutLedger.findMany({
-    where: { tenant_id: tenantId, ...(currentUser.role === 'SUB_DSA' ? { sub_dsa_user_id: currentUser.id } : {}) },
-    select: {
-      dsa_earned_amount: true,
-      sub_dsa_payout: true,
-      subvention_amount: true,
-      net_payable: true,
-      status: true,
-      case_id: true,
-      created_at: true
-    }
-  });
-
-  const now = new Date();
-  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-
-  const summarize = (rows) => ({
-    cases: rows.length,
-    volume: rows.reduce((s, r) => s + parseFloat(r.dsa_earned_amount || 0), 0),
-    payout_eligible: rows.reduce((s, r) => s + parseFloat(r.sub_dsa_payout || 0), 0),
-    subvention: rows.reduce((s, r) => s + parseFloat(r.subvention_amount || 0), 0),
-    paid_dues: rows.filter(r => r.status === 'PAID').reduce((s, r) => s + parseFloat(r.net_payable || 0), 0),
-    pending: rows.filter(r => r.status !== 'PAID' && r.status !== 'REJECTED').reduce((s, r) => s + parseFloat(r.net_payable || 0), 0)
-  });
-
-  const summary = {
-    current_month: summarize(allForTenant.filter(r => r.created_at >= currentMonthStart)),
-    previous_month: summarize(allForTenant.filter(r => r.created_at >= prevMonthStart && r.created_at < currentMonthStart)),
-    older: summarize(allForTenant.filter(r => r.created_at < prevMonthStart))
-  };
-
-  return { ledgers, summary };
-}
-
-// ── Update payout status ─────────────────────────────────────────────────────
-async function updatePayoutStatus(tenantId, ledgerId, newStatus, remarks, updatedByUserId) {
-  const ledger = await prisma.subDsaPayoutLedger.findUnique({ where: { id: parseInt(ledgerId) } });
-  if (!ledger) throw Object.assign(new Error('Payout ledger entry not found'), { status: 404 });
-  if (ledger.tenant_id !== tenantId) throw Object.assign(new Error('Cross-tenant access denied'), { status: 403 });
-
-  const allowed = VALID_TRANSITIONS[ledger.status] || [];
-  if (!allowed.includes(newStatus)) {
-    throw Object.assign(
-      new Error(`Invalid transition: ${ledger.status} → ${newStatus}. Allowed: ${allowed.join(', ') || 'none'}`),
-      { status: 400 }
-    );
-  }
-
-  if (newStatus === 'REJECTED' && !remarks?.trim()) {
-    throw Object.assign(new Error('Remarks are mandatory when rejecting a payout'), { status: 400 });
-  }
-
-  const [updated] = await prisma.$transaction([
-    prisma.subDsaPayoutLedger.update({
-      where: { id: parseInt(ledgerId) },
-      data: { status: newStatus, remarks: remarks || ledger.remarks }
-    }),
-    prisma.subDsaPayoutHistory.create({
-      data: {
-        ledger_id: parseInt(ledgerId),
-        old_status: ledger.status,
-        new_status: newStatus,
-        remarks: remarks || null,
-        updated_by_id: updatedByUserId
+  const include = {
+    user: { select: { id: true, name: true, email: true } },
+    case_entity: {
+      select: {
+        id: true, product_type: true, lender_name: true,
+        customer: { select: { id: true, business_name: true, legal_business_name: true, trade_name: true, proprietor_name: true } }
       }
-    })
+    },
+    invoice: { select: { id: true, invoice_number: true, month_year: true } }
+  };
+  const [ledgers, total, all] = await Promise.all([
+    prisma.subDsaPayoutLedger.findMany({ where, include, orderBy: { created_at: 'desc' }, skip: (pageNum - 1) * take, take }),
+    prisma.subDsaPayoutLedger.count({ where }),
+    prisma.subDsaPayoutLedger.findMany({ where, select: { dsa_earned_amount: true, sub_dsa_payout: true, subvention_amount: true, net_payable: true, status: true, case_id: true, created_at: true, calculation_metadata: true } })
   ]);
-
-  return updated;
+  const now = new Date();
+  const currentPeriod = monthKey(now);
+  const previousPeriod = monthKey(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+  const summarize = rows => ({
+    cases: new Set(rows.map(r => r.case_id)).size,
+    volume: rows.reduce((s, r) => s.plus(r.dsa_earned_amount || 0), new Prisma.Decimal(0)).toFixed(2),
+    payout_eligible: rows.reduce((s, r) => s.plus(r.sub_dsa_payout || 0), new Prisma.Decimal(0)).toFixed(2),
+    subvention: rows.reduce((s, r) => s.plus(r.subvention_amount || 0), new Prisma.Decimal(0)).toFixed(2),
+    paid_dues: rows.filter(r => r.status === 'PAID').reduce((s, r) => s.plus(r.net_payable || 0), new Prisma.Decimal(0)).toFixed(2),
+    pending: rows.filter(r => !['PAID', 'REJECTED'].includes(r.status)).reduce((s, r) => s.plus(r.net_payable || 0), new Prisma.Decimal(0)).toFixed(2)
+  });
+  return {
+    ledgers: ledgers.map(payoutDto),
+    pagination: { total, page: pageNum, page_size: take },
+    summary: {
+      current_month: summarize(all.filter(r => (r.calculation_metadata?.payout_period || monthKey(r.created_at)) === currentPeriod)),
+      previous_month: summarize(all.filter(r => (r.calculation_metadata?.payout_period || monthKey(r.created_at)) === previousPeriod)),
+      older: summarize(all.filter(r => (r.calculation_metadata?.payout_period || monthKey(r.created_at)) < previousPeriod))
+    }
+  };
 }
 
-// ── Generate Invoice ─────────────────────────────────────────────────────────
+async function updatePayoutStatus(tenantId, ledgerId, newStatus, remarks, updatedByUserId) {
+  const ledger = await prisma.subDsaPayoutLedger.findFirst({ where: { id: Number(ledgerId), tenant_id: tenantId } });
+  if (!ledger) fail('Payout ledger entry not found', 404);
+  const allowed = VALID_TRANSITIONS[ledger.status] || [];
+  if (!allowed.includes(newStatus)) fail(`Invalid transition: ${ledger.status} to ${newStatus}`);
+  if (newStatus === 'REJECTED' && !remarks?.trim()) fail('Remarks are mandatory when rejecting a payout');
+  return prisma.$transaction(async tx => {
+    const data = { status: newStatus, remarks: remarks || ledger.remarks };
+    if (newStatus === 'DRAFT') data.invoice_id = null;
+    const updated = await tx.subDsaPayoutLedger.update({ where: { id: Number(ledgerId) }, data });
+    await tx.subDsaPayoutHistory.create({ data: { ledger_id: Number(ledgerId), old_status: ledger.status, new_status: newStatus, remarks: remarks || null, updated_by_id: updatedByUserId } });
+    return updated;
+  });
+}
+
 async function generateInvoice(tenantId, subDsaUserId, monthYear, ledgerIds, currentUserId) {
-  // Validate: ensure these entries belong to this tenant/subdsa and are in DRAFT status
-  const entries = await prisma.subDsaPayoutLedger.findMany({
-    where: {
-      id: { in: ledgerIds.map(Number) },
-      tenant_id: tenantId,
-      sub_dsa_user_id: parseInt(subDsaUserId)
+  if (!/^\d{4}-\d{2}$/.test(monthYear)) fail('month_year must be YYYY-MM');
+  const ids = [...new Set((ledgerIds || []).map(Number))];
+  if (!ids.length || ids.length !== ledgerIds.length) fail('ledger_ids must be a non-empty unique ID set');
+  monthRange(monthYear);
+  return prisma.$transaction(async tx => {
+    await ensureSubDsaUser(tenantId, subDsaUserId, tx);
+    const entries = await tx.subDsaPayoutLedger.findMany({
+      where: { id: { in: ids }, tenant_id: tenantId, sub_dsa_user_id: Number(subDsaUserId), status: 'DRAFT', invoice_id: null }
+    });
+    if (entries.length !== ids.length || entries.some(e => (e.calculation_metadata?.payout_period || monthKey(e.created_at)) !== monthYear)) {
+      fail('Selected payouts must all belong to the tenant, Sub-DSA, month, be DRAFT, and have no invoice');
     }
-  });
-
-  const invalidEntries = entries.filter(e => e.status !== 'DRAFT');
-  if (invalidEntries.length > 0) {
-    throw Object.assign(
-      new Error(`${invalidEntries.length} entries are not in DRAFT status and cannot be invoiced`),
-      { status: 400 }
-    );
-  }
-
-  const alreadyInvoiced = entries.filter(e => e.invoice_id);
-  if (alreadyInvoiced.length > 0) {
-    throw Object.assign(new Error('Some entries are already attached to an invoice'), { status: 400 });
-  }
-
-  const totalPayout = entries.reduce((s, e) => s + parseFloat(e.net_payable), 0);
-
-  // Generate a unique invoice number: INV-SDSA-{tenantId}-{YYYYMM}-{seq}
-  const monthStr = monthYear.replace('-', '');
-  const seqCount = await prisma.subDsaInvoice.count({ where: { tenant_id: tenantId } });
-  const invoiceNumber = `INV-SDSA-${tenantId}-${monthStr}-${String(seqCount + 1).padStart(4, '0')}`;
-
-  const invoice = await prisma.subDsaInvoice.create({
-    data: {
-      tenant_id: tenantId,
-      sub_dsa_user_id: parseInt(subDsaUserId),
-      invoice_number: invoiceNumber,
-      month_year: monthYear,
-      total_payout: totalPayout,
-      status: 'INVOICE_RAISED'
-    }
-  });
-
-  // Update all selected ledger entries
-  await prisma.$transaction([
-    prisma.subDsaPayoutLedger.updateMany({
-      where: { id: { in: ledgerIds.map(Number) } },
+    const totalPayout = entries.reduce((s, e) => s.plus(e.net_payable), new Prisma.Decimal(0)).toDecimalPlaces(2);
+    const monthStr = monthYear.replace('-', '');
+    const seqCount = await tx.subDsaInvoice.count({ where: { tenant_id: tenantId, month_year: monthYear } });
+    const invoiceNumber = `INV-SDSA-${tenantId}-${monthStr}-${String(seqCount + 1).padStart(4, '0')}`;
+    const invoice = await tx.subDsaInvoice.create({
+      data: { tenant_id: tenantId, sub_dsa_user_id: Number(subDsaUserId), invoice_number: invoiceNumber, month_year: monthYear, total_payout: totalPayout, status: 'INVOICE_RAISED' }
+    });
+    const updated = await tx.subDsaPayoutLedger.updateMany({
+      where: { id: { in: ids }, tenant_id: tenantId, sub_dsa_user_id: Number(subDsaUserId), status: 'DRAFT', invoice_id: null },
       data: { status: 'INVOICE_RAISED', invoice_id: invoice.id }
-    }),
-    ...ledgerIds.map(id =>
-      prisma.subDsaPayoutHistory.create({
-        data: {
-          ledger_id: Number(id),
-          old_status: 'DRAFT',
-          new_status: 'INVOICE_RAISED',
-          remarks: `Invoice ${invoiceNumber} generated`,
-          updated_by_id: currentUserId
-        }
-      })
-    )
-  ]);
-
-  return { invoice, invoice_number: invoiceNumber, total_payout: totalPayout, entries_count: entries.length };
+    });
+    if (updated.count !== ids.length) fail('Invoice update failed exact-ID validation');
+    await Promise.all(ids.map(id => tx.subDsaPayoutHistory.create({
+      data: { ledger_id: id, old_status: 'DRAFT', new_status: 'INVOICE_RAISED', remarks: `Invoice ${invoiceNumber} generated`, updated_by_id: currentUserId }
+    })));
+    return { invoice, invoice_number: invoiceNumber, total_payout: totalPayout.toFixed(2), entries_count: entries.length };
+  });
 }
 
-// ── Get status history for an entry ─────────────────────────────────────────
-async function getPayoutHistory(tenantId, ledgerId) {
-  const ledger = await prisma.subDsaPayoutLedger.findUnique({ where: { id: parseInt(ledgerId) } });
-  if (!ledger || ledger.tenant_id !== tenantId) {
-    throw Object.assign(new Error('Payout ledger entry not found'), { status: 404 });
-  }
-
+async function getPayoutHistory(tenantId, ledgerId, currentUser) {
+  const where = { id: Number(ledgerId), tenant_id: tenantId };
+  if (currentUser?.role === 'SUB_DSA') where.sub_dsa_user_id = currentUser.id;
+  const ledger = await prisma.subDsaPayoutLedger.findFirst({ where });
+  if (!ledger) fail('Payout ledger entry not found', 404);
   return prisma.subDsaPayoutHistory.findMany({
-    where: { ledger_id: parseInt(ledgerId) },
+    where: { ledger_id: Number(ledgerId) },
     include: { updated_by: { select: { id: true, name: true } } },
     orderBy: { updated_at: 'asc' }
   });
 }
 
-// ── List SubDSA users in a tenant ────────────────────────────────────────────
 async function listSubDsaUsers(tenantId) {
-  const subDsaRole = await prisma.role.findUnique({ where: { name: 'SUB_DSA' } });
-  if (!subDsaRole) return [];
-
   return prisma.user.findMany({
-    where: { tenant_id: tenantId, role_id: subDsaRole.id },
+    where: { tenant_id: tenantId, role: { name: 'SUB_DSA' } },
     select: {
       id: true, name: true, email: true, mobile: true, status: true, created_at: true,
-      sub_dsa_payout_rule: {
-        select: { default_payout_rate: true, payout_trigger: true, tds_applicable: true }
-      }
+      sub_dsa_payout_rule: { select: { default_payout_rate: true, payout_trigger: true, tds_applicable: true } }
     }
   });
 }

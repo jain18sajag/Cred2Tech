@@ -47,7 +47,7 @@ async function getEmployeesConfig(req, res) {
 
 async function getPayouts(req, res) {
   try {
-    const data = await salesIncentiveService.listPayouts(req.user.tenant_id, req.query);
+    const data = await salesIncentiveService.listPayouts(req.user.tenant_id, req.query, req.user);
     res.json(data);
   } catch (error) {
     res.status(500).json({ error: error.message });

@@ -81,7 +81,7 @@ function UpdateStatusModal({ entry, onClose, onSuccess }) {
     }
   };
 
-  const caseLabel = `${entry.case_entity?.case_number || `CASE-${entry.case_id}`} · ${entry.case_entity?.customer?.name || 'Customer'} · ${entry.user?.name || 'SubDSA'}`;
+  const caseLabel = `${entry.case_display_id || `CASE-${entry.case_id}`} · ${entry.customer_name || 'Customer'} · ${entry.user?.name || 'SubDSA'}`;
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -196,14 +196,18 @@ function UpdateStatusModal({ entry, onClose, onSuccess }) {
 }
 
 // ── Generate Invoice Modal ───────────────────────────────────────────────────
-function GenerateInvoiceModal({ subDsaUsers, selectedIds, allLedgers, onClose, onSuccess }) {
-  const [subDsaUserId, setSubDsaUserId] = useState('');
-  const [monthYear, setMonthYear] = useState('');
+function GenerateInvoiceModal({ selectedIds, allLedgers, onClose, onSuccess }) {
   const [saving, setSaving] = useState(false);
+  const selectedRows = allLedgers.filter(l => selectedIds.includes(l.id));
+  const partners = [...new Set(selectedRows.map(l => l.sub_dsa_user_id))];
+  const months = [...new Set(selectedRows.map(l => l.payout_period || l.calculation_metadata?.payout_period).filter(Boolean))];
+  const validSelection = selectedRows.length === selectedIds.length && partners.length === 1 && months.length === 1 && selectedRows.every(l => l.status === 'DRAFT');
+  const subDsaUserId = partners[0];
+  const monthYear = months[0];
 
   const handleGenerate = async () => {
-    if (!subDsaUserId || !monthYear || selectedIds.length === 0) {
-      alert('Please select a SubDSA, month, and at least one payout entry.');
+    if (!validSelection) {
+      alert('Select only DRAFT entries for one Sub-DSA and one payout month.');
       return;
     }
     setSaving(true);
@@ -230,27 +234,13 @@ function GenerateInvoiceModal({ subDsaUsers, selectedIds, allLedgers, onClose, o
             <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
             {selectedIds.length} entry(ies) selected. All must be in DRAFT status.
           </div>
-          <div>
-            <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>SubDSA Partner</label>
-            <select value={subDsaUserId} onChange={e => setSubDsaUserId(e.target.value)}
-              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #D1D5DB', fontSize: 14 }}>
-              <option value="">— Select SubDSA —</option>
-              {subDsaUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>Month-Year (YYYY-MM)</label>
-            <input
-              type="month"
-              value={monthYear}
-              onChange={e => setMonthYear(e.target.value)}
-              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #D1D5DB', fontSize: 14, boxSizing: 'border-box' }}
-            />
+          <div style={{ fontSize: 13, color: validSelection ? '#374151' : '#B91C1C', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 8, padding: '10px 14px' }}>
+            {validSelection ? `Invoice will be generated for ${selectedRows[0]?.user?.name || 'selected Sub-DSA'} / ${monthYear}.` : 'Selection must contain only DRAFT entries for one Sub-DSA and one payout month.'}
           </div>
         </div>
         <div style={{ padding: '16px 24px', borderTop: '1px solid #F3F4F6', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
           <button onClick={onClose} style={{ padding: '9px 20px', borderRadius: 8, border: '1px solid #D1D5DB', background: '#fff', cursor: 'pointer' }}>Cancel</button>
-          <button onClick={handleGenerate} disabled={saving}
+          <button onClick={handleGenerate} disabled={saving || !validSelection}
             style={{ padding: '9px 24px', borderRadius: 8, border: 'none', background: '#4F46E5', color: '#fff', fontWeight: 600, cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1 }}>
             {saving ? 'Generating...' : '🧾 Generate Invoice'}
           </button>
@@ -335,9 +325,9 @@ function SubDsaCard({ subDsa, ledgers, selectedIds, onToggleSelect, onUpdate, is
             </thead>
             <tbody>
               {ledgers.map(l => {
-                const caseNum = l.case_entity?.case_number || `#${l.case_id}`;
-                const customer = l.case_entity?.customer?.name || '—';
-                const product = l.calculation_metadata?.product_type || '—';
+                const caseNum = l.case_display_id || `CASE-${l.case_id}`;
+                const customer = l.customer_name || '—';
+                const product = l.product_type || l.calculation_metadata?.product_type || '—';
                 const subvent = parseFloat(l.subvention_amount || 0);
                 const isSelected = selectedIds.includes(l.id);
                 const canSelect = l.status === 'DRAFT';
@@ -421,6 +411,7 @@ export default function SubDsaPayoutPage() {
 
       const res = await getPayouts(params);
       setLedgers(res.ledgers || []);
+      setSelectedIds(prev => prev.filter(id => (res.ledgers || []).some(l => l.id === id && l.status === 'DRAFT')));
       setSummary(res.summary || { current_month: {}, previous_month: {}, older: {} });
     } catch (e) {
       console.error('Failed to load payouts:', e);
@@ -446,7 +437,19 @@ export default function SubDsaPayoutPage() {
   }, {});
 
   const toggleSelect = (id) => {
-    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    const row = ledgers.find(l => l.id === id);
+    setSelectedIds(prev => {
+      if (prev.includes(id)) return prev.filter(x => x !== id);
+      const currentRows = ledgers.filter(l => prev.includes(l.id));
+      const rowMonth = row?.payout_period || row?.calculation_metadata?.payout_period;
+      const samePartner = currentRows.every(l => l.sub_dsa_user_id === row?.sub_dsa_user_id);
+      const sameMonth = currentRows.every(l => (l.payout_period || l.calculation_metadata?.payout_period) === rowMonth);
+      if (currentRows.length && (!samePartner || !sameMonth)) {
+        alert('Invoice selection must stay within one Sub-DSA and one payout month.');
+        return prev;
+      }
+      return [...prev, id];
+    });
   };
 
   const filterBarStyle = { padding: '12px 16px', background: '#fff', border: '1px solid #E5E7EB', borderRadius: 10, marginBottom: 16 };
@@ -507,6 +510,16 @@ export default function SubDsaPayoutPage() {
             <option value="">All Statuses</option>
             {Object.entries(STATUS_META).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <label style={{ fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase' }}>Product</label>
+          <input
+            type="text"
+            placeholder="ALL, LAP, HL..."
+            value={filters.product}
+            onChange={e => setFilters(p => ({ ...p, product: e.target.value }))}
+            style={{ ...inputStyle, minWidth: 120 }}
+          />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <label style={{ fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase' }}>Search</label>

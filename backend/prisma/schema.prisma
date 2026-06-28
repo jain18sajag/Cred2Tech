@@ -25,9 +25,9 @@ enum UserStatus {
 }
 
 model Role {
-  id    Int    @id @default(autoincrement())
-  name  String @unique
-  users User[]
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  users       User[]
   permissions String[] @default([])
 
   @@map("roles")
@@ -108,11 +108,11 @@ model User {
   created_at      DateTime   @default(now())
   updated_at      DateTime   @updatedAt
 
-  created_by    Int?
-  updated_by    Int?
-  last_login_at DateTime?
-  failed_login_attempts Int @default(0)
-  locked_until  DateTime?
+  created_by            Int?
+  updated_by            Int?
+  last_login_at         DateTime?
+  failed_login_attempts Int       @default(0)
+  locked_until          DateTime?
 
   role         Role   @relation(fields: [role_id], references: [id])
   tenant       Tenant @relation(fields: [tenant_id], references: [id])
@@ -130,7 +130,7 @@ model User {
   activity_logs             ActivityLog[]
   audit_logs                AuditLog[]
   stage_history             CaseStageHistory[]
-  SubDsaPayoutRule          SubDsaPayoutRule?
+  sub_dsa_payout_rule       SubDsaPayoutRule?
   SubDsaPayoutLedger        SubDsaPayoutLedger[]
   SubDsaInvoice             SubDsaInvoice[]
   SubDsaPayoutHistory       SubDsaPayoutHistory[]
@@ -139,12 +139,11 @@ model User {
   EmployeeWalletTransaction EmployeeWalletTransaction[]
   SalesIncentiveLedger      SalesIncentiveLedger[]
 
-  password_reset_tokens     PasswordResetToken[]
-  user_sessions             UserSession[]
+  password_reset_tokens PasswordResetToken[]
+  user_sessions         UserSession[]
+  system_notifications  SystemNotification[]
 
   @@index([tenant_id])
-  system_notifications      SystemNotification[]
-
   @@index([manager_id])
   @@map("users")
 }
@@ -273,13 +272,13 @@ model Case {
 
   // Direct MSME Flow Fields
   lead_source                 String?   @default("DSA") // "DSA" | "DIRECT_MSME"
-  msme_customer_user_id       Int?      // The MSME User who owns this case
-  assigned_dsa_tenant_id      Int?      // Set when admin allocates to DSA
-  assigned_dsa_user_id        Int?      // Set when admin allocates to DSA user
-  allocated_by_admin_id       Int?      // Cred2Tech admin who did allocation
+  msme_customer_user_id       Int? // The MSME User who owns this case
+  assigned_dsa_tenant_id      Int? // Set when admin allocates to DSA
+  assigned_dsa_user_id        Int? // Set when admin allocates to DSA user
+  allocated_by_admin_id       Int? // Cred2Tech admin who did allocation
   allocated_at                DateTime?
   msme_submitted_at           DateTime? // When MSME clicked "Submit"
-  msme_selected_lender_esr_id Int?      // EligibilityReportLender.id chosen
+  msme_selected_lender_esr_id Int? // EligibilityReportLender.id chosen
 
   // Pipeline Snapshot Fields (Performance Design)
   customer_name String?
@@ -314,48 +313,47 @@ model Case {
   contact_mobile     String?
   is_cloned_snapshot Boolean @default(false)
 
-  tenant           Tenant                         @relation(fields: [tenant_id], references: [id])
-  customer         Customer                       @relation(fields: [customer_id], references: [id])
-  created_by       User                           @relation("CaseCreator", fields: [created_by_user_id], references: [id])
-  msme_customer_user User?                        @relation("MsmeCustomerUser", fields: [msme_customer_user_id], references: [id])
-  assigned_dsa_user  User?                        @relation("AssignedDsaUser", fields: [assigned_dsa_user_id], references: [id])
-  allocated_by_admin User?                        @relation("AllocatingAdmin", fields: [allocated_by_admin_id], references: [id])
+  tenant             Tenant                         @relation(fields: [tenant_id], references: [id])
+  customer           Customer                       @relation(fields: [customer_id], references: [id])
+  created_by         User                           @relation("CaseCreator", fields: [created_by_user_id], references: [id])
+  msme_customer_user User?                          @relation("MsmeCustomerUser", fields: [msme_customer_user_id], references: [id])
+  assigned_dsa_user  User?                          @relation("AssignedDsaUser", fields: [assigned_dsa_user_id], references: [id])
+  allocated_by_admin User?                          @relation("AllocatingAdmin", fields: [allocated_by_admin_id], references: [id])
   case_payment       CasePayment?
-  parent_case      Case?                          @relation("ParentChildCase", fields: [parent_case_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  child_cases      Case[]                         @relation("ParentChildCase")
-  applicants       Applicant[]
-  api_logs         ApiUsageLog[]
-  activity_logs    ActivityLog[]
-  data_pull_status CaseDataPullStatus?
-  consents         CustomerConsent[]
-  gst_requests     GstrAnalyticsRequest[]
-  bank_statements  BankStatementAnalysisRequest[]
-  itr_analytics    ItrAnalyticsRequest[]
-  bureau_checks    BureauVerification[]
-  documents        Document[]
+  parent_case        Case?                          @relation("ParentChildCase", fields: [parent_case_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  child_cases        Case[]                         @relation("ParentChildCase")
+  applicants         Applicant[]
+  api_logs           ApiUsageLog[]
+  activity_logs      ActivityLog[]
+  data_pull_status   CaseDataPullStatus?
+  consents           CustomerConsent[]
+  gst_requests       GstrAnalyticsRequest[]
+  bank_statements    BankStatementAnalysisRequest[]
+  itr_analytics      ItrAnalyticsRequest[]
+  bureau_checks      BureauVerification[]
+  documents          Document[]
   // Phase 1 relations
-  property         CasePropertyDetails?
-  income_entries   CaseIncomeEntry[]
-  obligations      CaseCreditObligation[]
-  esrs             EligibilityReport[]
-  esr_financials   CaseEsrFinancials?
-  stage_history    CaseStageHistory[]
-  proposals        Proposal[]
+  property           CasePropertyDetails?
+  income_entries     CaseIncomeEntry[]
+  obligations        CaseCreditObligation[]
+  esrs               EligibilityReport[]
+  esr_financials     CaseEsrFinancials?
+  stage_history      CaseStageHistory[]
+  proposals          Proposal[]
 
   // Sanction & Disbursement
-  sanction             CaseSanction?
-  disbursements        Disbursement[]
-  pdd_tasks            PDDTask[]
-  salary_ocr_results   SalarySlipOcrResult[]
-  commission_ledgers   CommissionLedger[]
-  SubDsaPayoutLedger   SubDsaPayoutLedger[]
-  SalesIncentiveLedger SalesIncentiveLedger[]
-
-  @@index([tenant_id, stage])
-  @@index([tenant_id, lender_name])
+  sanction                  CaseSanction?
+  disbursements             Disbursement[]
+  pdd_tasks                 PDDTask[]
+  salary_ocr_results        SalarySlipOcrResult[]
+  commission_ledgers        CommissionLedger[]
+  SubDsaPayoutLedger        SubDsaPayoutLedger[]
+  SalesIncentiveLedger      SalesIncentiveLedger[]
   data_pull_background_jobs DataPullBackgroundJob[]
   system_notifications      SystemNotification[]
 
+  @@index([tenant_id, stage])
+  @@index([tenant_id, lender_name])
   @@index([tenant_id, lead_date])
   @@map("cases")
 }
@@ -390,14 +388,14 @@ model Applicant {
   updated_at          DateTime       @updatedAt
   source_applicant_id Int? // To map parent applicant to child applicant
 
-  pan_verified                 Boolean   @default(false)
-  pan_verified_at              DateTime?
-  pan_verification_status      String?
-  pan_verification_reference   String?
-  pan_verified_name            String?
-  pan_verified_dob             String?
-  pan_verification_response    Json?
-  pan_verified_by_user_id      Int?
+  pan_verified               Boolean   @default(false)
+  pan_verified_at            DateTime?
+  pan_verification_status    String?
+  pan_verification_reference String?
+  pan_verified_name          String?
+  pan_verified_dob           String?
+  pan_verification_response  Json?
+  pan_verified_by_user_id    Int?
 
   case               Case                           @relation(fields: [case_id], references: [id], onDelete: Cascade)
   bank_statements    BankStatementAnalysisRequest[]
@@ -499,23 +497,23 @@ model LoginOtp {
 }
 
 model CasePayment {
-  id                   Int       @id @default(autoincrement())
-  user_id              Int
-  case_id              Int?      @unique
-  purpose              String
-  amount_inr           Decimal   @db.Decimal(12, 2)
-  amount_paise         Int
-  currency             String    @default("INR")
-  razorpay_order_id    String?   @unique
-  razorpay_payment_id  String?
-  razorpay_signature   String?
-  status               String    @default("INITIATED")
-  failure_reason       String?
-  gst_amount           Decimal?  @db.Decimal(12, 2)
-  idempotency_key      String?   @unique
-  verified_at          DateTime?
-  created_at           DateTime  @default(now())
-  updated_at           DateTime  @updatedAt
+  id                  Int       @id @default(autoincrement())
+  user_id             Int
+  case_id             Int?      @unique
+  purpose             String
+  amount_inr          Decimal   @db.Decimal(12, 2)
+  amount_paise        Int
+  currency            String    @default("INR")
+  razorpay_order_id   String?   @unique
+  razorpay_payment_id String?
+  razorpay_signature  String?
+  status              String    @default("INITIATED")
+  failure_reason      String?
+  gst_amount          Decimal?  @db.Decimal(12, 2)
+  idempotency_key     String?   @unique
+  verified_at         DateTime?
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
 
   user        User  @relation(fields: [user_id], references: [id])
   case_entity Case? @relation(fields: [case_id], references: [id])
@@ -774,47 +772,47 @@ enum GstrAnalyticsStatus {
 }
 
 model GstrAnalyticsRequest {
-  id                    Int                 @id @default(autoincrement())
-  tenant_id             Int
-  customer_id           Int
-  case_id               Int?
-  applicant_id          Int? // NEW: Allow applicant-scoped GST
-  mode                  GstrRequestMode
-  auth_type             GstrAuthType?
-  gstin                 String
-  username              String?
-  from_date             String
-  to_date               String
-  entity_details        Boolean             @default(false)
-  pdf_url_requested     Boolean             @default(false)
-  emails                Json?
-  mobile_numbers        Json?
-  callback_url          String?
-  provider_request_id   String?             @unique
-  auth_link             String?
-  status                GstrAnalyticsStatus @default(INITIATED)
-  provider_message      String?
+  id                        Int                 @id @default(autoincrement())
+  tenant_id                 Int
+  customer_id               Int
+  case_id                   Int?
+  applicant_id              Int? // NEW: Allow applicant-scoped GST
+  mode                      GstrRequestMode
+  auth_type                 GstrAuthType?
+  gstin                     String
+  username                  String?
+  from_date                 String
+  to_date                   String
+  entity_details            Boolean             @default(false)
+  pdf_url_requested         Boolean             @default(false)
+  emails                    Json?
+  mobile_numbers            Json?
+  callback_url              String?
+  provider_request_id       String?             @unique
+  auth_link                 String?
+  status                    GstrAnalyticsStatus @default(INITIATED)
+  provider_message          String?
   provider_callback_payload Json?
-  raw_fetch_data        Json?
-  raw_report_data       Json?
-  raw_gst_data          Json? // Temporarily kept for backward compatibility
+  raw_fetch_data            Json?
+  raw_report_data           Json?
+  raw_gst_data              Json? // Temporarily kept for backward compatibility
 
-  provider_name         String?
-  provider_api_version  String?
-  payload_version       String?
-  processing_version    Int                 @default(1)
+  provider_name        String?
+  provider_api_version String?
+  payload_version      String?
+  processing_version   Int     @default(1)
 
-  report_status         String              @default("PENDING")
-  metrics_status        String              @default("PENDING")
-  metrics_extracted_at  DateTime?
-  metrics_error         String?
+  report_status        String    @default("PENDING")
+  metrics_status       String    @default("PENDING")
+  metrics_extracted_at DateTime?
+  metrics_error        String?
 
   report_json_url       String? // Source audit URL — NOT used for serving
   report_excel_url      String? // Source audit URL — NOT used for serving
   report_pdf_url        String? // Source audit URL — NOT used for serving
   callback_payload      Json?
   wallet_transaction_id Int?
-  otp_attempts          Int                 @default(0)
+  otp_attempts          Int     @default(0)
   // Document storage references (populated after vendor URL ingestion)
   gst_pdf_document_id   Int?
   gst_excel_document_id Int?
@@ -860,26 +858,26 @@ enum GstTurnoverSource {
 }
 
 model GstFinancialYearSummary {
-  id                    Int      @id @default(autoincrement())
-  gst_request_id        Int
-  case_id               Int?
-  applicant_id          Int?
-  gstin                 String
-  financial_year        String
-  source                GstTurnoverSource
+  id             Int               @id @default(autoincrement())
+  gst_request_id Int
+  case_id        Int?
+  applicant_id   Int?
+  gstin          String
+  financial_year String
+  source         GstTurnoverSource
 
-  turnover              Decimal? @db.Decimal(18, 2)
-  months_available      Int      @default(0)
-  months_filed          Int      @default(0)
-  zero_filing_months    Int      @default(0)
-  unavailable_months    Int      @default(0)
-  is_complete           Boolean  @default(false)
+  turnover           Decimal? @db.Decimal(18, 2)
+  months_available   Int      @default(0)
+  months_filed       Int      @default(0)
+  zero_filing_months Int      @default(0)
+  unavailable_months Int      @default(0)
+  is_complete        Boolean  @default(false)
 
-  processing_version    Int
-  created_at            DateTime @default(now())
-  updated_at            DateTime @updatedAt
+  processing_version Int
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
 
-  gst_request           GstrAnalyticsRequest @relation(fields: [gst_request_id], references: [id])
+  gst_request GstrAnalyticsRequest @relation(fields: [gst_request_id], references: [id])
 
   @@unique([gst_request_id, financial_year, source, processing_version])
   @@index([case_id, financial_year, source])
@@ -1577,12 +1575,13 @@ model TenantLender {
   created_at         DateTime @default(now())
   updated_at         DateTime @updatedAt
 
-  tenant             Tenant                 @relation(fields: [tenant_id], references: [id])
-  platform_lender    Lender?                @relation(fields: [platform_lender_id], references: [id])
-  contacts           TenantLenderContact[]
-  commission_rules   LenderCommissionRule[]
-  proposals          Proposal[]
-  SalesIncentiveRule SalesIncentiveRule[]
+  tenant                   Tenant                 @relation(fields: [tenant_id], references: [id])
+  platform_lender          Lender?                @relation(fields: [platform_lender_id], references: [id])
+  contacts                 TenantLenderContact[]
+  commission_rules         LenderCommissionRule[]
+  sub_dsa_lender_overrides SubDsaLenderOverride[]
+  proposals                Proposal[]
+  SalesIncentiveRule       SalesIncentiveRule[]
 
   @@map("tenant_lenders")
 }
@@ -1872,14 +1871,17 @@ model CommissionLedger {
   created_at         DateTime @default(now())
   updated_at         DateTime @updatedAt
 
-  tenant         Tenant             @relation(fields: [tenant_id], references: [id])
-  case_entity    Case               @relation(fields: [case_id], references: [id])
-  disbursement   Disbursement?      @relation(fields: [disbursement_id], references: [id])
-  original_entry CommissionLedger?  @relation("LedgerReversals", fields: [reversal_of_id], references: [id])
-  reversals      CommissionLedger[] @relation("LedgerReversals")
+  tenant               Tenant                 @relation(fields: [tenant_id], references: [id])
+  case_entity          Case                   @relation(fields: [case_id], references: [id])
+  disbursement         Disbursement?          @relation(fields: [disbursement_id], references: [id])
+  original_entry       CommissionLedger?      @relation("LedgerReversals", fields: [reversal_of_id], references: [id])
+  reversals            CommissionLedger[]     @relation("LedgerReversals")
+  SubDsaPayoutLedger   SubDsaPayoutLedger[]
+  SalesIncentiveLedger SalesIncentiveLedger[]
 
   @@index([tenant_id, status])
   @@index([case_id])
+  @@index([tenant_id, case_id, disbursement_id])
   @@map("commission_ledgers")
 }
 
@@ -1912,9 +1914,12 @@ model SubDsaLenderOverride {
   products         String
   override_rate    Float
   effective_from   DateTime?
+  effective_to     DateTime?
 
-  rule SubDsaPayoutRule @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+  rule   SubDsaPayoutRule @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+  lender TenantLender     @relation(fields: [tenant_lender_id], references: [id])
 
+  @@index([tenant_lender_id])
   @@map("sub_dsa_lender_overrides")
 }
 
@@ -1985,13 +1990,15 @@ model SubDsaPayoutLedger {
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
-  tenant      Tenant                @relation(fields: [tenant_id], references: [id])
-  user        User                  @relation(fields: [sub_dsa_user_id], references: [id])
-  case_entity Case                  @relation(fields: [case_id], references: [id])
-  invoice     SubDsaInvoice?        @relation(fields: [invoice_id], references: [id])
-  history     SubDsaPayoutHistory[]
+  tenant            Tenant                @relation(fields: [tenant_id], references: [id])
+  user              User                  @relation(fields: [sub_dsa_user_id], references: [id])
+  case_entity       Case                  @relation(fields: [case_id], references: [id])
+  commission_ledger CommissionLedger      @relation(fields: [commission_ledger_id], references: [id])
+  invoice           SubDsaInvoice?        @relation(fields: [invoice_id], references: [id])
+  history           SubDsaPayoutHistory[]
 
   @@index([tenant_id, sub_dsa_user_id, status])
+  @@index([tenant_id, case_id])
   @@index([invoice_id])
   @@map("sub_dsa_payout_ledgers")
 }
@@ -2154,14 +2161,20 @@ model SalesIncentiveLedger {
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
-  tenant       Tenant              @relation(fields: [tenant_id], references: [id])
-  user         User?               @relation(fields: [user_id], references: [id])
-  case_entity  Case                @relation(fields: [case_id], references: [id])
-  rule         SalesIncentiveRule? @relation(fields: [rule_id], references: [id])
-  disbursement Disbursement?       @relation(fields: [disbursement_id], references: [id])
+  tenant            Tenant              @relation(fields: [tenant_id], references: [id])
+  user              User?               @relation(fields: [user_id], references: [id])
+  case_entity       Case                @relation(fields: [case_id], references: [id])
+  rule              SalesIncentiveRule? @relation(fields: [rule_id], references: [id])
+  disbursement      Disbursement?       @relation(fields: [disbursement_id], references: [id])
+  commission_ledger CommissionLedger?   @relation(fields: [commission_ledger_id], references: [id])
 
+  @@index([tenant_id, user_id, status])
+  @@index([tenant_id, case_id])
+  @@index([commission_ledger_id])
+  @@index([disbursement_id])
   @@map("sales_incentive_ledgers")
 }
+
 // ----------------------------------------------------------------------
 // Missing tables added from second PostgreSQL backup
 // Existing models/columns above were preserved without removal.
@@ -2185,21 +2198,21 @@ model AdminAuditLog {
 }
 
 model Admin {
-  id                  BigInt    @id @default(autoincrement())
-  email               String    @unique @db.VarChar(255)
-  password_hash       String    @db.VarChar(255)
-  full_name           String    @db.VarChar(100)
-  phone               String?   @db.VarChar(15)
-  role                String?   @default("ADMIN") @db.VarChar(50)
-  permissions         String[]  @default([])
-  status              String?   @default("ACTIVE") @db.VarChar(20)
-  created_at          DateTime? @default(now()) @db.Timestamp(6)
-  updated_at          DateTime? @default(now()) @db.Timestamp(6)
-  last_login_at       DateTime? @db.Timestamp(6)
-  login_count         Int?      @default(0)
-  tokens_valid_from   DateTime? @db.Timestamptz(6)
-  must_change_password Boolean? @default(false)
-  admin_code          String?   @unique @db.VarChar(20)
+  id                   BigInt    @id @default(autoincrement())
+  email                String    @unique @db.VarChar(255)
+  password_hash        String    @db.VarChar(255)
+  full_name            String    @db.VarChar(100)
+  phone                String?   @db.VarChar(15)
+  role                 String?   @default("ADMIN") @db.VarChar(50)
+  permissions          String[]  @default([])
+  status               String?   @default("ACTIVE") @db.VarChar(20)
+  created_at           DateTime? @default(now()) @db.Timestamp(6)
+  updated_at           DateTime? @default(now()) @db.Timestamp(6)
+  last_login_at        DateTime? @db.Timestamp(6)
+  login_count          Int?      @default(0)
+  tokens_valid_from    DateTime? @db.Timestamptz(6)
+  must_change_password Boolean?  @default(false)
+  admin_code           String?   @unique @db.VarChar(20)
 
   @@map("admins")
 }
@@ -2229,10 +2242,10 @@ model Agent {
   reset_token_expires_at DateTime? @db.Timestamptz(6)
   tokens_valid_from      DateTime? @db.Timestamptz(6)
 
-  activity_logs        AgentActivityLog[]
-  availability_logs    AgentAvailabilityLog[]
-  assigned_scheme_cases SchemeCase[] @relation("SchemeCaseAssignedAgent")
-  closed_scheme_cases   SchemeCase[] @relation("SchemeCaseClosedByAgent")
+  activity_logs         AgentActivityLog[]
+  availability_logs     AgentAvailabilityLog[]
+  assigned_scheme_cases SchemeCase[]           @relation("SchemeCaseAssignedAgent")
+  closed_scheme_cases   SchemeCase[]           @relation("SchemeCaseClosedByAgent")
 
   @@index([approval_status], map: "idx_agents_approval_status")
   @@index([employee_id], map: "idx_agents_employee_id")
@@ -2241,12 +2254,12 @@ model Agent {
 }
 
 model AgentActivityLog {
-  id            BigInt   @id @default(autoincrement())
+  id            BigInt    @id @default(autoincrement())
   agent_id      BigInt
-  activity_type String   @db.VarChar(50)
+  activity_type String    @db.VarChar(50)
   case_id       BigInt?
   details       Json?
-  ip_address    String?  @db.Inet
+  ip_address    String?   @db.Inet
   user_agent    String?
   created_at    DateTime? @default(now()) @db.Timestamp(6)
 
@@ -2294,16 +2307,16 @@ model AiUsageLog {
 }
 
 model CaseDocumentRequest {
-  id                   BigInt    @id @default(autoincrement())
-  case_id              BigInt
-  msme_user_id         BigInt
-  document_name        String    @db.VarChar(500)
-  description          String?
+  id                    BigInt    @id @default(autoincrement())
+  case_id               BigInt
+  msme_user_id          BigInt
+  document_name         String    @db.VarChar(500)
+  description           String?
   requested_by_agent_id BigInt?
-  requested_at         DateTime? @default(now()) @db.Timestamptz(6)
-  status               String?   @default("PENDING") @db.VarChar(50)
-  uploaded_document_id BigInt?
-  fulfilled_at         DateTime? @db.Timestamptz(6)
+  requested_at          DateTime? @default(now()) @db.Timestamptz(6)
+  status                String?   @default("PENDING") @db.VarChar(50)
+  uploaded_document_id  BigInt?
+  fulfilled_at          DateTime? @db.Timestamptz(6)
 
   case_entity       SchemeCase    @relation(map: "case_document_requests_case_id_fkey", fields: [case_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   uploaded_document CaseDocument? @relation(map: "case_document_requests_uploaded_document_id_fkey", fields: [uploaded_document_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -2331,64 +2344,64 @@ model CaseDocument {
 }
 
 model MsmeBusiness {
-  id                                   BigInt    @id @default(autoincrement())
-  user_id                              BigInt
-  is_primary                           Boolean?  @default(false)
-  has_paid                             Boolean?  @default(false)
-  payment_id                           String?   @db.VarChar(100)
-  pan_number                           String?   @db.VarChar(20)
-  pan_verified                         Boolean?  @default(false)
-  gstin                                String?   @db.VarChar(20)
-  gstin_verified                       Boolean?  @default(false)
-  gstin_status                         String?
-  constitution_of_business             String?
-  legal_name_of_business               String?
-  trade_name_of_business               String?
-  principal_address                    String?
-  principal_city                       String?
-  principal_state                      String?
-  principal_district                   String?
-  principal_pincode                    String?   @db.VarChar(20)
-  director_names                       String?
-  annual_turnover_range                String?
-  annual_turnover_lakhs                Decimal?  @default(0) @db.Decimal(15, 2)
-  taxpayer_type                        String?
-  registration_date                    String?
-  centre_jurisdiction                  String?
-  state_jurisdiction                   String?
-  nature_of_business_activities        String?
-  einvoicing_status                    String?
-  nature_of_core_business              String?
-  business_type                        String?   @db.VarChar(50)
-  business_sector                      String?   @db.VarChar(50)
-  enterprise_category                  String?   @db.VarChar(50)
-  years_in_operation                   Int?      @default(0)
-  state                                String?
-  udyam_number                         String?   @db.VarChar(50)
-  udyam_verified                       Boolean?  @default(false)
-  udyam_registered                     Boolean?
-  investment_in_plant_machinery_lakhs  Decimal?  @db.Decimal(15, 2)
-  investment_in_equipment_lakhs        Decimal?  @db.Decimal(15, 2)
-  is_startup                           Boolean?
-  is_export_oriented                   Boolean?  @default(false)
-  is_women_led                         Boolean?  @default(false)
-  total_employees                      Int?      @default(0)
-  women_employees                      Int?      @default(0)
-  pwd_employees                        Int?      @default(0)
-  is_incorporated                      Boolean?  @default(false)
-  is_first_generation_entrepreneur     Boolean?  @default(false)
-  has_patent                           Boolean?  @default(false)
-  is_innovation_focused                Boolean?  @default(false)
-  has_rd_facility                      Boolean?  @default(false)
-  business_stage                       String?   @db.VarChar(50)
-  benefit_focus                        String?   @db.VarChar(50)
-  registration_number                  String?   @db.VarChar(50)
-  business_plan_ready                  Boolean?  @default(false)
-  already_registered_schemes           String[]  @default([])
-  years_domicile_in_state              Decimal?  @db.Decimal(5, 2)
-  is_in_notified_area                  Boolean?  @default(false)
-  created_at                           DateTime? @default(now()) @db.Timestamp(6)
-  updated_at                           DateTime? @default(now()) @db.Timestamp(6)
+  id                                  BigInt    @id @default(autoincrement())
+  user_id                             BigInt
+  is_primary                          Boolean?  @default(false)
+  has_paid                            Boolean?  @default(false)
+  payment_id                          String?   @db.VarChar(100)
+  pan_number                          String?   @db.VarChar(20)
+  pan_verified                        Boolean?  @default(false)
+  gstin                               String?   @db.VarChar(20)
+  gstin_verified                      Boolean?  @default(false)
+  gstin_status                        String?
+  constitution_of_business            String?
+  legal_name_of_business              String?
+  trade_name_of_business              String?
+  principal_address                   String?
+  principal_city                      String?
+  principal_state                     String?
+  principal_district                  String?
+  principal_pincode                   String?   @db.VarChar(20)
+  director_names                      String?
+  annual_turnover_range               String?
+  annual_turnover_lakhs               Decimal?  @default(0) @db.Decimal(15, 2)
+  taxpayer_type                       String?
+  registration_date                   String?
+  centre_jurisdiction                 String?
+  state_jurisdiction                  String?
+  nature_of_business_activities       String?
+  einvoicing_status                   String?
+  nature_of_core_business             String?
+  business_type                       String?   @db.VarChar(50)
+  business_sector                     String?   @db.VarChar(50)
+  enterprise_category                 String?   @db.VarChar(50)
+  years_in_operation                  Int?      @default(0)
+  state                               String?
+  udyam_number                        String?   @db.VarChar(50)
+  udyam_verified                      Boolean?  @default(false)
+  udyam_registered                    Boolean?
+  investment_in_plant_machinery_lakhs Decimal?  @db.Decimal(15, 2)
+  investment_in_equipment_lakhs       Decimal?  @db.Decimal(15, 2)
+  is_startup                          Boolean?
+  is_export_oriented                  Boolean?  @default(false)
+  is_women_led                        Boolean?  @default(false)
+  total_employees                     Int?      @default(0)
+  women_employees                     Int?      @default(0)
+  pwd_employees                       Int?      @default(0)
+  is_incorporated                     Boolean?  @default(false)
+  is_first_generation_entrepreneur    Boolean?  @default(false)
+  has_patent                          Boolean?  @default(false)
+  is_innovation_focused               Boolean?  @default(false)
+  has_rd_facility                     Boolean?  @default(false)
+  business_stage                      String?   @db.VarChar(50)
+  benefit_focus                       String?   @db.VarChar(50)
+  registration_number                 String?   @db.VarChar(50)
+  business_plan_ready                 Boolean?  @default(false)
+  already_registered_schemes          String[]  @default([])
+  years_domicile_in_state             Decimal?  @db.Decimal(5, 2)
+  is_in_notified_area                 Boolean?  @default(false)
+  created_at                          DateTime? @default(now()) @db.Timestamp(6)
+  updated_at                          DateTime? @default(now()) @db.Timestamp(6)
 
   user MsmeUser @relation(map: "msme_businesses_user_id_fkey", fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
@@ -2586,37 +2599,37 @@ model SchemeCaseHistory {
 }
 
 model SchemeCase {
-  id                 BigInt    @id @default(autoincrement())
-  case_number        String    @unique @db.VarChar(50)
-  msme_user_id       BigInt
-  scheme_id          String    @db.VarChar(100)
-  scheme_name        String?   @db.VarChar(255)
-  status             String?   @default("NEW") @db.VarChar(30)
-  priority           String?   @default("MEDIUM") @db.VarChar(20)
-  assigned_agent_id  BigInt?
-  assigned_by        BigInt?
-  assigned_at        DateTime? @db.Timestamp(6)
-  application_data   Json?
-  msme_notes         String?
-  agent_notes        String?
-  admin_notes        String?
-  last_contact_at    DateTime? @db.Timestamp(6)
-  contact_count      Int?      @default(0)
-  created_at         DateTime? @default(now()) @db.Timestamp(6)
-  updated_at         DateTime? @default(now()) @db.Timestamp(6)
-  started_at         DateTime? @db.Timestamp(6)
-  completed_at       DateTime? @db.Timestamp(6)
-  closed_at          DateTime? @db.Timestamp(6)
-  closure_reason     String?   @db.VarChar(50)
-  closure_notes      String?
-  closed_by          BigInt?
+  id                BigInt    @id @default(autoincrement())
+  case_number       String    @unique @db.VarChar(50)
+  msme_user_id      BigInt
+  scheme_id         String    @db.VarChar(100)
+  scheme_name       String?   @db.VarChar(255)
+  status            String?   @default("NEW") @db.VarChar(30)
+  priority          String?   @default("MEDIUM") @db.VarChar(20)
+  assigned_agent_id BigInt?
+  assigned_by       BigInt?
+  assigned_at       DateTime? @db.Timestamp(6)
+  application_data  Json?
+  msme_notes        String?
+  agent_notes       String?
+  admin_notes       String?
+  last_contact_at   DateTime? @db.Timestamp(6)
+  contact_count     Int?      @default(0)
+  created_at        DateTime? @default(now()) @db.Timestamp(6)
+  updated_at        DateTime? @default(now()) @db.Timestamp(6)
+  started_at        DateTime? @db.Timestamp(6)
+  completed_at      DateTime? @db.Timestamp(6)
+  closed_at         DateTime? @db.Timestamp(6)
+  closure_reason    String?   @db.VarChar(50)
+  closure_notes     String?
+  closed_by         BigInt?
 
-  sme_user       MsmeUser            @relation(map: "scheme_cases_msme_user_id_fkey", fields: [msme_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  assigned_agent  Agent?              @relation("SchemeCaseAssignedAgent", map: "scheme_cases_assigned_agent_id_fkey", fields: [assigned_agent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  closed_by_agent Agent?              @relation("SchemeCaseClosedByAgent", map: "scheme_cases_closed_by_fkey", fields: [closed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  activity_logs   AgentActivityLog[]
-  history         SchemeCaseHistory[]
-  documents       CaseDocument[]
+  sme_user          MsmeUser              @relation(map: "scheme_cases_msme_user_id_fkey", fields: [msme_user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  assigned_agent    Agent?                @relation("SchemeCaseAssignedAgent", map: "scheme_cases_assigned_agent_id_fkey", fields: [assigned_agent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  closed_by_agent   Agent?                @relation("SchemeCaseClosedByAgent", map: "scheme_cases_closed_by_fkey", fields: [closed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  activity_logs     AgentActivityLog[]
+  history           SchemeCaseHistory[]
+  documents         CaseDocument[]
   document_requests CaseDocumentRequest[]
 
   @@index([assigned_agent_id], map: "idx_scheme_cases_assigned_agent_id")
@@ -2648,20 +2661,20 @@ model UserEligibilitySnapshot {
 }
 
 model UserEligibleScheme {
-  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id              String
-  slug                 String
-  scheme_name          String?
-  scheme_level         String?
-  nodal_ministry_name  String?
-  brief_description    String?
-  tags                 Json?
-  scheme_data          Json?
-  match_percentage     Int?      @default(100)
-  is_active            Boolean?  @default(true)
-  is_bookmarked        Boolean?  @default(false)
-  created_at           DateTime? @default(now()) @db.Timestamp(6)
-  updated_at           DateTime? @default(now()) @db.Timestamp(6)
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id             String
+  slug                String
+  scheme_name         String?
+  scheme_level        String?
+  nodal_ministry_name String?
+  brief_description   String?
+  tags                Json?
+  scheme_data         Json?
+  match_percentage    Int?      @default(100)
+  is_active           Boolean?  @default(true)
+  is_bookmarked       Boolean?  @default(false)
+  created_at          DateTime? @default(now()) @db.Timestamp(6)
+  updated_at          DateTime? @default(now()) @db.Timestamp(6)
 
   @@unique([user_id, slug])
   @@index([user_id], map: "idx_user_eligible_schemes_user_id")
@@ -2677,7 +2690,8 @@ model PasswordResetToken {
   used       Boolean  @default(false)
   created_at DateTime @default(now())
 
-  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
   @@map("password_reset_tokens")
 }
 
@@ -2692,7 +2706,8 @@ model UserSession {
   last_activity_at DateTime @default(now())
   created_at       DateTime @default(now())
 
-  user             User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
   @@index([user_id])
   @@map("user_sessions")
 }
@@ -2752,7 +2767,7 @@ enum NotificationAudienceType {
 }
 
 model DataPullBackgroundJob {
-  id                     Int                @id @default(autoincrement())
+  id                     Int               @id @default(autoincrement())
   tenant_id              Int
   case_id                Int
   applicant_id           Int?
@@ -2760,23 +2775,23 @@ model DataPullBackgroundJob {
   module_request_id      Int
   provider_request_id    String?
   flow_type              DataPullFlowType?
-  status                 DataPullJobStatus  @default(PENDING)
+  status                 DataPullJobStatus @default(PENDING)
   next_run_at            DateTime?
-  attempt_count          Int                @default(0)
+  attempt_count          Int               @default(0)
   maximum_attempts       Int?
   locked_at              DateTime?
   locked_by              String?
   lock_expires_at        DateTime?
-  lock_token             String?            @db.Uuid
+  lock_token             String?           @db.Uuid
   processing_deadline_at DateTime?
-  last_error             String?            @db.Text
+  last_error             String?           @db.Text
   completed_at           DateTime?
-  created_at             DateTime           @default(now())
-  updated_at             DateTime           @updatedAt
+  created_at             DateTime          @default(now())
+  updated_at             DateTime          @updatedAt
 
-  case                   Case               @relation(fields: [case_id], references: [id])
-  applicant              Applicant?         @relation(fields: [applicant_id], references: [id])
-  tenant                 Tenant             @relation(fields: [tenant_id], references: [id])
+  case      Case       @relation(fields: [case_id], references: [id])
+  applicant Applicant? @relation(fields: [applicant_id], references: [id])
+  tenant    Tenant     @relation(fields: [tenant_id], references: [id])
 
   @@unique([tenant_id, case_id, pull_type, module_request_id])
   @@index([status, next_run_at])
@@ -2787,25 +2802,25 @@ model DataPullBackgroundJob {
 }
 
 model SystemNotification {
-  id                   Int                    @id @default(autoincrement())
-  tenant_id            Int
-  case_id              Int
-  applicant_id         Int?
-  pull_type            DataPullType
-  status               PullNotificationStatus
-  message              String                 @db.Text
-  audience_type        NotificationAudienceType
-  recipient_user_id    Int?
-  deduplication_key    String                 @unique
-  read_at              DateTime?
-  dismissed_at         DateTime?
-  action_url           String?
-  created_at           DateTime               @default(now())
-  updated_at           DateTime               @updatedAt
+  id                Int                      @id @default(autoincrement())
+  tenant_id         Int
+  case_id           Int
+  applicant_id      Int?
+  pull_type         DataPullType
+  status            PullNotificationStatus
+  message           String                   @db.Text
+  audience_type     NotificationAudienceType
+  recipient_user_id Int?
+  deduplication_key String                   @unique
+  read_at           DateTime?
+  dismissed_at      DateTime?
+  action_url        String?
+  created_at        DateTime                 @default(now())
+  updated_at        DateTime                 @updatedAt
 
-  case                 Case                   @relation(fields: [case_id], references: [id])
-  tenant               Tenant                 @relation(fields: [tenant_id], references: [id])
-  recipient            User?                  @relation(fields: [recipient_user_id], references: [id])
+  case      Case   @relation(fields: [case_id], references: [id])
+  tenant    Tenant @relation(fields: [tenant_id], references: [id])
+  recipient User?  @relation(fields: [recipient_user_id], references: [id])
 }
 
 model VendorApiAuditLog {
@@ -2819,12 +2834,12 @@ model VendorApiAuditLog {
   provider_request_id    String?
   attempt_number         Int
   provider_operation     String
-  trigger_source         String    // 'INITIAL_REQUEST', 'BACKGROUND_RECONCILIATION', etc.
+  trigger_source         String // 'INITIAL_REQUEST', 'BACKGROUND_RECONCILIATION', etc.
   chargeable             Boolean
   tenant_wallet_deducted Boolean   @default(false)
   started_at             DateTime
   finished_at            DateTime?
-  result_status          String?   // 'SUCCESS', 'ERROR'
+  result_status          String? // 'SUCCESS', 'ERROR'
   http_status            Int?
   error_category         String?
   created_at             DateTime  @default(now())
