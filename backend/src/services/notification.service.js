@@ -12,12 +12,12 @@ exports.determineNotificationRecipient = async (tenantId, caseId, initiatorId = 
     if (caseId) {
         caseRecord = await prisma.case.findUnique({
             where: { id: parseInt(caseId, 10) },
-            select: { assigned_to_user_id: true, created_by_user_id: true }
+            select: { assigned_dsa_user_id: true, created_by_user_id: true }
         });
     }
 
-    if (caseRecord && caseRecord.assigned_to_user_id) {
-        return { recipient_user_id: caseRecord.assigned_to_user_id, audience_type: 'CASE_ASSIGNEE' };
+    if (caseRecord && caseRecord.assigned_dsa_user_id) {
+        return { recipient_user_id: caseRecord.assigned_dsa_user_id, audience_type: 'CASE_ASSIGNEE' };
     }
 
     if (caseRecord && caseRecord.created_by_user_id) {
