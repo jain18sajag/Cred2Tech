@@ -32,9 +32,9 @@ const SHEET_NAMES = [
 const MIME_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const MAX_SOURCE_EXCEL_SIZE_BYTES = 15 * 1024 * 1024;
 const SOURCE_SHEET_LIMITS = {
-  bank: ['Summary', 'Overview', 'Monthly summary', 'Daily balance', 'Transactions'],
+  bank: ['Summary'],
   itr: ['General Information', 'Tax Calculation', 'Balance Sheet', 'Profit and Loss Statement', 'Ratio Analysis'],
-  gst: ['Account Details', 'Entity Details', 'Overview Yearly', 'Overview Monthly', 'Monthly Sales and Purchase', 'Customer Summary', 'Supplier Summary']
+  gst: ['Overview Monthly']
 };
 
 function buildReportFileName(caseId) {
@@ -69,6 +69,7 @@ function sanitizeExcelValue(value, fallback = '') {
     .replace(/\b(null|undefined|NaN|None)\b/gi, 'N/A')
     .trim();
   if (!text) return fallback;
+  if (/^-+$/.test(text)) return text;
   return /^[=+\-@]/.test(text) ? `'${text}` : text;
 }
 
@@ -326,6 +327,12 @@ function clearWorksheet(ws) {
   merges.forEach((range) => {
     try { ws.unMergeCells(range); } catch (_) {}
   });
+  ws.eachRow({ includeEmpty: true }, (row) => {
+    row.eachCell({ includeEmpty: true }, (cell) => {
+      cell.value = null;
+      cell.style = {};
+    });
+  });
   if (ws.rowCount > 0) ws.spliceRows(1, ws.rowCount);
   ws.columns = [];
 }
@@ -394,7 +401,7 @@ function copySourceWorkbookToSheet(targetSheet, sourceWorkbook, sourceType) {
   const selectedSheetNames = preferredSheets
     .map(name => findSourceSheetName(sourceWorkbook, name))
     .filter(Boolean);
-  const fallbackSheetNames = selectedSheetNames.length ? [] : sourceWorkbook.SheetNames.slice(0, 5);
+  const fallbackSheetNames = selectedSheetNames.length ? [] : sourceWorkbook.SheetNames.slice(0, Math.min(sourceWorkbook.SheetNames.length, preferredSheets.length || 1));
   const sheetNames = [...new Set([...selectedSheetNames, ...fallbackSheetNames])];
 
   const sections = sheetNames.map(sheetName => ({
@@ -415,9 +422,9 @@ function copySourceWorkbookToSheet(targetSheet, sourceWorkbook, sourceType) {
 
     rows.forEach((row, index) => {
       if (isLikelyHeaderRow(row, rows[index + 1])) headerRows.add(rowCursor);
-      row.forEach((value, index) => {
-        targetSheet.getCell(rowCursor, index + 1).value = sanitizeExcelValue(value, '');
-      });
+      for (let col = 1; col <= maxColumns; col += 1) {
+        targetSheet.getCell(rowCursor, col).value = sanitizeExcelValue(row[col - 1], '');
+      }
       rowCursor += 1;
     });
     rowCursor += 1;

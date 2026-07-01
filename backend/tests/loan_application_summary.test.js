@@ -53,6 +53,7 @@ test('loan application summary rejects invalid workbook contract', () => {
 test('loan application summary sanitizes unsafe and missing display values', () => {
   assert.equal(sanitizeExcelValue('=SUM(A1:A2)'), "'=SUM(A1:A2)");
   assert.equal(sanitizeExcelValue('+441234567890'), "'+441234567890");
+  assert.equal(sanitizeExcelValue('-'), '-');
   assert.equal(sanitizeExcelValue('undefined'), 'N/A');
   assert.equal(sanitizeExcelValue(Number.NaN, 'N/A'), 'N/A');
 });
@@ -83,8 +84,38 @@ test('loan application summary copies source Excel sections into existing report
   assert.equal(sheet.getCell('A2').value, 'Description');
   assert.equal(sheet.getCell('B2').value, 'HDFC - 123 - Savings');
   assert.equal(sheet.getCell('B4').value, '50200080231149');
-  assert.equal(sheet.getCell('A6').value, 'Monthly summary');
-  assert.equal(sheet.getCell('A7').value, 'Month');
+  assert.equal(sheet.getCell('A6').value, null);
+  assert.equal(sheet.getCell('A7').value, null);
+});
+
+test('loan application summary copies only requested GST and ITR source sheets', () => {
+  const target = new ExcelJS.Workbook();
+  const gstSheet = target.addWorksheet('GST Analysis');
+  const itrSheet = target.addWorksheet('ITR Analysis');
+
+  const gstSource = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(gstSource, XLSX.utils.aoa_to_sheet([['Account Details'], ['PAN', 'AAAAA0000A']]), 'Account Details');
+  XLSX.utils.book_append_sheet(gstSource, XLSX.utils.aoa_to_sheet([['Particulars', 'Total'], ['Sales', 1000]]), 'Overview Monthly');
+  XLSX.utils.book_append_sheet(gstSource, XLSX.utils.aoa_to_sheet([['Customer Summary'], ['A', 1]]), 'Customer Summary');
+
+  const itrSource = XLSX.utils.book_new();
+  ['General Information', 'Tax Calculation', 'Balance Sheet', 'Profit and Loss Statement', 'Ratio Analysis', 'Appendix-1'].forEach((name) => {
+    XLSX.utils.book_append_sheet(itrSource, XLSX.utils.aoa_to_sheet([[name], ['Value', 1]]), name);
+  });
+
+  assert.equal(copySourceWorkbookToSheet(gstSheet, gstSource, 'gst'), true);
+  assert.equal(copySourceWorkbookToSheet(itrSheet, itrSource, 'itr'), true);
+
+  const gstValues = JSON.stringify(gstSheet.getSheetValues());
+  const itrValues = JSON.stringify(itrSheet.getSheetValues());
+
+  assert.match(gstValues, /Overview Monthly/);
+  assert.doesNotMatch(gstValues, /Account Details/);
+  assert.doesNotMatch(gstValues, /Customer Summary/);
+  ['General Information', 'Tax Calculation', 'Balance Sheet', 'Profit and Loss Statement', 'Ratio Analysis'].forEach((name) => {
+    assert.match(itrValues, new RegExp(name));
+  });
+  assert.doesNotMatch(itrValues, /Appendix-1/);
 });
 
 test('loan application summary resolves stored source URL when document id is missing', async () => {
