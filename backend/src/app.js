@@ -94,6 +94,7 @@ const pddRoutes = require('./routes/pdd.routes');
 const subDsaPayoutRoutes = require('./routes/subDsaPayout.routes');
 const dashboardRoutes = require('./routes/dashboard.routes');
 const salesIncentiveRoutes = require('./routes/salesIncentive.routes');
+const loanApplicationSummaryRoutes = require('./routes/loanApplicationSummary.routes');
 
 // Rate Limiting Middlewares
 const loginLimiter = rateLimit({
@@ -174,6 +175,7 @@ apiRouter.use('/pdd-tasks', pddRoutes);
 apiRouter.use('/sub-dsa', subDsaPayoutRoutes);
 apiRouter.use('/dashboard', dashboardRoutes);
 apiRouter.use('/sales-incentives', salesIncentiveRoutes);
+apiRouter.use('/loan-application-summary', loanApplicationSummaryRoutes);
 apiRouter.use('/msme/auth', directCustomerAuthRoutes);
 apiRouter.use('/msme', directCustomerRoutes);
 apiRouter.use('/admin/msme-cases', adminDirectCustomerRoutes);

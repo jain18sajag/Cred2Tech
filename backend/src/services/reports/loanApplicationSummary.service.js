@@ -15,11 +15,24 @@ const fs = require('fs');
 const path = require('path');
 const ExcelJS = require('exceljs');
 const prisma = require('../../../config/db');
+const { getStorageProvider } = require('../storage');
 
 const TEMPLATE_PATH = path.resolve(__dirname, '../../templates/reports/Loan Application Summary.xlsx');
 const LOGO_PATH = path.resolve(__dirname, '../../templates/reports/white-logo.jpg');
 
-const REPORT_FILE_NAME = 'Loan Application Summary.xlsx';
+const SHEET_NAMES = [
+  'Summary',
+  'Bank Statement Analysis',
+  'ITR Analysis',
+  'GST Analysis',
+  'Cibil - Transunion'
+];
+const MIME_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+function buildReportFileName(caseId) {
+  const suffix = Number.isFinite(Number(caseId)) ? Number(caseId) : String(caseId || 'case');
+  return `Loan_Application_Summary_${suffix}.xlsx`;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Generic helpers
@@ -31,11 +44,24 @@ function isBlank(value) {
 
 function safe(value, fallback = '') {
   if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'number' && !Number.isFinite(value)) return fallback;
   return value;
 }
 
 function safeNA(value) {
   return safe(value, 'N/A');
+}
+
+function sanitizeExcelValue(value, fallback = '') {
+  const resolved = safe(value, fallback);
+  if (resolved === undefined || resolved === null || resolved === '') return fallback;
+  if (typeof resolved === 'number') return Number.isFinite(resolved) ? resolved : fallback;
+  if (resolved instanceof Date) return resolved;
+  const text = String(resolved)
+    .replace(/\b(null|undefined|NaN|None)\b/gi, 'N/A')
+    .trim();
+  if (!text) return fallback;
+  return /^[=+\-@]/.test(text) ? `'${text}` : text;
 }
 
 function toNumber(value) {
@@ -103,12 +129,85 @@ function getDeep(obj, paths, fallback = '') {
 }
 
 function setCell(ws, address, value, fallback = '') {
-  ws.getCell(address).value = safe(value, fallback);
+  ws.getCell(address).value = sanitizeExcelValue(value, fallback);
 }
 
 function setNumberCell(ws, address, value) {
   const n = toNumber(value);
   ws.getCell(address).value = n === null ? '' : n;
+}
+
+function ensureWorksheetContract(workbook) {
+  const bankWithTrailingDot = workbook.getWorksheet('Bank Statement Analysis.');
+  if (bankWithTrailingDot) bankWithTrailingDot.name = 'Bank Statement Analysis';
+
+  SHEET_NAMES.forEach((name) => {
+    if (!workbook.getWorksheet(name)) workbook.addWorksheet(name);
+  });
+
+  workbook.worksheets.slice().forEach((ws) => {
+    if (!SHEET_NAMES.includes(ws.name)) workbook.removeWorksheet(ws.id);
+  });
+
+  const ordered = SHEET_NAMES.map(name => workbook.getWorksheet(name)).filter(Boolean);
+  if (ordered.length === SHEET_NAMES.length) {
+    workbook._worksheets = [undefined, ...ordered];
+  }
+}
+
+function sourceUnavailable(caseRecord, source) {
+  if (source === 'bank') return !(caseRecord.bank_statements || []).length && !latestRawBank(caseRecord);
+  if (source === 'itr') return !(caseRecord.itr_analytics || []).length && !latestRawItr(caseRecord);
+  if (source === 'gst') return !(caseRecord.gst_requests || []).length && !latestRawGst(caseRecord);
+  if (source === 'cibil') {
+    const applicantChecks = (caseRecord.applicants || []).some(a => (a.bureau_checks || []).length || a.cibil_score);
+    return !(caseRecord.bureau_checks || []).length && !applicantChecks && !caseRecord.cibil_score;
+  }
+  return false;
+}
+
+function writeNoDataMessage(ws, message) {
+  if (!ws) return;
+  ws.spliceRows(1, Math.max(ws.rowCount, 1));
+  ws.getCell('A1').value = message;
+  ws.getCell('A1').font = { bold: true, size: 12, color: { argb: 'FF1F2937' } };
+  ws.getCell('A1').alignment = { wrapText: true, vertical: 'middle' };
+  ws.getColumn(1).width = Math.max(ws.getColumn(1).width || 10, 64);
+}
+
+function validateWorkbook(workbook, { requireCaseSummary = false } = {}) {
+  const names = workbook.worksheets.map(ws => ws.name);
+  const errors = [];
+
+  if (names.length !== SHEET_NAMES.length) errors.push(`Expected ${SHEET_NAMES.length} sheets, found ${names.length}.`);
+  SHEET_NAMES.forEach((name, idx) => {
+    if (names[idx] !== name) errors.push(`Expected sheet ${idx + 1} to be "${name}", found "${names[idx] || 'missing'}".`);
+  });
+
+  if (requireCaseSummary) {
+    const summary = workbook.getWorksheet('Summary');
+    const values = summary ? JSON.stringify(summary.getSheetValues()) : '';
+    if (!values.includes('CASE-')) errors.push('Summary does not contain Case Ref.');
+    if (!values.replace(/\bN\/A\b/g, '').match(/[A-Za-z]{3,}/)) errors.push('Summary does not contain Customer.');
+  }
+
+  const forbidden = /\b(undefined|null|NaN|None)\b|#DIV\/0!|#VALUE!|#REF!|#NAME\?/i;
+  workbook.worksheets.forEach((ws) => {
+    ws.eachRow((row) => {
+      row.eachCell((cell) => {
+        const value = cell.value && typeof cell.value === 'object' && 'text' in cell.value ? cell.value.text : cell.value;
+        if (typeof value === 'string' && forbidden.test(value)) {
+          errors.push(`Invalid display value in ${ws.name}!${cell.address}`);
+        }
+      });
+    });
+  });
+
+  if (errors.length) {
+    const err = new Error(`Loan Application Summary validation failed: ${errors.join(' ')}`);
+    err.validationErrors = errors;
+    throw err;
+  }
 }
 
 function cleanString(value) {
@@ -448,8 +547,13 @@ function fillSummarySheet(workbook, caseRecord) {
 }
 
 function fillBankStatementSheet(workbook, caseRecord) {
-  const ws = workbook.getWorksheet('Bank Statement Analysis.');
+  const ws = workbook.getWorksheet('Bank Statement Analysis');
   if (!ws) return;
+
+  if (sourceUnavailable(caseRecord, 'bank')) {
+    writeNoDataMessage(ws, 'Bank Statement Analysis data is not available for this case.');
+    return;
+  }
 
   const bankInfo = extractBankAccountInfo(caseRecord);
   const financials = caseRecord.esr_financials || {};
@@ -477,6 +581,11 @@ function fillBankStatementSheet(workbook, caseRecord) {
 function fillItrSheet(workbook, caseRecord) {
   const ws = workbook.getWorksheet('ITR Analysis');
   if (!ws) return;
+
+  if (sourceUnavailable(caseRecord, 'itr')) {
+    writeNoDataMessage(ws, 'ITR Analysis data is not available for this case.');
+    return;
+  }
 
   const customer = caseRecord.customer || {};
   const primary = getPrimaryApplicant(caseRecord);
@@ -516,6 +625,11 @@ function fillGstSheet(workbook, caseRecord) {
   const ws = workbook.getWorksheet('GST Analysis');
   if (!ws) return;
 
+  if (sourceUnavailable(caseRecord, 'gst')) {
+    writeNoDataMessage(ws, 'GST Analysis data is not available for this case.');
+    return;
+  }
+
   const customer = caseRecord.customer || {};
   const gstProfile = latestGstProfile(customer);
   const panProfile = latestPanProfile(customer);
@@ -552,29 +666,34 @@ function fillCibilSheet(workbook, caseRecord) {
   const ws = workbook.getWorksheet('Cibil - Transunion');
   if (!ws) return;
 
+  if (sourceUnavailable(caseRecord, 'cibil')) {
+    writeNoDataMessage(ws, 'CIBIL/TransUnion data is not available for this case.');
+    return;
+  }
+
   const primary = getPrimaryApplicant(caseRecord);
   const coApps = getCoApplicants(caseRecord);
   const obligations = caseRecord.obligations || [];
   const primaryBureau = latestBureau(primary);
 
-  ws.getCell('A2').value = [
+  setCell(ws, 'A2', [
     `Primary: ${getApplicantLabel(primary) || 'N/A'}`,
     `PAN: ${primary.pan_number || 'N/A'}`,
     `Mobile: ${primary.mobile || 'N/A'}`,
     `CIBIL Score: ${firstNonBlank(primary.cibil_score, primaryBureau?.score, caseRecord.cibil_score, 'N/A')}`
-  ].join('\n');
+  ].join('\n'));
 
-  ws.getCell('A4').value = obligations.length
+  setCell(ws, 'A4', obligations.length
     ? `Active obligations: ${obligations.length}; Total EMI: ${formatInr(obligations.reduce((s, o) => s + (toNumber(o.emi_per_month) || 0), 0), '₹0')}`
-    : 'No obligations available';
+    : 'No obligations available');
 
-  ws.getCell('A6').value = obligations.map((o, idx) => (
+  setCell(ws, 'A6', obligations.map((o, idx) => (
     `${idx + 1}. ${cleanString(o.lender_name) || 'Lender'} | ${cleanString(o.loan_type) || 'Loan'} | EMI ${formatInr(o.emi_per_month, '₹0')} | Outstanding ${formatInr(o.outstanding_amount, '₹0')} | ${o.status || 'ACTIVE'}`
-  )).join('\n') || 'No loanwise obligation data available';
+  )).join('\n') || 'No loanwise obligation data available');
 
-  ws.getCell('A7').value = coApps.length
+  setCell(ws, 'A7', coApps.length
     ? `Co-applicants: ${coApps.map((a, idx) => `${getApplicantLabel(a, idx)} (${firstNonBlank(a.cibil_score, latestBureau(a)?.score, 'CIBIL N/A')})`).join('; ')}`
-    : 'Co-applicants: N/A';
+    : 'Co-applicants: N/A');
 }
 
 async function fetchReportCase(caseId, tenantId, currentUser) {
@@ -642,6 +761,7 @@ async function generateLoanApplicationSummaryWorkbook({ caseId, tenantId, user }
 
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(TEMPLATE_PATH);
+  ensureWorksheetContract(workbook);
 
   workbook.creator = 'Cred2Tech';
   workbook.lastModifiedBy = user?.name || user?.email || 'Cred2Tech';
@@ -654,11 +774,40 @@ async function generateLoanApplicationSummaryWorkbook({ caseId, tenantId, user }
   fillGstSheet(workbook, caseRecord);
   fillCibilSheet(workbook, caseRecord);
   addLogoAndPrintSettings(workbook);
+  validateWorkbook(workbook, { requireCaseSummary: true });
 
-  return workbook.xlsx.writeBuffer();
+  const buffer = await workbook.xlsx.writeBuffer();
+  if (!buffer || !buffer.byteLength) throw new Error('Generated workbook is empty.');
+
+  const check = new ExcelJS.Workbook();
+  await check.xlsx.load(buffer);
+  validateWorkbook(check, { requireCaseSummary: true });
+
+  return buffer;
+}
+
+async function generateAndSaveLoanApplicationSummary({ caseId, tenantId, user }) {
+  const buffer = await generateLoanApplicationSummaryWorkbook({ caseId, tenantId, user });
+  const fileName = buildReportFileName(caseId);
+  const storageKey = `reports/loan-application-summary/${tenantId}/${caseId}/${fileName}`;
+  const storage = getStorageProvider();
+  const saved = await storage.save(Buffer.from(buffer), storageKey, MIME_XLSX);
+
+  return {
+    fileName,
+    storageKey: saved.key,
+    sizeBytes: saved.sizeBytes,
+    mimeType: MIME_XLSX,
+    downloadUrl: `/api/cases/${Number(caseId)}/loan-application-summary.xlsx`
+  };
 }
 
 module.exports = {
-  REPORT_FILE_NAME,
-  generateLoanApplicationSummaryWorkbook
+  SHEET_NAMES,
+  buildReportFileName,
+  sanitizeExcelValue,
+  ensureWorksheetContract,
+  validateWorkbook,
+  generateLoanApplicationSummaryWorkbook,
+  generateAndSaveLoanApplicationSummary
 };

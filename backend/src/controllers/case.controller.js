@@ -1,6 +1,6 @@
 const caseService = require('../services/case.service');
 const prisma = require('../../config/db');
-const { REPORT_FILE_NAME, generateLoanApplicationSummaryWorkbook } = require('../services/reports/loanApplicationSummary.service');
+const { buildReportFileName, generateLoanApplicationSummaryWorkbook } = require('../services/reports/loanApplicationSummary.service');
 const { buildBulkUploadResponse } = require('../utils/bulkUploadResponse');
 
 async function createCase(req, res) {
@@ -422,9 +422,10 @@ async function downloadLoanApplicationSummary(req, res) {
       user: req.user
     });
 
-    const encodedName = encodeURIComponent(REPORT_FILE_NAME);
+    const fileName = buildReportFileName(caseId);
+    const encodedName = encodeURIComponent(fileName);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="${REPORT_FILE_NAME}"; filename*=UTF-8''${encodedName}`);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"; filename*=UTF-8''${encodedName}`);
     res.setHeader('Cache-Control', 'no-store');
     res.send(Buffer.from(buffer));
   } catch (error) {
