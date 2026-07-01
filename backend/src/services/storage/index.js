@@ -10,8 +10,6 @@
  *   3. No other code changes required
  */
 const LocalStorageProvider = require('./local.storage');
-const CloudflareR2StorageProvider = require('./cloudflare.storage');
-const S3StorageProvider = require('./s3.storage');
 
 const instances = {};
 
@@ -25,11 +23,17 @@ function getStorageProvider(providerName) {
             instances[provider] = new LocalStorageProvider();
             break;
         case 'CLOUDFLARE_R2':
+        {
+            const CloudflareR2StorageProvider = require('./cloudflare.storage');
             instances[provider] = new CloudflareR2StorageProvider();
             break;
+        }
         case 'S3':
+        {
+            const S3StorageProvider = require('./s3.storage');
             instances[provider] = new S3StorageProvider();
             break;
+        }
         default:
             throw new Error(`Unknown STORAGE_PROVIDER: "${provider}". Valid options: LOCAL, CLOUDFLARE_R2, S3`);
     }

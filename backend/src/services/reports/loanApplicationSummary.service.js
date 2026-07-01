@@ -77,8 +77,58 @@ function toNumber(value) {
   if (value === undefined || value === null || value === '') return null;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   if (typeof value === 'object' && typeof value.toNumber === 'function') return value.toNumber();
-  const n = Number(String(value).replace(/[₹,\s]/g, ''));
+  const cleaned = String(value)
+    .replace(/[₹,\s]/g, '')
+    .replace(/%$/, '')
+    .replace(/^\((.*)\)$/, '-$1');
+  if (cleaned === '-' || cleaned === '') return null;
+  const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
+}
+
+function normalizeKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function labelsMatch(actual, expected) {
+  const a = normalizeKey(actual);
+  const e = normalizeKey(expected);
+  if (!a || !e) return false;
+  if (a === e) return true;
+  const shorter = a.length < e.length ? a : e;
+  const longer = a.length < e.length ? e : a;
+  return shorter.length >= 6
+    && shorter.length / longer.length >= 0.65
+    && longer.includes(shorter);
+}
+
+function safeNumber(value) {
+  return toNumber(value);
+}
+
+function safeCurrency(value, fallback = 'N/A') {
+  return formatInr(value, fallback);
+}
+
+function safePercent(value, fallback = 'N/A') {
+  const n = toNumber(value);
+  if (n === null) return fallback;
+  return `${n}%`;
+}
+
+function calculateAverageFromMonthlyValues(values = []) {
+  const nums = values.map(toNumber).filter(n => n !== null);
+  if (!nums.length) return null;
+  return nums.reduce((sum, n) => sum + n, 0) / nums.length;
+}
+
+function calculateLast12MonthTotal(values = []) {
+  const nums = values.map(toNumber).filter(n => n !== null);
+  if (!nums.length) return null;
+  return nums.slice(-12).reduce((sum, n) => sum + n, 0);
 }
 
 function formatDate(value) {
@@ -144,6 +194,17 @@ function setCell(ws, address, value, fallback = '') {
 function setNumberCell(ws, address, value) {
   const n = toNumber(value);
   ws.getCell(address).value = n === null ? '' : n;
+}
+
+function setFinancialCell(ws, address, value) {
+  const n = toNumber(value);
+  const cell = ws.getCell(address);
+  if (n === null) {
+    cell.value = 'N/A';
+  } else {
+    cell.value = n;
+    cell.numFmt = '#,##0.00';
+  }
 }
 
 function cellDisplayValue(cell, leftLabel = '') {
@@ -305,6 +366,285 @@ function sourceSheetRows(workbook, sheetName) {
   return trimEmptyColumns(rows);
 }
 
+function getSourceRows(workbook, sheetName) {
+  const actualSheetName = workbook ? findSourceSheetName(workbook, sheetName) : null;
+  return actualSheetName ? sourceSheetRows(workbook, actualSheetName) : [];
+}
+
+function findRowByLabels(rows, labels) {
+  const labelList = Array.isArray(labels) ? labels : [labels];
+  return rows.find(row => row?.some(value => labelList.some(label => labelsMatch(value, label)))) || null;
+}
+
+function findRowIndexByLabels(rows, labels) {
+  const labelList = Array.isArray(labels) ? labels : [labels];
+  return rows.findIndex(row => row?.some(value => labelList.some(label => labelsMatch(value, label))));
+}
+
+function findLabelColumn(row, labels) {
+  const labelList = Array.isArray(labels) ? labels : [labels];
+  return (row || []).findIndex(value => labelList.some(label => labelsMatch(value, label)));
+}
+
+function findHeaderRowForMetric(rows, metricRowIndex) {
+  for (let i = metricRowIndex - 1; i >= 0; i -= 1) {
+    const row = rows[i] || [];
+    if (row.some(value => labelsMatch(value, 'Total')) || row.some(value => /[A-Za-z]{3}\s+\d{4}/.test(String(value || '')))) {
+      return row;
+    }
+  }
+  return null;
+}
+
+function getKeyValue(rows, labels) {
+  const row = findRowByLabels(rows, labels);
+  if (!row) return '';
+  const labelCol = findLabelColumn(row, labels);
+  return firstNonBlank(...row.slice(Math.max(labelCol + 1, 1)));
+}
+
+function numericCells(row) {
+  return (row || []).slice(1).map(toNumber).filter(n => n !== null);
+}
+
+function metricTotal(rows, labels) {
+  const rowIndex = findRowIndexByLabels(rows, labels);
+  if (rowIndex < 0) return null;
+  const row = rows[rowIndex];
+  const labelCol = findLabelColumn(row, labels);
+  const header = findHeaderRowForMetric(rows, rowIndex);
+  if (header) {
+    const totalIdx = header.findIndex(value => labelsMatch(value, 'Total'));
+    if (totalIdx > labelCol) {
+      const total = toNumber(row[totalIdx]);
+      if (total !== null) return total;
+    }
+  }
+  const nums = row.slice(Math.max(labelCol + 1, 1)).map(toNumber).filter(n => n !== null);
+  return nums.length ? nums[nums.length - 1] : null;
+}
+
+function metricMonthlyValues(rows, labels) {
+  const rowIndex = findRowIndexByLabels(rows, labels);
+  if (rowIndex < 0) return [];
+  const row = rows[rowIndex];
+  const labelCol = findLabelColumn(row, labels);
+  const header = findHeaderRowForMetric(rows, rowIndex);
+  const values = [];
+  for (let idx = Math.max(labelCol + 1, 1); idx < row.length; idx += 1) {
+    if (header && labelsMatch(header[idx], 'Total')) continue;
+    const n = toNumber(row[idx]);
+    if (n !== null) values.push(n);
+  }
+  return values;
+}
+
+function latestYearMetric(rows, labels) {
+  const rowIndex = findRowIndexByLabels(rows, labels);
+  if (rowIndex < 0) return null;
+  const row = rows[rowIndex];
+  const labelCol = findLabelColumn(row, labels);
+  const header = findHeaderRowForMetric(rows, rowIndex);
+  const values = [];
+  for (let idx = Math.max(labelCol + 1, 1); idx < row.length; idx += 1) {
+    if (header && labelsMatch(header[idx], 'Total')) continue;
+    const n = toNumber(row[idx]);
+    if (n !== null) values.push(n);
+  }
+  return values.length ? values[values.length - 1] : metricTotal(rows, labels);
+}
+
+function extractCompanyProfile(gstWorkbook) {
+  const entityRows = getSourceRows(gstWorkbook, 'Entity Details');
+  const accountRows = getSourceRows(gstWorkbook, 'Account Details');
+  return {
+    gstin: firstNonBlank(getKeyValue(entityRows, 'GSTIN'), getKeyValue(accountRows, 'GSTIN')),
+    legalName: getKeyValue(entityRows, 'Legal Name'),
+    tradeName: getKeyValue(entityRows, 'Trade Name'),
+    gstStatus: getKeyValue(entityRows, 'GSTIN Status'),
+    dateOfRegistration: getKeyValue(entityRows, 'Date of Registration')
+  };
+}
+
+function extractAnnualGstrSales(gstWorkbook) {
+  return latestYearMetric(getSourceRows(gstWorkbook, 'Overview Yearly'), 'GSTR 1 Gross Sales E A B C D');
+}
+
+function extractLast12MonthGstrSales(gstWorkbook) {
+  const rows = getSourceRows(gstWorkbook, 'Overview Monthly');
+  const total = metricTotal(rows, 'GSTR 1 Gross Sales E A B C D');
+  if (total !== null) return total;
+  return calculateLast12MonthTotal(metricMonthlyValues(rows, 'GSTR 1 Gross Sales E A B C D'));
+}
+
+function extractGeneralInformation(itrWorkbook) {
+  const rows = getSourceRows(itrWorkbook, 'General Information');
+  return {
+    applicantName: getKeyValue(rows, 'Name'),
+    pan: getKeyValue(rows, 'PAN'),
+    email: getKeyValue(rows, 'Email Id'),
+    mobile: getKeyValue(rows, 'Contact Number'),
+    dob: getKeyValue(rows, 'Date of Birth'),
+    address: getKeyValue(rows, 'Registered Address')
+  };
+}
+
+function extractTaxCalculation(itrWorkbook) {
+  const rows = getSourceRows(itrWorkbook, 'Tax Calculation');
+  return {
+    grossTotalIncome: latestYearMetric(rows, 'Gross Total Income'),
+    totalTaxableIncome: latestYearMetric(rows, 'Total Taxable Income'),
+    salaryIncome: latestYearMetric(rows, 'Income from Salary'),
+    agriculturalIncome: latestYearMetric(rows, 'Net Agricultural Income')
+  };
+}
+
+function extractProfitAndLoss(itrWorkbook) {
+  const rows = getSourceRows(itrWorkbook, 'Profit and Loss Statement');
+  return {
+    netProfitAfterTax: latestYearMetric(rows, ['Profit After Tax', 'Net Profit After Tax']),
+    depreciation: latestYearMetric(rows, ['Depreciation and Amortization', 'Depreciation']),
+    interestOnLoan: latestYearMetric(rows, ['Finance Cost', 'Interest on Loan']),
+    revenueFromOperations: latestYearMetric(rows, 'Revenue from Operations')
+  };
+}
+
+function extractBalanceSheet(itrWorkbook) {
+  return { rows: getSourceRows(itrWorkbook, 'Balance Sheet') };
+}
+
+function extractRatios(itrWorkbook) {
+  return { rows: getSourceRows(itrWorkbook, 'Ratio Analysis') };
+}
+
+function extractAccountDetails(bankWorkbook) {
+  const rows = getSourceRows(bankWorkbook, 'Summary');
+  return {
+    accountHolder: getKeyValue(rows, 'Account Holders'),
+    accountNumber: getKeyValue(rows, 'Account Number'),
+    bankName: getKeyValue(rows, 'Bank Name'),
+    accountType: getKeyValue(rows, 'Account Type'),
+    statementFrom: getKeyValue(rows, 'Statement From'),
+    statementTo: getKeyValue(rows, 'Statement To')
+  };
+}
+
+function extractMonthwiseMetric(bankWorkbook, metricName) {
+  return metricMonthlyValues(getSourceRows(bankWorkbook, 'Summary'), metricName);
+}
+
+function extractCreditTxnTotal(bankWorkbook) {
+  return metricTotal(getSourceRows(bankWorkbook, 'Summary'), 'Credit Txns');
+}
+
+function extractMonthlyAverageBalance(bankWorkbook) {
+  const rows = getSourceRows(bankWorkbook, 'Summary');
+  const monthly = metricMonthlyValues(rows, 'Monthly Average Balance');
+  if (monthly.length) return calculateAverageFromMonthlyValues(monthly);
+  const total = metricTotal(rows, 'Monthly Average Balance');
+  return total;
+}
+
+function extractBankCharges(bankWorkbook) {
+  return metricTotal(getSourceRows(bankWorkbook, 'Summary'), ['Bank Charges', 'Minimum Balance Charges']);
+}
+
+function extractCashDeposit(bankWorkbook) {
+  return metricTotal(getSourceRows(bankWorkbook, 'Summary'), 'Cash Deposit');
+}
+
+function extractCashWithdrawal(bankWorkbook) {
+  return metricTotal(getSourceRows(bankWorkbook, 'Summary'), 'Cash Withdrawal');
+}
+
+function extractChequeBounceCounts(bankWorkbook) {
+  const rows = getSourceRows(bankWorkbook, 'Summary');
+  const inward = metricTotal(rows, 'Inward Cheque Bounced Count') || 0;
+  const outward = metricTotal(rows, 'Outward Cheque Bounced Count') || 0;
+  return { inward, outward, total: inward + outward };
+}
+
+function extractEmiLoanPayments(bankWorkbook) {
+  return metricTotal(getSourceRows(bankWorkbook, 'Summary'), ['EMI / Loan Payments', 'EMI Loan Payments']);
+}
+
+function buildFinancialSnapshot({ gst = {}, itr = {}, bank = {} }) {
+  return {
+    netProfitAfterTax: itr.profitAndLoss?.netProfitAfterTax,
+    depreciation: itr.profitAndLoss?.depreciation,
+    interestOnLoan: itr.profitAndLoss?.interestOnLoan,
+    annualGstrSales: gst.annualGstrSales,
+    last12MonthGstrSales: gst.last12MonthGstrSales,
+    turnoverReceiptItr: itr.profitAndLoss?.revenueFromOperations,
+    annualBusinessReceiptBank: bank.creditTxnTotal,
+    averageBankBalance: bank.monthlyAverageBalance,
+    salaryIncome: itr.taxCalculation?.salaryIncome,
+    agriculturalIncome: itr.taxCalculation?.agriculturalIncome,
+    bankCharges: bank.bankCharges,
+    cashDeposit: bank.cashDeposit,
+    cashWithdrawal: bank.cashWithdrawal,
+    chequeBounces: bank.chequeBounces?.total,
+    emiLoanPayments: bank.emiLoanPayments
+  };
+}
+
+function buildApplicantDetails(mappedSources = {}) {
+  return {
+    gst: mappedSources.gst?.companyProfile || {},
+    itr: mappedSources.itr?.generalInformation || {},
+    bank: mappedSources.bank?.accountDetails || {}
+  };
+}
+
+function buildLoanRequirement(caseRecord) {
+  return {
+    loanAmount: firstNonBlank(caseRecord.loan_amount, caseRecord.esr_financials?.requested_loan_amount),
+    tenure: caseRecord.esr_financials?.requested_tenure_months,
+    propertyValue: resolvePropertyValue(caseRecord)
+  };
+}
+
+function buildBureauDetails(caseRecord) {
+  const primary = getPrimaryApplicant(caseRecord);
+  return {
+    score: firstNonBlank(primary.cibil_score, latestBureau(primary)?.score, caseRecord.cibil_score, caseRecord.esr_financials?.bureau_score)
+  };
+}
+
+function mapSourceWorkbooks(sourceWorkbooks = {}) {
+  const gst = sourceWorkbooks.gst ? {
+    companyProfile: extractCompanyProfile(sourceWorkbooks.gst),
+    annualGstrSales: extractAnnualGstrSales(sourceWorkbooks.gst),
+    last12MonthGstrSales: extractLast12MonthGstrSales(sourceWorkbooks.gst)
+  } : {};
+
+  const itr = sourceWorkbooks.itr ? {
+    generalInformation: extractGeneralInformation(sourceWorkbooks.itr),
+    taxCalculation: extractTaxCalculation(sourceWorkbooks.itr),
+    profitAndLoss: extractProfitAndLoss(sourceWorkbooks.itr),
+    balanceSheet: extractBalanceSheet(sourceWorkbooks.itr),
+    ratios: extractRatios(sourceWorkbooks.itr)
+  } : {};
+
+  const bank = sourceWorkbooks.bank ? {
+    accountDetails: extractAccountDetails(sourceWorkbooks.bank),
+    creditTxnTotal: extractCreditTxnTotal(sourceWorkbooks.bank),
+    monthlyAverageBalance: extractMonthlyAverageBalance(sourceWorkbooks.bank),
+    bankCharges: extractBankCharges(sourceWorkbooks.bank),
+    cashDeposit: extractCashDeposit(sourceWorkbooks.bank),
+    cashWithdrawal: extractCashWithdrawal(sourceWorkbooks.bank),
+    chequeBounces: extractChequeBounceCounts(sourceWorkbooks.bank),
+    emiLoanPayments: extractEmiLoanPayments(sourceWorkbooks.bank)
+  } : {};
+
+  return {
+    gst,
+    itr,
+    bank,
+    financialSnapshot: buildFinancialSnapshot({ gst, itr, bank })
+  };
+}
+
 function trimEmptyColumns(rows) {
   if (!rows.length) return [];
   let first = Infinity;
@@ -441,49 +781,53 @@ async function copyStoredSourceWorkbook({ workbook, targetSheetName, sourceType,
   return copySourceWorkbookToSheet(workbook.getWorksheet(targetSheetName), source.workbook, sourceType);
 }
 
-async function copyAvailableSourceWorkbooks(workbook, caseRecord, tenantId) {
+async function loadAvailableSourceWorkbooks(caseRecord, tenantId) {
   const bank = getLatest(caseRecord.bank_statements || []);
   const itr = getLatest(caseRecord.itr_analytics || []);
   const gst = getLatest(caseRecord.gst_requests || []);
 
-  const [bankCopied, itrCopied, gstCopied] = await Promise.all([
-    copyStoredSourceWorkbook({
-      workbook,
-      targetSheetName: 'Bank Statement Analysis',
-      sourceType: 'bank',
+  const [bankSource, itrSource, gstSource] = await Promise.all([
+    readSourceExcelWorkbook({
       documentId: bank?.bank_excel_document_id,
       tenantId,
       sourceUrl: bank?.report_excel_url,
       documentTypes: ['BANK_EXCEL']
     }).catch((err) => {
-      console.warn('[LoanApplicationSummary] Bank source Excel copy skipped:', err.message);
-      return false;
+      console.warn('[LoanApplicationSummary] Bank source Excel read skipped:', err.message);
+      return null;
     }),
-    copyStoredSourceWorkbook({
-      workbook,
-      targetSheetName: 'ITR Analysis',
-      sourceType: 'itr',
+    readSourceExcelWorkbook({
       documentId: itr?.itr_document_id,
       tenantId,
       sourceUrl: itr?.excel_url,
       documentTypes: ['ITR_EXCEL']
     }).catch((err) => {
-      console.warn('[LoanApplicationSummary] ITR source Excel copy skipped:', err.message);
-      return false;
+      console.warn('[LoanApplicationSummary] ITR source Excel read skipped:', err.message);
+      return null;
     }),
-    copyStoredSourceWorkbook({
-      workbook,
-      targetSheetName: 'GST Analysis',
-      sourceType: 'gst',
+    readSourceExcelWorkbook({
       documentId: gst?.gst_excel_document_id,
       tenantId,
       sourceUrl: gst?.report_excel_url,
       documentTypes: ['GST_REPORT_EXCEL']
     }).catch((err) => {
-      console.warn('[LoanApplicationSummary] GST source Excel copy skipped:', err.message);
-      return false;
+      console.warn('[LoanApplicationSummary] GST source Excel read skipped:', err.message);
+      return null;
     })
   ]);
+
+  return {
+    bank: bankSource?.workbook || null,
+    itr: itrSource?.workbook || null,
+    gst: gstSource?.workbook || null
+  };
+}
+
+async function copyAvailableSourceWorkbooks(workbook, caseRecord, tenantId, sourceWorkbooks = null) {
+  const sources = sourceWorkbooks || await loadAvailableSourceWorkbooks(caseRecord, tenantId);
+  const bankCopied = sources.bank ? copySourceWorkbookToSheet(workbook.getWorksheet('Bank Statement Analysis'), sources.bank, 'bank') : false;
+  const itrCopied = sources.itr ? copySourceWorkbookToSheet(workbook.getWorksheet('ITR Analysis'), sources.itr, 'itr') : false;
+  const gstCopied = sources.gst ? copySourceWorkbookToSheet(workbook.getWorksheet('GST Analysis'), sources.gst, 'gst') : false;
 
   return { bankCopied, itrCopied, gstCopied };
 }
@@ -770,7 +1114,7 @@ function addLogoAndPrintSettings(workbook) {
 // Sheet fillers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function fillSummarySheet(workbook, caseRecord) {
+function fillSummarySheet(workbook, caseRecord, mappedSources = {}) {
   const ws = workbook.getWorksheet('Summary');
   if (!ws) return;
 
@@ -778,7 +1122,9 @@ function fillSummarySheet(workbook, caseRecord) {
   const primary = getPrimaryApplicant(caseRecord);
   const coApps = getCoApplicants(caseRecord);
   const panProfile = latestPanProfile(customer);
-  const gstin = getGstin(caseRecord);
+  const applicantDetails = buildApplicantDetails(mappedSources);
+  const sourceFinancials = mappedSources.financialSnapshot || {};
+  const gstin = firstNonBlank(applicantDetails.gst.gstin, getGstin(caseRecord));
   const property = caseRecord.property || {};
   const financials = caseRecord.esr_financials || {};
   const { latestEsr, best } = findLatestEligibility(caseRecord);
@@ -791,16 +1137,19 @@ function fillSummarySheet(workbook, caseRecord) {
   setCell(ws, 'D4', formatDate(new Date()));
 
   // Applicant / borrower details
-  setCell(ws, 'B8', firstNonBlank(customer.business_name, caseRecord.customer_name, primary.name, 'N/A'));
+  setCell(ws, 'B8', firstNonBlank(applicantDetails.gst.legalName, applicantDetails.gst.tradeName, customer.business_name, caseRecord.customer_name, primary.name, 'N/A'));
   setCell(ws, 'C8', 'Primary Borrower');
-  setCell(ws, 'D8', firstNonBlank(customer.business_pan, primary.pan_number, 'N/A'));
+  setCell(ws, 'D8', firstNonBlank(applicantDetails.itr.pan, customer.business_pan, primary.pan_number, 'N/A'));
   setCell(ws, 'E8', gstin || 'N/A');
-  setCell(ws, 'F8', contactText({ mobile: customer.business_mobile || primary.mobile, email: customer.business_email || primary.email }) || 'N/A');
-  setCell(ws, 'G8', resolveAddress(caseRecord) || 'N/A');
+  setCell(ws, 'F8', contactText({
+    mobile: applicantDetails.itr.mobile || customer.business_mobile || primary.mobile,
+    email: applicantDetails.itr.email || customer.business_email || primary.email
+  }) || 'N/A');
+  setCell(ws, 'G8', firstNonBlank(applicantDetails.itr.address, resolveAddress(caseRecord), 'N/A'));
 
-  setCell(ws, 'B9', firstNonBlank(primary.name, customer.business_name, 'N/A'));
+  setCell(ws, 'B9', firstNonBlank(applicantDetails.itr.applicantName, primary.name, customer.business_name, 'N/A'));
   setCell(ws, 'C9', firstNonBlank(primary.employment_type, 'Promoter / Contact Person'));
-  setCell(ws, 'D9', firstNonBlank(primary.pan_number, customer.business_pan, 'N/A'));
+  setCell(ws, 'D9', firstNonBlank(applicantDetails.itr.pan, primary.pan_number, customer.business_pan, 'N/A'));
   setCell(ws, 'E9', '');
   setCell(ws, 'F9', contactText({ mobile: primary.mobile || customer.business_mobile, email: primary.email || customer.business_email }) || 'N/A');
   setCell(ws, 'G9', firstNonBlank(panProfile?.principal_address, ''));
@@ -844,20 +1193,20 @@ function fillSummarySheet(workbook, caseRecord) {
   const incentiveAnnual = sumIncomeByType(caseRecord, type => type.includes('incentive'));
   const bonusAnnual = sumIncomeByType(caseRecord, type => type.includes('bonus'));
 
-  setNumberCell(ws, 'B26', financials.itr_pat);
-  setNumberCell(ws, 'B27', financials.itr_depreciation);
-  setNumberCell(ws, 'B28', financials.itr_finance_cost);
-  setNumberCell(ws, 'B29', financials.itr_remuneration);
-  setNumberCell(ws, 'B30', toNumber(financials.gst_avg_monthly_sales) ? Number(financials.gst_avg_monthly_sales) * 12 : null);
-  setNumberCell(ws, 'B31', toNumber(financials.gst_avg_monthly_sales) ? Number(financials.gst_avg_monthly_sales) * 12 : null);
-  setNumberCell(ws, 'B32', financials.itr_gross_receipts);
-  setNumberCell(ws, 'B33', financials.bank_total_credits);
-  setNumberCell(ws, 'B34', financials.bank_avg_balance);
-  setNumberCell(ws, 'F34', financials.bank_avg_balance);
+  setFinancialCell(ws, 'B26', sourceFinancials.netProfitAfterTax);
+  setFinancialCell(ws, 'B27', sourceFinancials.depreciation);
+  setFinancialCell(ws, 'B28', sourceFinancials.interestOnLoan);
+  setFinancialCell(ws, 'B29', null);
+  setFinancialCell(ws, 'B30', sourceFinancials.annualGstrSales);
+  setFinancialCell(ws, 'B31', sourceFinancials.last12MonthGstrSales);
+  setFinancialCell(ws, 'B32', sourceFinancials.turnoverReceiptItr);
+  setFinancialCell(ws, 'B33', sourceFinancials.annualBusinessReceiptBank);
+  setFinancialCell(ws, 'B34', sourceFinancials.averageBankBalance);
+  setFinancialCell(ws, 'F34', sourceFinancials.averageBankBalance);
   setNumberCell(ws, 'F35', rentBankAnnual ? rentBankAnnual / 12 : null);
   setNumberCell(ws, 'F36', rentCashAnnual ? rentCashAnnual / 12 : null);
-  setNumberCell(ws, 'B37', agriAnnual);
-  setNumberCell(ws, 'F38', financials.salaried_income || (salaryAnnual ? salaryAnnual / 12 : null));
+  setFinancialCell(ws, 'B37', firstNonBlank(sourceFinancials.agriculturalIncome, agriAnnual || null));
+  setFinancialCell(ws, 'F38', sourceFinancials.salaryIncome ? sourceFinancials.salaryIncome / 12 : (salaryAnnual ? salaryAnnual / 12 : null));
   setNumberCell(ws, 'B39', incentiveAnnual);
   setNumberCell(ws, 'B40', bonusAnnual);
 
@@ -1128,12 +1477,15 @@ async function generateLoanApplicationSummaryWorkbook({ caseId, tenantId, user }
   workbook.created = new Date();
   workbook.modified = new Date();
 
-  fillSummarySheet(workbook, caseRecord);
+  const sourceWorkbooks = await loadAvailableSourceWorkbooks(caseRecord, tenantId);
+  const mappedSources = mapSourceWorkbooks(sourceWorkbooks);
+
+  fillSummarySheet(workbook, caseRecord, mappedSources);
   fillBankStatementSheet(workbook, caseRecord);
   fillItrSheet(workbook, caseRecord);
   fillGstSheet(workbook, caseRecord);
   fillCibilSheet(workbook, caseRecord);
-  await copyAvailableSourceWorkbooks(workbook, caseRecord, tenantId);
+  await copyAvailableSourceWorkbooks(workbook, caseRecord, tenantId, sourceWorkbooks);
   addLogoAndPrintSettings(workbook);
   validateWorkbook(workbook, { requireCaseSummary: true });
 
@@ -1172,6 +1524,21 @@ module.exports = {
   copySourceWorkbookToSheet,
   findStoredExcelDocument,
   isSafeHttpsSourceUrl,
+  mapSourceWorkbooks,
+  extractCompanyProfile,
+  extractAnnualGstrSales,
+  extractLast12MonthGstrSales,
+  extractGeneralInformation,
+  extractTaxCalculation,
+  extractProfitAndLoss,
+  extractAccountDetails,
+  extractCreditTxnTotal,
+  extractMonthlyAverageBalance,
+  calculateAverageFromMonthlyValues,
+  calculateLast12MonthTotal,
+  safeNumber,
+  safeCurrency,
+  safePercent,
   generateLoanApplicationSummaryWorkbook,
   generateAndSaveLoanApplicationSummary
 };

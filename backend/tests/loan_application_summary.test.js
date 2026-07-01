@@ -11,6 +11,16 @@ require.cache[require.resolve('../config/db')] = {
     }
   }
 };
+require.cache[require.resolve('../src/services/storage')] = {
+  exports: {
+    getStorageProvider: () => ({
+      getStream: async () => {
+        throw new Error('storage not available in unit test');
+      },
+      save: async () => ({ key: 'unit-test.xlsx', sizeBytes: 0 })
+    })
+  }
+};
 
 const {
   SHEET_NAMES,
@@ -20,9 +30,23 @@ const {
   validateWorkbook,
   copySourceWorkbookToSheet,
   findStoredExcelDocument,
-  isSafeHttpsSourceUrl
+  isSafeHttpsSourceUrl,
+  mapSourceWorkbooks,
+  extractAnnualGstrSales,
+  extractLast12MonthGstrSales,
+  extractProfitAndLoss,
+  extractCreditTxnTotal,
+  extractMonthlyAverageBalance
 } = require('../src/services/reports/loanApplicationSummary.service');
 const XLSX = require('xlsx');
+
+function makeWorkbook(sheets) {
+  const workbook = XLSX.utils.book_new();
+  Object.entries(sheets).forEach(([name, rows]) => {
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), name);
+  });
+  return workbook;
+}
 
 test('loan application summary filename includes case id', () => {
   assert.equal(buildReportFileName(42), 'Loan_Application_Summary_42.xlsx');
@@ -146,4 +170,105 @@ test('loan application summary only allows safe https source URLs', () => {
   assert.equal(isSafeHttpsSourceUrl('http://example.com/source.xlsx'), false);
   assert.equal(isSafeHttpsSourceUrl('https://localhost/source.xlsx'), false);
   assert.equal(isSafeHttpsSourceUrl('https://192.168.1.10/source.xlsx'), false);
+});
+
+test('loan application summary maps GST annual and last 12 month sales from source sheets', () => {
+  const gstWorkbook = makeWorkbook({
+    'Overview Yearly': [
+      ['Particulars', 'Total', 'FY 2023-24', 'FY 2024-25'],
+      ['GSTR 1 Gross Sales (E=A+B-C+D)', 3000, 1000, 2000]
+    ],
+    'Overview Monthly': [
+      ['Particulars', 'Total', 'Apr 2025', 'May 2025'],
+      ['GSTR 1 Gross Sales (E=A+B-C+D)', 300, 100, 200]
+    ]
+  });
+
+  assert.equal(extractAnnualGstrSales(gstWorkbook), 2000);
+  assert.equal(extractLast12MonthGstrSales(gstWorkbook), 300);
+});
+
+test('loan application summary maps ITR profit and revenue from Profit and Loss Statement', () => {
+  const itrWorkbook = makeWorkbook({
+    'Profit and Loss Statement': [
+      ['Sl. No.', 'Particulars', '2023', '2024', '2025'],
+      [1, 'Revenue from Operations', 1000, 2000, 3000],
+      [2, 'Depreciation and Amortization', 10, 20, 30],
+      [3, 'Finance Cost', 11, 22, 33],
+      [4, 'Profit After Tax', 100, 200, 300]
+    ]
+  });
+
+  const pnl = extractProfitAndLoss(itrWorkbook);
+  assert.equal(pnl.netProfitAfterTax, 300);
+  assert.equal(pnl.revenueFromOperations, 3000);
+  assert.equal(pnl.depreciation, 30);
+  assert.equal(pnl.interestOnLoan, 33);
+});
+
+test('loan application summary maps Bank credit total and average monthly balance', () => {
+  const bankWorkbook = makeWorkbook({
+    Summary: [
+      ['Description', 'Apr 2025', 'May 2025', 'Jun 2025', 'Total'],
+      ['Credit Txns', 100, 200, 300, 600],
+      ['Monthly Average Balance', 10, 20, 30, 20]
+    ]
+  });
+
+  assert.equal(extractCreditTxnTotal(bankWorkbook), 600);
+  assert.equal(extractMonthlyAverageBalance(bankWorkbook), 20);
+});
+
+test('loan application summary maps combined financial snapshot from source workbooks', () => {
+  const mapped = mapSourceWorkbooks({
+    gst: makeWorkbook({
+      'Overview Yearly': [
+        ['Particulars', 'Total', 'FY 2024-25'],
+        ['GSTR 1 Gross Sales (E=A+B-C+D)', 9000, 9000]
+      ],
+      'Overview Monthly': [
+        ['Particulars', 'Total', 'Apr 2025'],
+        ['GSTR 1 Gross Sales (E=A+B-C+D)', 750, 750]
+      ]
+    }),
+    itr: makeWorkbook({
+      'Profit and Loss Statement': [
+        ['Particulars', '2025'],
+        ['Profit After Tax', 123],
+        ['Revenue from Operations', 456]
+      ],
+      'Tax Calculation': [
+        ['Particulars', '2025'],
+        ['Income from Salary', 1200],
+        ['Net Agricultural Income', 800]
+      ]
+    }),
+    bank: makeWorkbook({
+      Summary: [
+        ['Description', 'Apr 2025', 'May 2025', 'Total'],
+        ['Credit Txns', 11, 22, 33],
+        ['Monthly Average Balance', 100, 200, 150]
+      ]
+    })
+  });
+
+  assert.equal(mapped.financialSnapshot.annualGstrSales, 9000);
+  assert.equal(mapped.financialSnapshot.last12MonthGstrSales, 750);
+  assert.equal(mapped.financialSnapshot.netProfitAfterTax, 123);
+  assert.equal(mapped.financialSnapshot.turnoverReceiptItr, 456);
+  assert.equal(mapped.financialSnapshot.annualBusinessReceiptBank, 33);
+  assert.equal(mapped.financialSnapshot.averageBankBalance, 150);
+  assert.equal(mapped.financialSnapshot.salaryIncome, 1200);
+  assert.equal(mapped.financialSnapshot.agriculturalIncome, 800);
+});
+
+test('loan application summary uses empty mapped values when Bank GST or ITR source is missing', () => {
+  const mapped = mapSourceWorkbooks({});
+
+  assert.deepEqual(mapped.gst, {});
+  assert.deepEqual(mapped.itr, {});
+  assert.deepEqual(mapped.bank, {});
+  assert.equal(mapped.financialSnapshot.annualGstrSales, undefined);
+  assert.equal(mapped.financialSnapshot.netProfitAfterTax, undefined);
+  assert.equal(mapped.financialSnapshot.annualBusinessReceiptBank, undefined);
 });
