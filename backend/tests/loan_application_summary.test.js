@@ -66,7 +66,8 @@ test('loan application summary copies source Excel sections into existing report
   const source = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(source, XLSX.utils.aoa_to_sheet([
     ['Description', 'HDFC - 123 - Savings'],
-    ['Account Holders', 'Elevate Consulting']
+    ['Account Holders', 'Elevate Consulting'],
+    ['Account Number', 50200080231149]
   ]), 'Summary');
   XLSX.utils.book_append_sheet(source, XLSX.utils.aoa_to_sheet([
     ['Month', 'Credit', 'Debit'],
@@ -81,6 +82,7 @@ test('loan application summary copies source Excel sections into existing report
   assert.equal(sheet.getCell('A1').value, 'Summary');
   assert.equal(sheet.getCell('A2').value, 'Description');
   assert.equal(sheet.getCell('B2').value, 'HDFC - 123 - Savings');
+  assert.equal(sheet.getCell('B4').value, '50200080231149');
   assert.equal(sheet.getCell('A6').value, 'Monthly summary');
   assert.equal(sheet.getCell('A7').value, 'Month');
 });

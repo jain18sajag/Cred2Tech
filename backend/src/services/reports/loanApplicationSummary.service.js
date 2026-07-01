@@ -145,17 +145,21 @@ function setNumberCell(ws, address, value) {
   ws.getCell(address).value = n === null ? '' : n;
 }
 
-function cellDisplayValue(value) {
-  if (value === undefined || value === null || value === '') return '';
-  if (value instanceof Date) return formatDate(value);
-  if (typeof value === 'object') {
-    if (value.text) return value.text;
-    if (value.result !== undefined && value.result !== null) return value.result;
-    if (Array.isArray(value.richText)) return value.richText.map(part => part.text || '').join('');
-    if (value.hyperlink) return value.text || value.hyperlink;
-    return '';
+function cellDisplayValue(cell, leftLabel = '') {
+  if (!cell || cell.v === undefined || cell.v === null || cell.v === '') return '';
+  if (cell.v instanceof Date) return formatDate(cell.v);
+  const label = String(leftLabel || '').toLowerCase();
+  if (cell.t === 'n') {
+    const numeric = Number(cell.v);
+    const looksLikeIdentifier = Number.isInteger(numeric)
+      && (Math.abs(numeric) >= 1000000000 || /(account|aadhaar|aadhar|mobile|phone|pan|gstin|ifsc|micr|din)/i.test(label));
+    if (looksLikeIdentifier) return String(cell.v);
+    if (cell.w && !/[eE]\+/.test(String(cell.w))) return cell.w;
+    return numeric;
   }
-  return value;
+  if (cell.t === 'd') return formatDate(cell.v);
+  if (cell.w && !/[eE]\+/.test(String(cell.w))) return cell.w;
+  return cell.v;
 }
 
 function streamToBuffer(stream) {
@@ -283,12 +287,37 @@ function findSourceSheetName(workbook, wantedName) {
 function sourceSheetRows(workbook, sheetName) {
   const sheet = workbook.Sheets[sheetName];
   if (!sheet) return [];
-  return XLSX.utils.sheet_to_json(sheet, {
-    header: 1,
-    defval: '',
-    raw: false,
-    blankrows: false
-  }).map(row => row.map(cellDisplayValue));
+  const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1:A1');
+  const rows = [];
+  for (let r = range.s.r; r <= range.e.r; r += 1) {
+    const row = [];
+    let lastNonBlank = -1;
+    for (let c = range.s.c; c <= range.e.c; c += 1) {
+      const leftCell = c > range.s.c ? sheet[XLSX.utils.encode_cell({ r, c: c - 1 })] : null;
+      const cell = sheet[XLSX.utils.encode_cell({ r, c })];
+      const value = cellDisplayValue(cell, leftCell?.v);
+      row.push(value);
+      if (!isBlank(value)) lastNonBlank = row.length - 1;
+    }
+    if (lastNonBlank >= 0) rows.push(row.slice(0, lastNonBlank + 1));
+  }
+  return trimEmptyColumns(rows);
+}
+
+function trimEmptyColumns(rows) {
+  if (!rows.length) return [];
+  let first = Infinity;
+  let last = -1;
+  rows.forEach((row) => {
+    row.forEach((value, index) => {
+      if (!isBlank(value)) {
+        first = Math.min(first, index);
+        last = Math.max(last, index);
+      }
+    });
+  });
+  if (last < 0) return [];
+  return rows.map(row => row.slice(first, last + 1));
 }
 
 function clearWorksheet(ws) {
@@ -301,8 +330,31 @@ function clearWorksheet(ws) {
   ws.columns = [];
 }
 
-function applySourceSheetLayout(ws) {
+function rowNonBlankCount(row) {
+  return (row || []).filter(value => !isBlank(value)).length;
+}
+
+function rowHasMostlyText(row) {
+  const nonBlank = (row || []).filter(value => !isBlank(value));
+  return nonBlank.length > 1 && nonBlank.some(value => /[A-Za-z]/.test(String(value)));
+}
+
+function isLikelyHeaderRow(row, nextRow) {
+  if (!nextRow) return false;
+  return rowNonBlankCount(row) >= 2 && rowHasMostlyText(row) && rowNonBlankCount(nextRow) >= 2;
+}
+
+function applySourceSheetLayout(ws, { sectionRows = new Set(), headerRows = new Set(), maxColumns = 1 } = {}) {
   ws.views = [{ state: 'frozen', ySplit: 1 }];
+  ws.pageSetup = {
+    ...(ws.pageSetup || {}),
+    fitToPage: true,
+    fitToWidth: 1,
+    fitToHeight: 0,
+    orientation: 'landscape',
+    horizontalCentered: true
+  };
+
   ws.eachRow((row, rowNumber) => {
     row.eachCell({ includeEmpty: true }, (cell) => {
       cell.alignment = { vertical: 'top', wrapText: true };
@@ -312,13 +364,25 @@ function applySourceSheetLayout(ws) {
         bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
         right: { style: 'thin', color: { argb: 'FFE5E7EB' } }
       };
-      if (rowNumber === 1 || cell.value === String(cell.value).toUpperCase()) {
-        cell.font = { ...(cell.font || {}), bold: rowNumber <= 2 };
+      if (sectionRows.has(rowNumber)) {
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 12 };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E78' } };
+        cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+      } else if (headerRows.has(rowNumber)) {
+        cell.font = { bold: true, color: { argb: 'FF0F172A' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9EAF7' } };
       }
     });
+    row.height = sectionRows.has(rowNumber) ? 21 : undefined;
   });
-  for (let i = 1; i <= Math.max(ws.columnCount, 1); i += 1) {
-    ws.getColumn(i).width = Math.min(Math.max(ws.getColumn(i).width || 14, 14), 32);
+
+  for (let i = 1; i <= Math.max(maxColumns, ws.columnCount, 1); i += 1) {
+    let maxLength = i === 1 ? 18 : 12;
+    ws.getColumn(i).eachCell({ includeEmpty: false }, (cell) => {
+      const length = String(cell.value || '').length;
+      maxLength = Math.max(maxLength, Math.min(length + 2, 42));
+    });
+    ws.getColumn(i).width = Math.min(Math.max(maxLength, i === 1 ? 20 : 12), i === 1 ? 38 : 30);
   }
 }
 
@@ -333,32 +397,34 @@ function copySourceWorkbookToSheet(targetSheet, sourceWorkbook, sourceType) {
   const fallbackSheetNames = selectedSheetNames.length ? [] : sourceWorkbook.SheetNames.slice(0, 5);
   const sheetNames = [...new Set([...selectedSheetNames, ...fallbackSheetNames])];
 
-  let rowCursor = 1;
-  let maxColumns = 1;
-  for (const sheetName of sheetNames) {
-    const rows = sourceSheetRows(sourceWorkbook, sheetName);
-    if (!rows.length) continue;
+  const sections = sheetNames.map(sheetName => ({
+    sheetName,
+    rows: sourceSheetRows(sourceWorkbook, sheetName)
+  })).filter(section => section.rows.length);
 
-    targetSheet.getCell(rowCursor, 1).value = sanitizeExcelValue(sheetName, 'Source Data');
-    targetSheet.getCell(rowCursor, 1).font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
-    targetSheet.getCell(rowCursor, 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E78' } };
+  const maxColumns = Math.max(1, ...sections.flatMap(section => section.rows.map(row => row.length || 1)));
+  let rowCursor = 1;
+  const sectionRows = new Set();
+  const headerRows = new Set();
+
+  for (const { sheetName, rows } of sections) {
+    if (maxColumns > 1) targetSheet.mergeCells(rowCursor, 1, rowCursor, maxColumns);
+    setCell(targetSheet, targetSheet.getCell(rowCursor, 1).address, sheetName, 'Source Data');
+    sectionRows.add(rowCursor);
     rowCursor += 1;
 
-    rows.forEach((row) => {
-      maxColumns = Math.max(maxColumns, row.length || 1);
+    rows.forEach((row, index) => {
+      if (isLikelyHeaderRow(row, rows[index + 1])) headerRows.add(rowCursor);
       row.forEach((value, index) => {
         targetSheet.getCell(rowCursor, index + 1).value = sanitizeExcelValue(value, '');
       });
       rowCursor += 1;
     });
-    rowCursor += 2;
+    rowCursor += 1;
   }
 
   if (rowCursor === 1) return false;
-  for (let col = 1; col <= maxColumns; col += 1) {
-    targetSheet.getColumn(col).width = col === 1 ? 28 : 18;
-  }
-  applySourceSheetLayout(targetSheet);
+  applySourceSheetLayout(targetSheet, { sectionRows, headerRows, maxColumns });
   return true;
 }
 
