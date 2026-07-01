@@ -15,6 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const ExcelJS = require('exceljs');
 const XLSX = require('xlsx');
+const axios = require('axios');
 const prisma = require('../../../config/db');
 const { getStorageProvider } = require('../storage');
 
@@ -29,6 +30,7 @@ const SHEET_NAMES = [
   'Cibil - Transunion'
 ];
 const MIME_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const MAX_SOURCE_EXCEL_SIZE_BYTES = 15 * 1024 * 1024;
 const SOURCE_SHEET_LIMITS = {
   bank: ['Summary', 'Overview', 'Monthly summary', 'Daily balance', 'Transactions'],
   itr: ['General Information', 'Tax Calculation', 'Balance Sheet', 'Profit and Loss Statement', 'Ratio Analysis'],
@@ -165,15 +167,71 @@ function streamToBuffer(stream) {
   });
 }
 
-async function readStoredExcelWorkbook(documentId, tenantId) {
-  if (!documentId) return null;
+function isSafeHttpsSourceUrl(rawUrl) {
+  if (!rawUrl) return false;
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch (_) {
+    return false;
+  }
+  if (parsed.protocol !== 'https:') return false;
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname === 'localhost' || hostname === '0.0.0.0') return false;
+  const blockedPrefixes = [
+    '10.', '172.16.', '172.17.', '172.18.', '172.19.', '172.20.', '172.21.', '172.22.', '172.23.', '172.24.',
+    '172.25.', '172.26.', '172.27.', '172.28.', '172.29.', '172.30.', '172.31.', '192.168.', '127.', '169.254.'
+  ];
+  return !blockedPrefixes.some(prefix => hostname.startsWith(prefix));
+}
 
-  const doc = await prisma.document.findFirst({
+function isExcelDocument(doc) {
+  const ext = String(doc?.extension || path.extname(doc?.original_file_name || '') || '').toLowerCase();
+  const mime = String(doc?.mime_type || '').toLowerCase();
+  return ['.xlsx', '.xls'].includes(ext)
+    || mime.includes('spreadsheet')
+    || mime.includes('excel');
+}
+
+async function readExcelWorkbookFromDocument(doc) {
+  if (!doc?.storage_path || !isExcelDocument(doc)) return null;
+  const storage = getStorageProvider();
+  const stream = await storage.getStream(doc.storage_path);
+  const buffer = await streamToBuffer(stream);
+  if (!buffer.length) return null;
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true, raw: false, dense: false });
+  return { workbook, document: doc, source: 'document' };
+}
+
+async function findStoredExcelDocument({ documentId, tenantId, sourceUrl, documentTypes = [] }) {
+  if (documentId) {
+    const doc = await prisma.document.findFirst({
+      where: {
+        id: Number(documentId),
+        tenant_id: tenantId,
+        status: 'ACTIVE',
+        deleted_at: null
+      },
+      select: {
+        id: true,
+        storage_path: true,
+        extension: true,
+        mime_type: true,
+        original_file_name: true,
+        document_type: true
+      }
+    });
+    if (doc) return doc;
+  }
+
+  if (!sourceUrl) return null;
+  return prisma.document.findFirst({
     where: {
-      id: Number(documentId),
       tenant_id: tenantId,
+      source_url: sourceUrl,
       status: 'ACTIVE',
-      deleted_at: null
+      deleted_at: null,
+      ...(documentTypes.length ? { document_type: { in: documentTypes } } : {})
     },
     select: {
       id: true,
@@ -184,23 +242,35 @@ async function readStoredExcelWorkbook(documentId, tenantId) {
       document_type: true
     }
   });
+}
 
-  if (!doc?.storage_path) return null;
-
-  const ext = String(doc.extension || path.extname(doc.original_file_name || '') || '').toLowerCase();
-  const mime = String(doc.mime_type || '').toLowerCase();
-  const isExcel = ['.xlsx', '.xls'].includes(ext)
-    || mime.includes('spreadsheet')
-    || mime.includes('excel');
-  if (!isExcel) return null;
-
-  const storage = getStorageProvider();
-  const stream = await storage.getStream(doc.storage_path);
-  const buffer = await streamToBuffer(stream);
-  if (!buffer.length) return null;
-
+async function readExcelWorkbookFromUrl(sourceUrl) {
+  if (!isSafeHttpsSourceUrl(sourceUrl)) return null;
+  const response = await axios.get(sourceUrl, {
+    responseType: 'arraybuffer',
+    timeout: 30000,
+    maxRedirects: 3,
+    maxContentLength: MAX_SOURCE_EXCEL_SIZE_BYTES,
+    maxBodyLength: MAX_SOURCE_EXCEL_SIZE_BYTES,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    }
+  });
+  const contentType = String(response.headers?.['content-type'] || '').toLowerCase();
+  if (contentType && !contentType.includes('spreadsheet') && !contentType.includes('excel') && !contentType.includes('octet-stream')) {
+    return null;
+  }
+  const buffer = Buffer.from(response.data);
+  if (!buffer.length || buffer.length > MAX_SOURCE_EXCEL_SIZE_BYTES) return null;
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true, raw: false, dense: false });
-  return { workbook, document: doc };
+  return { workbook, source: 'url' };
+}
+
+async function readSourceExcelWorkbook({ documentId, tenantId, sourceUrl, documentTypes = [] }) {
+  const doc = await findStoredExcelDocument({ documentId, tenantId, sourceUrl, documentTypes });
+  const fromDocument = await readExcelWorkbookFromDocument(doc);
+  if (fromDocument) return fromDocument;
+  return readExcelWorkbookFromUrl(sourceUrl);
 }
 
 function findSourceSheetName(workbook, wantedName) {
@@ -292,8 +362,8 @@ function copySourceWorkbookToSheet(targetSheet, sourceWorkbook, sourceType) {
   return true;
 }
 
-async function copyStoredSourceWorkbook({ workbook, targetSheetName, sourceType, documentId, tenantId }) {
-  const source = await readStoredExcelWorkbook(documentId, tenantId);
+async function copyStoredSourceWorkbook({ workbook, targetSheetName, sourceType, documentId, tenantId, sourceUrl, documentTypes = [] }) {
+  const source = await readSourceExcelWorkbook({ documentId, tenantId, sourceUrl, documentTypes });
   if (!source?.workbook) return false;
   return copySourceWorkbookToSheet(workbook.getWorksheet(targetSheetName), source.workbook, sourceType);
 }
@@ -309,7 +379,9 @@ async function copyAvailableSourceWorkbooks(workbook, caseRecord, tenantId) {
       targetSheetName: 'Bank Statement Analysis',
       sourceType: 'bank',
       documentId: bank?.bank_excel_document_id,
-      tenantId
+      tenantId,
+      sourceUrl: bank?.report_excel_url,
+      documentTypes: ['BANK_EXCEL']
     }).catch((err) => {
       console.warn('[LoanApplicationSummary] Bank source Excel copy skipped:', err.message);
       return false;
@@ -319,7 +391,9 @@ async function copyAvailableSourceWorkbooks(workbook, caseRecord, tenantId) {
       targetSheetName: 'ITR Analysis',
       sourceType: 'itr',
       documentId: itr?.itr_document_id,
-      tenantId
+      tenantId,
+      sourceUrl: itr?.excel_url,
+      documentTypes: ['ITR_EXCEL']
     }).catch((err) => {
       console.warn('[LoanApplicationSummary] ITR source Excel copy skipped:', err.message);
       return false;
@@ -329,7 +403,9 @@ async function copyAvailableSourceWorkbooks(workbook, caseRecord, tenantId) {
       targetSheetName: 'GST Analysis',
       sourceType: 'gst',
       documentId: gst?.gst_excel_document_id,
-      tenantId
+      tenantId,
+      sourceUrl: gst?.report_excel_url,
+      documentTypes: ['GST_REPORT_EXCEL']
     }).catch((err) => {
       console.warn('[LoanApplicationSummary] GST source Excel copy skipped:', err.message);
       return false;
@@ -360,15 +436,15 @@ function ensureWorksheetContract(workbook) {
 function sourceUnavailable(caseRecord, source) {
   if (source === 'bank') {
     const bank = getLatest(caseRecord.bank_statements || []);
-    return !bank?.bank_excel_document_id && !latestRawBank(caseRecord) && !caseRecord.esr_financials?.bank_avg_balance;
+    return !bank?.bank_excel_document_id && !bank?.report_excel_url && !latestRawBank(caseRecord) && !caseRecord.esr_financials?.bank_avg_balance;
   }
   if (source === 'itr') {
     const itr = getLatest(caseRecord.itr_analytics || []);
-    return !itr?.itr_document_id && !latestRawItr(caseRecord) && !caseRecord.esr_financials?.itr_pat;
+    return !itr?.itr_document_id && !itr?.excel_url && !latestRawItr(caseRecord) && !caseRecord.esr_financials?.itr_pat;
   }
   if (source === 'gst') {
     const gst = getLatest(caseRecord.gst_requests || []);
-    return !gst?.gst_excel_document_id && !latestRawGst(caseRecord) && !caseRecord.esr_financials?.gst_avg_monthly_sales;
+    return !gst?.gst_excel_document_id && !gst?.report_excel_url && !latestRawGst(caseRecord) && !caseRecord.esr_financials?.gst_avg_monthly_sales;
   }
   if (source === 'cibil') {
     const applicantChecks = (caseRecord.applicants || []).some(a => (a.bureau_checks || []).length || a.cibil_score);
@@ -1021,6 +1097,8 @@ module.exports = {
   ensureWorksheetContract,
   validateWorkbook,
   copySourceWorkbookToSheet,
+  findStoredExcelDocument,
+  isSafeHttpsSourceUrl,
   generateLoanApplicationSummaryWorkbook,
   generateAndSaveLoanApplicationSummary
 };

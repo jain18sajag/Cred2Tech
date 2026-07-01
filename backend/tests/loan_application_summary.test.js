@@ -1,13 +1,26 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const mock = require('node:test').mock;
 const ExcelJS = require('exceljs');
+const documentFindFirst = mock.fn();
+
+require.cache[require.resolve('../config/db')] = {
+  exports: {
+    document: {
+      findFirst: documentFindFirst
+    }
+  }
+};
+
 const {
   SHEET_NAMES,
   buildReportFileName,
   sanitizeExcelValue,
   ensureWorksheetContract,
   validateWorkbook,
-  copySourceWorkbookToSheet
+  copySourceWorkbookToSheet,
+  findStoredExcelDocument,
+  isSafeHttpsSourceUrl
 } = require('../src/services/reports/loanApplicationSummary.service');
 const XLSX = require('xlsx');
 
@@ -70,4 +83,34 @@ test('loan application summary copies source Excel sections into existing report
   assert.equal(sheet.getCell('B2').value, 'HDFC - 123 - Savings');
   assert.equal(sheet.getCell('A6').value, 'Monthly summary');
   assert.equal(sheet.getCell('A7').value, 'Month');
+});
+
+test('loan application summary resolves stored source URL when document id is missing', async () => {
+  const expected = {
+    id: 99,
+    storage_path: '2026/07/source.xlsx',
+    extension: '.xlsx',
+    mime_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    original_file_name: 'source.xlsx',
+    document_type: 'BANK_EXCEL'
+  };
+  documentFindFirst.mock.mockImplementationOnce(async () => expected);
+
+  const doc = await findStoredExcelDocument({
+    documentId: null,
+    tenantId: 7,
+    sourceUrl: 'https://example.com/source.xlsx',
+    documentTypes: ['BANK_EXCEL']
+  });
+
+  assert.equal(doc, expected);
+  assert.equal(documentFindFirst.mock.calls[0].arguments[0].where.source_url, 'https://example.com/source.xlsx');
+  assert.deepEqual(documentFindFirst.mock.calls[0].arguments[0].where.document_type.in, ['BANK_EXCEL']);
+});
+
+test('loan application summary only allows safe https source URLs', () => {
+  assert.equal(isSafeHttpsSourceUrl('https://example.com/source.xlsx'), true);
+  assert.equal(isSafeHttpsSourceUrl('http://example.com/source.xlsx'), false);
+  assert.equal(isSafeHttpsSourceUrl('https://localhost/source.xlsx'), false);
+  assert.equal(isSafeHttpsSourceUrl('https://192.168.1.10/source.xlsx'), false);
 });
