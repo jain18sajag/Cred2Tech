@@ -14,6 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 const ExcelJS = require('exceljs');
+const XLSX = require('xlsx');
 const prisma = require('../../../config/db');
 const { getStorageProvider } = require('../storage');
 
@@ -28,6 +29,11 @@ const SHEET_NAMES = [
   'Cibil - Transunion'
 ];
 const MIME_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const SOURCE_SHEET_LIMITS = {
+  bank: ['Summary', 'Overview', 'Monthly summary', 'Daily balance', 'Transactions'],
+  itr: ['General Information', 'Tax Calculation', 'Balance Sheet', 'Profit and Loss Statement', 'Ratio Analysis'],
+  gst: ['Account Details', 'Entity Details', 'Overview Yearly', 'Overview Monthly', 'Monthly Sales and Purchase', 'Customer Summary', 'Supplier Summary']
+};
 
 function buildReportFileName(caseId) {
   const suffix = Number.isFinite(Number(caseId)) ? Number(caseId) : String(caseId || 'case');
@@ -137,6 +143,202 @@ function setNumberCell(ws, address, value) {
   ws.getCell(address).value = n === null ? '' : n;
 }
 
+function cellDisplayValue(value) {
+  if (value === undefined || value === null || value === '') return '';
+  if (value instanceof Date) return formatDate(value);
+  if (typeof value === 'object') {
+    if (value.text) return value.text;
+    if (value.result !== undefined && value.result !== null) return value.result;
+    if (Array.isArray(value.richText)) return value.richText.map(part => part.text || '').join('');
+    if (value.hyperlink) return value.text || value.hyperlink;
+    return '';
+  }
+  return value;
+}
+
+function streamToBuffer(stream) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    stream.on('data', chunk => chunks.push(Buffer.from(chunk)));
+    stream.on('error', reject);
+    stream.on('end', () => resolve(Buffer.concat(chunks)));
+  });
+}
+
+async function readStoredExcelWorkbook(documentId, tenantId) {
+  if (!documentId) return null;
+
+  const doc = await prisma.document.findFirst({
+    where: {
+      id: Number(documentId),
+      tenant_id: tenantId,
+      status: 'ACTIVE',
+      deleted_at: null
+    },
+    select: {
+      id: true,
+      storage_path: true,
+      extension: true,
+      mime_type: true,
+      original_file_name: true,
+      document_type: true
+    }
+  });
+
+  if (!doc?.storage_path) return null;
+
+  const ext = String(doc.extension || path.extname(doc.original_file_name || '') || '').toLowerCase();
+  const mime = String(doc.mime_type || '').toLowerCase();
+  const isExcel = ['.xlsx', '.xls'].includes(ext)
+    || mime.includes('spreadsheet')
+    || mime.includes('excel');
+  if (!isExcel) return null;
+
+  const storage = getStorageProvider();
+  const stream = await storage.getStream(doc.storage_path);
+  const buffer = await streamToBuffer(stream);
+  if (!buffer.length) return null;
+
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true, raw: false, dense: false });
+  return { workbook, document: doc };
+}
+
+function findSourceSheetName(workbook, wantedName) {
+  const normalizedWanted = String(wantedName).toLowerCase().replace(/[^a-z0-9]/g, '');
+  return workbook.SheetNames.find(name => (
+    String(name).toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedWanted
+  ));
+}
+
+function sourceSheetRows(workbook, sheetName) {
+  const sheet = workbook.Sheets[sheetName];
+  if (!sheet) return [];
+  return XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    defval: '',
+    raw: false,
+    blankrows: false
+  }).map(row => row.map(cellDisplayValue));
+}
+
+function clearWorksheet(ws) {
+  if (!ws) return;
+  const merges = ws._merges ? Object.keys(ws._merges) : [];
+  merges.forEach((range) => {
+    try { ws.unMergeCells(range); } catch (_) {}
+  });
+  if (ws.rowCount > 0) ws.spliceRows(1, ws.rowCount);
+  ws.columns = [];
+}
+
+function applySourceSheetLayout(ws) {
+  ws.views = [{ state: 'frozen', ySplit: 1 }];
+  ws.eachRow((row, rowNumber) => {
+    row.eachCell({ includeEmpty: true }, (cell) => {
+      cell.alignment = { vertical: 'top', wrapText: true };
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+        left: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+        bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+        right: { style: 'thin', color: { argb: 'FFE5E7EB' } }
+      };
+      if (rowNumber === 1 || cell.value === String(cell.value).toUpperCase()) {
+        cell.font = { ...(cell.font || {}), bold: rowNumber <= 2 };
+      }
+    });
+  });
+  for (let i = 1; i <= Math.max(ws.columnCount, 1); i += 1) {
+    ws.getColumn(i).width = Math.min(Math.max(ws.getColumn(i).width || 14, 14), 32);
+  }
+}
+
+function copySourceWorkbookToSheet(targetSheet, sourceWorkbook, sourceType) {
+  if (!targetSheet || !sourceWorkbook?.SheetNames?.length) return false;
+
+  clearWorksheet(targetSheet);
+  const preferredSheets = SOURCE_SHEET_LIMITS[sourceType] || sourceWorkbook.SheetNames;
+  const selectedSheetNames = preferredSheets
+    .map(name => findSourceSheetName(sourceWorkbook, name))
+    .filter(Boolean);
+  const fallbackSheetNames = selectedSheetNames.length ? [] : sourceWorkbook.SheetNames.slice(0, 5);
+  const sheetNames = [...new Set([...selectedSheetNames, ...fallbackSheetNames])];
+
+  let rowCursor = 1;
+  let maxColumns = 1;
+  for (const sheetName of sheetNames) {
+    const rows = sourceSheetRows(sourceWorkbook, sheetName);
+    if (!rows.length) continue;
+
+    targetSheet.getCell(rowCursor, 1).value = sanitizeExcelValue(sheetName, 'Source Data');
+    targetSheet.getCell(rowCursor, 1).font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
+    targetSheet.getCell(rowCursor, 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E78' } };
+    rowCursor += 1;
+
+    rows.forEach((row) => {
+      maxColumns = Math.max(maxColumns, row.length || 1);
+      row.forEach((value, index) => {
+        targetSheet.getCell(rowCursor, index + 1).value = sanitizeExcelValue(value, '');
+      });
+      rowCursor += 1;
+    });
+    rowCursor += 2;
+  }
+
+  if (rowCursor === 1) return false;
+  for (let col = 1; col <= maxColumns; col += 1) {
+    targetSheet.getColumn(col).width = col === 1 ? 28 : 18;
+  }
+  applySourceSheetLayout(targetSheet);
+  return true;
+}
+
+async function copyStoredSourceWorkbook({ workbook, targetSheetName, sourceType, documentId, tenantId }) {
+  const source = await readStoredExcelWorkbook(documentId, tenantId);
+  if (!source?.workbook) return false;
+  return copySourceWorkbookToSheet(workbook.getWorksheet(targetSheetName), source.workbook, sourceType);
+}
+
+async function copyAvailableSourceWorkbooks(workbook, caseRecord, tenantId) {
+  const bank = getLatest(caseRecord.bank_statements || []);
+  const itr = getLatest(caseRecord.itr_analytics || []);
+  const gst = getLatest(caseRecord.gst_requests || []);
+
+  const [bankCopied, itrCopied, gstCopied] = await Promise.all([
+    copyStoredSourceWorkbook({
+      workbook,
+      targetSheetName: 'Bank Statement Analysis',
+      sourceType: 'bank',
+      documentId: bank?.bank_excel_document_id,
+      tenantId
+    }).catch((err) => {
+      console.warn('[LoanApplicationSummary] Bank source Excel copy skipped:', err.message);
+      return false;
+    }),
+    copyStoredSourceWorkbook({
+      workbook,
+      targetSheetName: 'ITR Analysis',
+      sourceType: 'itr',
+      documentId: itr?.itr_document_id,
+      tenantId
+    }).catch((err) => {
+      console.warn('[LoanApplicationSummary] ITR source Excel copy skipped:', err.message);
+      return false;
+    }),
+    copyStoredSourceWorkbook({
+      workbook,
+      targetSheetName: 'GST Analysis',
+      sourceType: 'gst',
+      documentId: gst?.gst_excel_document_id,
+      tenantId
+    }).catch((err) => {
+      console.warn('[LoanApplicationSummary] GST source Excel copy skipped:', err.message);
+      return false;
+    })
+  ]);
+
+  return { bankCopied, itrCopied, gstCopied };
+}
+
 function ensureWorksheetContract(workbook) {
   const bankWithTrailingDot = workbook.getWorksheet('Bank Statement Analysis.');
   if (bankWithTrailingDot) bankWithTrailingDot.name = 'Bank Statement Analysis';
@@ -156,9 +358,18 @@ function ensureWorksheetContract(workbook) {
 }
 
 function sourceUnavailable(caseRecord, source) {
-  if (source === 'bank') return !(caseRecord.bank_statements || []).length && !latestRawBank(caseRecord);
-  if (source === 'itr') return !(caseRecord.itr_analytics || []).length && !latestRawItr(caseRecord);
-  if (source === 'gst') return !(caseRecord.gst_requests || []).length && !latestRawGst(caseRecord);
+  if (source === 'bank') {
+    const bank = getLatest(caseRecord.bank_statements || []);
+    return !bank?.bank_excel_document_id && !latestRawBank(caseRecord) && !caseRecord.esr_financials?.bank_avg_balance;
+  }
+  if (source === 'itr') {
+    const itr = getLatest(caseRecord.itr_analytics || []);
+    return !itr?.itr_document_id && !latestRawItr(caseRecord) && !caseRecord.esr_financials?.itr_pat;
+  }
+  if (source === 'gst') {
+    const gst = getLatest(caseRecord.gst_requests || []);
+    return !gst?.gst_excel_document_id && !latestRawGst(caseRecord) && !caseRecord.esr_financials?.gst_avg_monthly_sales;
+  }
   if (source === 'cibil') {
     const applicantChecks = (caseRecord.applicants || []).some(a => (a.bureau_checks || []).length || a.cibil_score);
     return !(caseRecord.bureau_checks || []).length && !applicantChecks && !caseRecord.cibil_score;
@@ -773,6 +984,7 @@ async function generateLoanApplicationSummaryWorkbook({ caseId, tenantId, user }
   fillItrSheet(workbook, caseRecord);
   fillGstSheet(workbook, caseRecord);
   fillCibilSheet(workbook, caseRecord);
+  await copyAvailableSourceWorkbooks(workbook, caseRecord, tenantId);
   addLogoAndPrintSettings(workbook);
   validateWorkbook(workbook, { requireCaseSummary: true });
 
@@ -808,6 +1020,7 @@ module.exports = {
   sanitizeExcelValue,
   ensureWorksheetContract,
   validateWorkbook,
+  copySourceWorkbookToSheet,
   generateLoanApplicationSummaryWorkbook,
   generateAndSaveLoanApplicationSummary
 };
