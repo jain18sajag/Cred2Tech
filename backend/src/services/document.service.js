@@ -264,7 +264,7 @@ async function streamDocument(documentId, requestingTenantId) {
         throw err;
     }
 
-    const storage = getStorageProvider();
+    const storage = getStorageProvider(doc.storage_provider);
     const stream = await storage.getStream(doc.storage_path);
 
     return { doc, stream };
@@ -286,7 +286,7 @@ async function deleteDocument(documentId, requestingTenantId) {
 
     // Remove from storage first (so we don't leave orphan files)
     try {
-        const storage = getStorageProvider();
+        const storage = getStorageProvider(doc.storage_provider);
         await storage.delete(doc.storage_path);
     } catch (err) {
         console.error(`[document.service] Storage delete failed for key=${doc.storage_path}: ${err.message}`);

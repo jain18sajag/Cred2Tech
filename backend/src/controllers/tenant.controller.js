@@ -19,6 +19,15 @@ async function createTenant(req, res) {
       return res.status(409).json({ error: `A tenant with email "${email}" already exists. Please use a different email address.` });
     }
 
+    if (pan_number) {
+      const existingPan = await prisma.tenant.findFirst({
+        where: { pan_number: { equals: pan_number, mode: 'insensitive' } }
+      });
+      if (existingPan) {
+        return res.status(409).json({ error: `A tenant with PAN "${pan_number}" already exists.` });
+      }
+    }
+
     const tenant = await prisma.tenant.create({
       data: {
         name,
@@ -120,6 +129,15 @@ async function publicRegisterDSA(req, res) {
       return res.status(409).json({ error: `A user with email "${admin_email}" already exists.` });
     }
 
+    if (pan_number) {
+      const existingPan = await prisma.tenant.findFirst({
+        where: { pan_number: { equals: pan_number, mode: 'insensitive' } }
+      });
+      if (existingPan) {
+        return res.status(409).json({ error: `A tenant with PAN "${pan_number}" already exists.` });
+      }
+    }
+
     // --- Resolve DSA_ADMIN role ---
     const dsaAdminRole = await prisma.role.findUnique({ where: { name: 'DSA_ADMIN' } });
     if (!dsaAdminRole) {
@@ -172,9 +190,57 @@ async function publicRegisterDSA(req, res) {
   }
 }
 
+async function updateTenant(req, res) {
+  try {
+    const tenantId = parseInt(req.params.id, 10);
+
+    // Authorization check: if not SUPER_ADMIN, they can only edit their own tenant
+    if (req.user.role?.name !== 'SUPER_ADMIN') {
+      if (req.user.tenant_id !== tenantId) {
+        return res.status(403).json({ error: 'You are not authorized to edit this DSA profile.' });
+      }
+    }
+
+    const { name, mobile, pan_number, gst_number, company_type, state, city, pincode } = req.body;
+
+    if (pan_number) {
+      const existingPan = await prisma.tenant.findFirst({
+        where: { pan_number: { equals: pan_number, mode: 'insensitive' }, id: { not: tenantId } }
+      });
+      if (existingPan) {
+        return res.status(409).json({ error: `A tenant with PAN "${pan_number}" already exists.` });
+      }
+    }
+
+    const tenant = await prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        name,
+        mobile: mobile || null,
+        pan_number: pan_number ? pan_number.toUpperCase() : null,
+        gst_number: gst_number ? gst_number.toUpperCase() : null,
+        company_type: company_type || null,
+        state: state || null,
+        city: city || null,
+        pincode: pincode || null,
+        updated_by: req.user.id
+      }
+    });
+    res.json(tenant);
+  } catch (error) {
+    if (error.code === 'P2002') {
+      const field = error.meta?.target?.[0] || 'field';
+      return res.status(409).json({ error: `A record with this ${field} already exists.` });
+    }
+    console.error('[updateTenant]', error);
+    res.status(400).json({ error: error.message });
+  }
+}
+
 module.exports = {
   createTenant,
   getTenants,
   updateTenantStatus,
   publicRegisterDSA,
+  updateTenant,
 };

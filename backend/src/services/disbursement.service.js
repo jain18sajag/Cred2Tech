@@ -200,15 +200,24 @@ async function getCaseDisbursementSummary(caseId, tenantId) {
 /**
  * List all cases in PARTLY_DISBURSED stage for a tenant.
  */
-async function listPartialDisbursements(tenantId) {
+async function listPartialDisbursements(tenantId, currentUser) {
     const now = new Date();
     const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
 
+    const isBypassed = ['DSA_ADMIN', 'SUPER_ADMIN', 'MSME_CUSTOMER'].includes(currentUser.role);
+    const hierarchyFilter = isBypassed ? {} : {
+        created_by: { hierarchy_path: { startsWith: currentUser.hierarchy_path || '' } }
+    };
+    const disbursementHierarchyFilter = isBypassed ? {} : {
+        case_entity: { created_by: { hierarchy_path: { startsWith: currentUser.hierarchy_path || '' } } }
+    };
+
     const cases = await prisma.case.findMany({
         where: { 
             tenant_id: tenantId,
-            stage: { in: ['APPROVED', 'PARTLY_DISBURSED'] }
+            stage: { in: ['APPROVED', 'PARTLY_DISBURSED'] },
+            ...hierarchyFilter
         },
         include: {
             sanction: true,
@@ -240,7 +249,8 @@ async function listPartialDisbursements(tenantId) {
             disbursement_date: {
                 gte: firstDayOfMonth,
                 lte: lastDayOfMonth
-            }
+            },
+            ...disbursementHierarchyFilter
         }
     });
     const volumeDisbursedThisMonth = monthlyDisbursements.reduce((acc, d) => acc.plus(new Decimal(d.amount)), new Decimal(0));

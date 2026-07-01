@@ -27,3 +27,8 @@ export const getTenantSummary = async (tenantId) => {
   const response = await api.get(`/admin/tenants/${tenantId}/summary`);
   return response.data;
 };
+
+export const updateTenant = async (id, data) => {
+  const response = await api.put(`/tenants/${id}`, data);
+  return response.data;
+};

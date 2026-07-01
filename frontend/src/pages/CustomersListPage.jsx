@@ -260,16 +260,18 @@ export default function CustomersListPage() {
 
       {/* Table */}
       <div style={{ background: '#fff', borderRadius: 12, border: '1px solid #E5E7EB', overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 13 }}>
+        <table style={{ width: '100%', minWidth: 1400, borderCollapse: 'collapse', textAlign: 'left', fontSize: 13 }}>
           <thead>
-            <tr style={{ borderBottom: '1px solid #E5E7EB', color: '#6B7280', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <tr style={{ borderBottom: '1px solid #E5E7EB', color: '#6B7280', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>
               <th style={{ padding: '16px 24px' }}>Case ID</th>
               <th style={{ padding: '16px 12px' }}>Customer</th>
               <th style={{ padding: '16px 12px' }}>Name Of Employee/Sub-dsa</th>
               <th style={{ padding: '16px 12px' }}>CIBIL</th>
               <th style={{ padding: '16px 12px' }}>Lender</th>
               <th style={{ padding: '16px 12px' }}>Product</th>
-              <th style={{ padding: '16px 12px' }}>Amount</th>
+              <th style={{ padding: '16px 12px' }}>Requested Amt</th>
+              <th style={{ padding: '16px 12px' }}>Sanctioned Amt</th>
+              <th style={{ padding: '16px 12px' }}>Disbursed Amt</th>
               <th style={{ padding: '16px 12px' }}>Stage</th>
               <th style={{ padding: '16px 12px' }}>Alert</th>
               <th style={{ padding: '16px 12px' }}>Lead Date</th>
@@ -280,13 +282,13 @@ export default function CustomersListPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan="12" style={{ padding: '40px', textAlign: 'center', color: '#6B7280' }}>
+                <td colSpan="14" style={{ padding: '40px', textAlign: 'center', color: '#6B7280' }}>
                   Loading pipeline...
                 </td>
               </tr>
             ) : cases.length === 0 ? (
               <tr>
-                <td colSpan="12" style={{ padding: '60px 24px', textAlign: 'center' }}>
+                <td colSpan="14" style={{ padding: '60px 24px', textAlign: 'center' }}>
                   <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
                   <div style={{ fontSize: 16, fontWeight: 600, color: '#374151' }}>No cases found</div>
                   <div style={{ fontSize: 14, color: '#6B7280', marginTop: 4 }}>Try adjusting your filters or search term.</div>
@@ -327,8 +329,14 @@ export default function CustomersListPage() {
                     <td style={{ padding: '16px 12px', color: '#4B5563' }}>
                       {c.product_type || '-'}
                     </td>
+                    <td style={{ padding: '16px 12px', fontWeight: 600, color: '#4B5563' }}>
+                      {formatCurrency(c.loan_amount || c.parent_case?.loan_amount)}
+                    </td>
                     <td style={{ padding: '16px 12px', fontWeight: 600, color: '#111827' }}>
-                      {formatCurrency(c.sanctioned_amount || c.loan_amount || c.parent_case?.sanctioned_amount || c.parent_case?.loan_amount)}
+                      {formatCurrency(c.sanctioned_amount || c.parent_case?.sanctioned_amount)}
+                    </td>
+                    <td style={{ padding: '16px 12px', fontWeight: 600, color: '#059669' }}>
+                      {formatCurrency(c.total_disbursed_amount || c.parent_case?.total_disbursed_amount)}
                     </td>
                     <td style={{ padding: '16px 12px' }}>
                       <span style={{

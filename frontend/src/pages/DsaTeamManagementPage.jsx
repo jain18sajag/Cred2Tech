@@ -3,7 +3,7 @@ import {
   Plus, ChevronDown, ChevronUp, X, Check, Settings,
   RefreshCw, Trash2, UserPlus, Edit2, Shield
 } from 'lucide-react';
-import { getUsers, createUser } from '../api/userService';
+import { getUsers, createUser, updateUser } from '../api/userService';
 import { getRoles } from '../api/roleService';
 import { getPayoutConfig, savePayoutConfig } from '../api/subDsaPayoutService';
 import { getTenantLenders } from '../api/tenantLenderService';
@@ -365,18 +365,28 @@ function SubDsaPayoutSetup({ userId, lenders }) {
 }
 
 // ── Add Member Form ──────────────────────────────────────────────────────────
-function AddMemberForm({ roles, onClose, onSuccess }) {
-  const [form, setForm] = useState({ name: '', email: '', mobile: '', password: '', role_id: '', hierarchy_level: '' });
+function AddMemberForm({ roles, users, onClose, onSuccess }) {
+  const [form, setForm] = useState({ name: '', email: '', mobile: '', password: '', role_id: '', hierarchy_level: '', designation: '', manager_id: '' });
   const [saving, setSaving] = useState(false);
 
   const handleSubmit = async () => {
-    if (!form.name || !form.email || !form.password || !form.role_id) {
-      alert('Name, Email, Password, and Role are required.');
+    const selectedRoleName = roles?.find(r => r.id === parseInt(form.role_id))?.name;
+    if (!form.name || !form.email || !form.password || !form.role_id || !form.mobile) {
+      alert('Name, Mobile, Email, Password, and Role are required.');
       return;
     }
+    if (selectedRoleName !== 'SUB_DSA' && !form.hierarchy_level) {
+      alert('Hierarchy Level is required for this role.');
+      return;
+    }
+    
+    // Add logic to convert manager_id to integer if set, or remove if empty
+    const payload = { ...form };
+    if (payload.manager_id) payload.manager_id = parseInt(payload.manager_id, 10);
+    else delete payload.manager_id;
     setSaving(true);
     try {
-      await createUser(form);
+      await createUser(payload);
       onSuccess();
     } catch (e) {
       alert(e.response?.data?.error || 'Failed to create user');
@@ -391,46 +401,192 @@ function AddMemberForm({ roles, onClose, onSuccess }) {
         <div style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>Add New Team Member</div>
         <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={18} color="#6B7280" /></button>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-        <div>
-          <label style={labelStyle}>Full Name *</label>
-          <input placeholder="Enter full name" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} style={inputStyle} />
-        </div>
-        <div>
-          <label style={labelStyle}>Mobile Number *</label>
-          <input placeholder="10-digit mobile" value={form.mobile} onChange={e => setForm(p => ({ ...p, mobile: e.target.value }))} style={inputStyle} />
-        </div>
-        <div>
-          <label style={labelStyle}>Email Address *</label>
-          <input type="email" placeholder="Work email" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} style={inputStyle} />
-        </div>
-        <div>
-          <label style={labelStyle}>Grade / Role *</label>
-          <select value={form.role_id} onChange={e => setForm(p => ({ ...p, role_id: e.target.value }))} style={inputStyle}>
-            <option value="">— Select grade —</option>
-            {(roles || []).filter(r => ['DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA'].includes(r.name)).map(r => (
-              <option key={r.id} value={r.id}>{r.name === 'SUB_DSA' ? 'Partner (Sub-DSA)' : r.name}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label style={labelStyle}>Password *</label>
-          <input type="password" placeholder="Set initial password" value={form.password} onChange={e => setForm(p => ({ ...p, password: e.target.value }))} style={inputStyle} />
-        </div>
-        {!['SUB_DSA'].includes(roles?.find(r => r.id === parseInt(form.role_id))?.name) && (
-          <div>
-            <label style={labelStyle}>Hierarchy Level</label>
-            <select value={form.hierarchy_level} onChange={e => setForm(p => ({ ...p, hierarchy_level: e.target.value }))} style={inputStyle}>
-              <option value="">— Select Level —</option>
-              {['L1', 'L2', 'L3', 'L4', 'L5'].map(l => <option key={l} value={l}>{l}</option>)}
-            </select>
+      
+      {/* Compute Eligible Managers */}
+      {(() => {
+        const LEVELS = { L1: 1, L2: 2, L3: 3, L4: 4, L5: 5 };
+        const eligibleManagers = (users || []).filter(u => {
+          if (!form.hierarchy_level) return true;
+          if (!u.hierarchy_level) return true;
+          return LEVELS[u.hierarchy_level] < LEVELS[form.hierarchy_level];
+        });
+
+        return (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div>
+              <label style={labelStyle}>Full Name *</label>
+              <input placeholder="Enter full name" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Mobile Number *</label>
+              <input placeholder="10-digit mobile" value={form.mobile} onChange={e => setForm(p => ({ ...p, mobile: e.target.value }))} style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Email Address *</label>
+              <input type="email" placeholder="Work email" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Grade / Role *</label>
+              <select value={form.role_id} onChange={e => setForm(p => ({ ...p, role_id: e.target.value }))} style={inputStyle}>
+                <option value="">— Select grade —</option>
+                {(roles || []).filter(r => ['DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA'].includes(r.name)).map(r => (
+                  <option key={r.id} value={r.id}>{r.name === 'SUB_DSA' ? 'Partner (Sub-DSA)' : r.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Password *</label>
+              <input type="password" placeholder="Set initial password" value={form.password} onChange={e => setForm(p => ({ ...p, password: e.target.value }))} style={inputStyle} />
+            </div>
+            {!['SUB_DSA'].includes(roles?.find(r => r.id === parseInt(form.role_id))?.name) && (
+              <div>
+                <label style={labelStyle}>Hierarchy Level *</label>
+                <select value={form.hierarchy_level} onChange={e => setForm(p => ({ ...p, hierarchy_level: e.target.value }))} style={inputStyle}>
+                  <option value="">— Select Level —</option>
+                  {['L1', 'L2', 'L3', 'L4', 'L5'].map(l => <option key={l} value={l}>{l}</option>)}
+                </select>
+              </div>
+            )}
+            <div>
+              <label style={labelStyle}>Designation</label>
+              <input placeholder="e.g. Sales Executive" value={form.designation} onChange={e => setForm(p => ({ ...p, designation: e.target.value }))} style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Reporting Manager</label>
+              <select value={form.manager_id} onChange={e => setForm(p => ({ ...p, manager_id: e.target.value }))} style={inputStyle}>
+                <option value="">None (Root)</option>
+                {eligibleManagers.map(m => (
+                  <option key={m.id} value={m.id}>{m.name} ({m.hierarchy_level || 'Admin'})</option>
+                ))}
+              </select>
+            </div>
           </div>
-        )}
-      </div>
+        );
+      })()}
       <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
         <button onClick={onClose} style={btnOutline}>Cancel</button>
         <button onClick={handleSubmit} disabled={saving} style={{ ...btnPrimary, opacity: saving ? 0.7 : 1 }}>
           {saving ? 'Creating...' : 'Create Member'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Edit Member Form ─────────────────────────────────────────────────────────
+function EditMemberForm({ member, roles, users, onClose, onSuccess }) {
+  const [form, setForm] = useState({
+    name: member.name || '',
+    email: member.email || '',
+    mobile: member.mobile || '',
+    role_id: member.role_id || '',
+    hierarchy_level: member.hierarchy_level || '',
+    status: member.status || 'ACTIVE',
+    designation: member.designation || '',
+    manager_id: member.manager_id || ''
+  });
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async () => {
+    const selectedRoleName = roles?.find(r => r.id === parseInt(form.role_id))?.name;
+    if (!form.name || !form.email || !form.role_id || !form.mobile) {
+      alert('Name, Mobile, Email, and Role are required.');
+      return;
+    }
+    if (selectedRoleName !== 'SUB_DSA' && !form.hierarchy_level) {
+      alert('Hierarchy Level is required for this role.');
+      return;
+    }
+
+    const payload = { ...form };
+    if (payload.manager_id) payload.manager_id = parseInt(payload.manager_id, 10);
+    else payload.manager_id = null; // explicit null to unset
+
+    setSaving(true);
+    try {
+      await updateUser(member.id, payload);
+      onSuccess();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Failed to update user');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 12, padding: 20, marginTop: 12, marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>Edit Team Member ({member.name})</div>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={18} color="#6B7280" /></button>
+      </div>
+      {(() => {
+        const LEVELS = { L1: 1, L2: 2, L3: 3, L4: 4, L5: 5 };
+        const eligibleManagers = (users || []).filter(u => {
+          if (u.id === member.id) return false; // cannot manage self
+          if (!form.hierarchy_level) return true;
+          if (!u.hierarchy_level) return true;
+          return LEVELS[u.hierarchy_level] < LEVELS[form.hierarchy_level];
+        });
+
+        return (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div>
+              <label style={labelStyle}>Full Name *</label>
+              <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Mobile Number *</label>
+              <input value={form.mobile} onChange={e => setForm(p => ({ ...p, mobile: e.target.value }))} style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Email Address *</label>
+              <input value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Grade / Role *</label>
+              <select value={form.role_id} onChange={e => setForm(p => ({ ...p, role_id: e.target.value }))} style={inputStyle}>
+                <option value="">— Select grade —</option>
+                {(roles || []).filter(r => ['DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA'].includes(r.name)).map(r => (
+                  <option key={r.id} value={r.id}>{r.name === 'SUB_DSA' ? 'Partner (Sub-DSA)' : r.name}</option>
+                ))}
+              </select>
+            </div>
+            {!['SUB_DSA'].includes(roles?.find(r => r.id === parseInt(form.role_id))?.name) && (
+              <div>
+                <label style={labelStyle}>Hierarchy Level *</label>
+                <select value={form.hierarchy_level} onChange={e => setForm(p => ({ ...p, hierarchy_level: e.target.value }))} style={inputStyle}>
+                  <option value="">— Select Level —</option>
+                  {['L1', 'L2', 'L3', 'L4', 'L5'].map(l => <option key={l} value={l}>{l}</option>)}
+                </select>
+              </div>
+            )}
+            <div>
+              <label style={labelStyle}>Designation</label>
+              <input value={form.designation} onChange={e => setForm(p => ({ ...p, designation: e.target.value }))} style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Reporting Manager</label>
+              <select value={form.manager_id} onChange={e => setForm(p => ({ ...p, manager_id: e.target.value }))} style={inputStyle}>
+                <option value="">None (Root)</option>
+                {eligibleManagers.map(m => (
+                  <option key={m.id} value={m.id}>{m.name} ({m.hierarchy_level || 'Admin'})</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Status</label>
+              <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value }))} style={inputStyle}>
+                <option value="ACTIVE">Active</option>
+                <option value="INACTIVE">Inactive</option>
+              </select>
+            </div>
+          </div>
+        );
+      })()}
+      <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+        <button onClick={onClose} style={btnOutline}>Cancel</button>
+        <button onClick={handleSubmit} disabled={saving} style={{ ...btnPrimary, opacity: saving ? 0.7 : 1 }}>
+          {saving ? 'Saving...' : 'Save Changes'}
         </button>
       </div>
     </div>
@@ -444,6 +600,7 @@ export default function DsaTeamManagementPage() {
   const [lenders, setLenders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
   const [expandedSubDsa, setExpandedSubDsa] = useState({});
 
   const fetchAll = useCallback(async () => {
@@ -500,8 +657,20 @@ export default function DsaTeamManagementPage() {
       {showAddForm && (
         <AddMemberForm
           roles={roles}
+          users={users}
           onClose={() => setShowAddForm(false)}
           onSuccess={() => { setShowAddForm(false); fetchAll(); }}
+        />
+      )}
+
+      {/* Edit form */}
+      {editingUser && (
+        <EditMemberForm
+          member={editingUser}
+          roles={roles}
+          users={users}
+          onClose={() => setEditingUser(null)}
+          onSuccess={() => { setEditingUser(null); fetchAll(); }}
         />
       )}
 
@@ -523,6 +692,7 @@ export default function DsaTeamManagementPage() {
                 <th style={{ padding: '10px 16px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: '#6B7280' }}>Role</th>
                 <th style={{ padding: '10px 16px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: '#6B7280' }}>Level</th>
                 <th style={{ padding: '10px 16px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: '#6B7280' }}>Status</th>
+                <th style={{ padding: '10px 16px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: '#6B7280' }}>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -535,6 +705,14 @@ export default function DsaTeamManagementPage() {
                   <td style={{ padding: '10px 16px', fontSize: 13, color: '#6B7280' }}>{u.hierarchy_level || '—'}</td>
                   <td style={{ padding: '10px 16px' }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: u.status === 'ACTIVE' ? '#059669' : '#DC2626' }}>{u.status}</span>
+                  </td>
+                  <td style={{ padding: '10px 16px' }}>
+                    <button onClick={() => {
+                      setEditingUser(u);
+                      setShowAddForm(false);
+                    }} style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid #E5E7EB', background: '#fff', color: '#374151', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <Edit2 size={12} /> Edit
+                    </button>
                   </td>
                 </tr>
               ))}

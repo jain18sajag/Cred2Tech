@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, SlidersHorizontal, Eye, Edit, Building, RefreshCw, X, MapPin, Hash, Wallet, Activity } from 'lucide-react';
-import { getTenants, getTenantSummary } from '../api/tenantService';
+import { getTenants, getTenantSummary, updateTenant } from '../api/tenantService';
 import { MOCK_TENANTS } from '../constants/mockData';
 import { STATUS_OPTIONS } from '../constants/roles';
 import PageHeader from '../components/ui/PageHeader';
@@ -22,6 +22,26 @@ const TenantsListPage = () => {
   const [selectedTenantId, setSelectedTenantId] = useState(null);
   const [summaryData, setSummaryData] = useState(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
+
+  const [editTenantData, setEditTenantData] = useState(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+
+  const handleEditSubmit = async (e) => {
+    e.preventDefault();
+    setIsEditing(true);
+    setError('');
+    try {
+      await updateTenant(editTenantData.id, editTenantData);
+      setShowEditModal(false);
+      setEditTenantData(null);
+      fetchTenants(); // refresh list
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Failed to update DSA.');
+    } finally {
+      setIsEditing(false);
+    }
+  };
 
   const fetchTenants = async () => {
     setLoading(true);
@@ -188,9 +208,14 @@ const TenantsListPage = () => {
                   </td>
                   <td><Badge type="status" value={t.status} /></td>
                   <td>
-                    <button className="btn btn-outline btn-xs" style={{ fontSize: 11, padding: '2px 10px' }} onClick={(e) => { e.stopPropagation(); openSummary(t.id); }}>
-                      View
-                    </button>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button className="btn btn-outline btn-xs" style={{ fontSize: 11, padding: '2px 10px' }} onClick={(e) => { e.stopPropagation(); openSummary(t.id); }}>
+                        View
+                      </button>
+                      <button className="btn btn-outline btn-xs" style={{ fontSize: 11, padding: '2px 10px' }} onClick={(e) => { e.stopPropagation(); setEditTenantData(t); setShowEditModal(true); }}>
+                        Edit
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -334,6 +359,67 @@ const TenantsListPage = () => {
             ) : (
               <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>Failed to load DSA metrics.</p>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Edit Modal */}
+      {showEditModal && editTenantData && (
+        <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 500 }}>
+            <div className="modal-header">
+              <h3 className="modal-title"><Edit size={16} /> Edit DSA ({editTenantData.name})</h3>
+              <button className="icon-btn" onClick={() => setShowEditModal(false)}><X size={16} /></button>
+            </div>
+            <div className="modal-body">
+              <form onSubmit={handleEditSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div>
+                  <label className="form-label">DSA Name</label>
+                  <input type="text" className="form-control" required value={editTenantData.name || ''} onChange={e => setEditTenantData({ ...editTenantData, name: e.target.value })} />
+                </div>
+                <div>
+                  <label className="form-label">Mobile</label>
+                  <input type="text" className="form-control" value={editTenantData.mobile || ''} onChange={e => setEditTenantData({ ...editTenantData, mobile: e.target.value })} />
+                </div>
+                <div>
+                  <label className="form-label">PAN Number</label>
+                  <input type="text" className="form-control" value={editTenantData.pan_number || ''} onChange={e => setEditTenantData({ ...editTenantData, pan_number: e.target.value })} style={{ textTransform: 'uppercase' }} />
+                </div>
+                <div>
+                  <label className="form-label">GST Number</label>
+                  <input type="text" className="form-control" value={editTenantData.gst_number || ''} onChange={e => setEditTenantData({ ...editTenantData, gst_number: e.target.value })} style={{ textTransform: 'uppercase' }} />
+                </div>
+                <div>
+                  <label className="form-label">Company Type</label>
+                  <select className="form-control" value={editTenantData.company_type || ''} onChange={e => setEditTenantData({ ...editTenantData, company_type: e.target.value })}>
+                    <option value="">Select Company Type</option>
+                    <option value="Proprietorship">Proprietorship</option>
+                    <option value="Partnership">Partnership</option>
+                    <option value="Private Limited">Private Limited</option>
+                    <option value="Public Limited">Public Limited</option>
+                    <option value="LLP">LLP</option>
+                  </select>
+                </div>
+                <div style={{ display: 'flex', gap: 16 }}>
+                  <div style={{ flex: 1 }}>
+                    <label className="form-label">City</label>
+                    <input type="text" className="form-control" value={editTenantData.city || ''} onChange={e => setEditTenantData({ ...editTenantData, city: e.target.value })} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label className="form-label">State</label>
+                    <input type="text" className="form-control" value={editTenantData.state || ''} onChange={e => setEditTenantData({ ...editTenantData, state: e.target.value })} />
+                  </div>
+                </div>
+                <div>
+                  <label className="form-label">Pincode</label>
+                  <input type="text" className="form-control" value={editTenantData.pincode || ''} onChange={e => setEditTenantData({ ...editTenantData, pincode: e.target.value })} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+                  <button type="button" className="btn btn-outline" onClick={() => setShowEditModal(false)}>Cancel</button>
+                  <button type="submit" className="btn btn-primary" disabled={isEditing}>{isEditing ? 'Saving...' : 'Save Changes'}</button>
+                </div>
+              </form>
+            </div>
           </div>
         </div>
       )}

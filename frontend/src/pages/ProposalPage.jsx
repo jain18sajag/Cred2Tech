@@ -599,6 +599,19 @@ function DocCard({ label, uploaded, doc, onToggle, required = true, isSubmitted,
               }}>
               {isAttached ? '✓ Included' : 'Include'}
             </button>
+            <button
+              onClick={() => {
+                const token = localStorage.getItem('token');
+                const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+                window.open(`${baseUrl}/documents/${doc.id}/view?token=${token}`, '_blank');
+              }}
+              style={{
+                flex: 1, padding: '5px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                border: '1px solid var(--border)', borderRadius: 5,
+                background: 'var(--bg-primary)', color: 'var(--text-secondary)'
+              }}>
+              View
+            </button>
             {!isSubmitted && (
               <button
                 onClick={() => inputRef.current?.click()}

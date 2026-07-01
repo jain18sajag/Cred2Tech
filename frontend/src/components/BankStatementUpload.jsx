@@ -165,38 +165,25 @@ const BankStatementUpload = ({ caseId, customerId, applicantId, applicantType, a
                     {/* Action Buttons */}
                     {status === 'COMPLETED' ? (
                         <div style={{ display: 'flex', gap: 8 }}>
-                            {/* Prefer internal document IDs; fall back to source URL for legacy records */}
-                            {(documentIds.excel || sourceUrls.excel) && (
-                                documentIds.excel ? (
-                                    <button
-                                        type="button"
-                                        className="btn btn-secondary btn-sm"
-                                        style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px' }}
-                                        onClick={() => downloadDocument(documentIds.excel, 'bank_statement.xlsx').catch(e => toast.error(e.message))}
-                                    >
-                                        <Download size={14} /> Excel
-                                    </button>
-                                ) : (
-                                    <a href={sourceUrls.excel} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px' }}>
-                                        <Download size={14} /> Excel
-                                    </a>
-                                )
+                            {(documentIds.excel || existingStatus?.bank_excel_document_id) && (
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary btn-sm"
+                                    style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px' }}
+                                    onClick={() => downloadDocument(documentIds.excel || existingStatus.bank_excel_document_id, 'bank_statement.xlsx').catch(e => toast.error(e.message))}
+                                >
+                                    <Download size={14} /> Excel
+                                </button>
                             )}
-                            {(documentIds.json || sourceUrls.json) && (
-                                documentIds.json ? (
-                                    <button
-                                        type="button"
-                                        className="btn btn-ghost btn-sm"
-                                        style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px', color: '#64748b' }}
-                                        onClick={() => downloadDocument(documentIds.json, 'bank_statement.json').catch(e => toast.error(e.message))}
-                                    >
-                                        <FileText size={14} /> JSON
-                                    </button>
-                                ) : (
-                                    <a href={sourceUrls.json} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px', color: '#64748b' }}>
-                                        <FileText size={14} /> JSON
-                                    </a>
-                                )
+                            {(documentIds.json || existingStatus?.bank_json_document_id) && (
+                                <button
+                                    type="button"
+                                    className="btn btn-ghost btn-sm"
+                                    style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 10px', color: '#64748b' }}
+                                    onClick={() => downloadDocument(documentIds.json || existingStatus.bank_json_document_id, 'bank_statement.json').catch(e => toast.error(e.message))}
+                                >
+                                    <FileText size={14} /> JSON
+                                </button>
                             )}
                             {(!documentIds.excel && !documentIds.json && !sourceUrls.excel && !sourceUrls.json) && (
                                 <button type="button" className="btn btn-primary btn-sm" style={{ fontWeight: 600 }} onClick={fetchDownloads} disabled={loading}>

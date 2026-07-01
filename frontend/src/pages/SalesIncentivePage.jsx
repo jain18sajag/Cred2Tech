@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { salesIncentiveService } from '../api/salesIncentiveService';
 import { useAuth } from '../context/AuthContext';
-import { Target, ChevronDown, ChevronUp, FileText, X, Activity } from 'lucide-react';
+import { Target, ChevronDown, ChevronUp, FileText, X, Activity, Edit } from 'lucide-react';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const fmt = (v) => {
@@ -216,7 +216,8 @@ export default function SalesIncentivePage() {
   const [filters, setFilters] = useState({ month: '', user_id: '', product: '', search: '' });
   const [updateModal, setUpdateModal] = useState(null);
   const [showConfigModal, setShowConfigModal] = useState(false);
-  const [newRule, setNewRule] = useState({
+  const [editingRuleId, setEditingRuleId] = useState(null);
+  const [ruleForm, setRuleForm] = useState({
     hierarchy_level: 'L1',
     commission_type: 'PERCENTAGE',
     commission_value: '',
@@ -255,15 +256,25 @@ export default function SalesIncentivePage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleCreateRule = async (e) => {
+  const handleRuleSubmit = async (e) => {
     e.preventDefault();
     try {
-      await salesIncentiveService.createRule(newRule);
-      setNewRule({ hierarchy_level: 'L1', commission_type: 'PERCENTAGE', commission_value: '', calculation_base: 'DISBURSED_AMOUNT' });
+      if (editingRuleId) {
+        await salesIncentiveService.updateRule(editingRuleId, ruleForm);
+      } else {
+        await salesIncentiveService.createRule(ruleForm);
+      }
+      setRuleForm({ hierarchy_level: 'L1', commission_type: 'PERCENTAGE', commission_value: '', calculation_base: 'DISBURSED_AMOUNT' });
+      setEditingRuleId(null);
       fetchData();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to create rule');
+      alert(err.response?.data?.error || 'Failed to save rule');
     }
+  };
+
+  const handleCancelEdit = () => {
+    setRuleForm({ hierarchy_level: 'L1', commission_type: 'PERCENTAGE', commission_value: '', calculation_base: 'DISBURSED_AMOUNT' });
+    setEditingRuleId(null);
   };
 
   const grouped = ledgers.reduce((acc, l) => {
@@ -363,10 +374,10 @@ export default function SalesIncentivePage() {
             </div>
             
             <div style={{ padding: 24, overflowY: 'auto', flex: 1 }}>
-              <form onSubmit={handleCreateRule} style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 24, background: '#F9FAFB', padding: 16, borderRadius: 8, border: '1px solid #E5E7EB' }}>
+              <form onSubmit={handleRuleSubmit} style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 24, background: '#F9FAFB', padding: 16, borderRadius: 8, border: '1px solid #E5E7EB' }}>
                 <div style={{ flex: 1 }}>
                   <label style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Level</label>
-                  <select required value={newRule.hierarchy_level} onChange={e => setNewRule({...newRule, hierarchy_level: e.target.value})} style={inputStyle}>
+                  <select required value={ruleForm.hierarchy_level} onChange={e => setRuleForm({...ruleForm, hierarchy_level: e.target.value})} style={inputStyle}>
                     <option value="L1">L1</option>
                     <option value="L2">L2</option>
                     <option value="L3">L3</option>
@@ -375,23 +386,28 @@ export default function SalesIncentivePage() {
                 </div>
                 <div style={{ flex: 1 }}>
                   <label style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Type</label>
-                  <select value={newRule.commission_type} onChange={e => setNewRule({...newRule, commission_type: e.target.value})} style={inputStyle}>
+                  <select value={ruleForm.commission_type} onChange={e => setRuleForm({...ruleForm, commission_type: e.target.value})} style={inputStyle}>
                     <option value="PERCENTAGE">Percentage (%)</option>
                     <option value="FIXED">Fixed (₹)</option>
                   </select>
                 </div>
                 <div style={{ flex: 1 }}>
                   <label style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Value</label>
-                  <input required type="number" step="0.01" value={newRule.commission_value} onChange={e => setNewRule({...newRule, commission_value: e.target.value})} style={inputStyle} />
+                  <input required type="number" step="0.01" value={ruleForm.commission_value} onChange={e => setRuleForm({...ruleForm, commission_value: e.target.value})} style={inputStyle} />
                 </div>
                 <div style={{ flex: 1 }}>
                   <label style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Base</label>
-                  <select value={newRule.calculation_base} onChange={e => setNewRule({...newRule, calculation_base: e.target.value})} style={inputStyle}>
+                  <select value={ruleForm.calculation_base} onChange={e => setRuleForm({...ruleForm, calculation_base: e.target.value})} style={inputStyle}>
                     <option value="DISBURSED_AMOUNT">Disbursed Amount</option>
                     <option value="FIXED_PER_CASE">Fixed Per Case</option>
                   </select>
                 </div>
-                <button type="submit" style={{ padding: '8px 16px', background: '#4F46E5', color: '#fff', borderRadius: 8, border: 'none', fontWeight: 600, cursor: 'pointer' }}>Add</button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {editingRuleId && (
+                    <button type="button" onClick={handleCancelEdit} style={{ padding: '8px 16px', background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, fontWeight: 600, cursor: 'pointer', color: '#374151' }}>Cancel</button>
+                  )}
+                  <button type="submit" style={{ padding: '8px 16px', background: '#4F46E5', color: '#fff', borderRadius: 8, border: 'none', fontWeight: 600, cursor: 'pointer' }}>{editingRuleId ? 'Update' : 'Add'}</button>
+                </div>
               </form>
 
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -401,6 +417,7 @@ export default function SalesIncentivePage() {
                     <th style={thStyle}>Base</th>
                     <th style={thStyle}>Value</th>
                     <th style={thStyle}>Status</th>
+                    <th style={thStyle}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -412,9 +429,25 @@ export default function SalesIncentivePage() {
                         {r.commission_type === 'PERCENTAGE' ? `${r.commission_value}%` : `₹${r.commission_value}`}
                       </td>
                       <td style={{ padding: '12px 14px' }}><StatusBadge status={r.status} /></td>
+                      <td style={{ padding: '12px 14px' }}>
+                        <button 
+                          onClick={() => {
+                            setEditingRuleId(r.id);
+                            setRuleForm({
+                              hierarchy_level: r.hierarchy_level,
+                              commission_type: r.commission_type,
+                              commission_value: r.commission_value,
+                              calculation_base: r.calculation_base
+                            });
+                          }}
+                          style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid #E5E7EB', background: '#fff', color: '#374151', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                        >
+                          <Edit size={12} /> Edit
+                        </button>
+                      </td>
                     </tr>
                   ))}
-                  {rules.length === 0 && <tr><td colSpan={4} style={{ padding: 24, textAlign: 'center', color: '#9CA3AF' }}>No rules configured</td></tr>}
+                  {rules.length === 0 && <tr><td colSpan={5} style={{ padding: 24, textAlign: 'center', color: '#9CA3AF' }}>No rules configured</td></tr>}
                 </tbody>
               </table>
             </div>

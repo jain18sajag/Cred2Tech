@@ -301,7 +301,8 @@ const CustomerProfilePage = () => {
               {profile.documents?.length > 0 ? profile.documents.map(doc => (
                 <tr key={doc.id} style={{ borderBottom: '1px solid #F3F4F6' }}>
                   <td style={{ padding: '12px 24px', color: '#374151' }}>
-                    {doc.document_type?.replace(/_/g, ' ')}
+                    <div style={{ fontWeight: 600 }}>{doc.document_type?.replace(/_/g, ' ')}</div>
+                    {doc.original_file_name && <div style={{ fontSize: 11, color: '#6B7280', marginTop: 2 }}>{doc.original_file_name}</div>}
                   </td>
                   <td style={{ padding: '12px 24px', color: '#6B7280' }}>
                     {profile.customer_name}
@@ -314,7 +315,11 @@ const CustomerProfilePage = () => {
                   </td>
                   <td style={{ padding: '12px 24px' }}>
                     <button
-                      onClick={() => navigate(`/api/documents/${doc.id}/view`)}
+                      onClick={() => {
+                        const token = localStorage.getItem('token');
+                        const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+                        window.open(`${baseUrl}/documents/${doc.id}/view?token=${token}`, '_blank');
+                      }}
                       style={{
                         background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 6,
                         padding: '4px 12px', fontSize: 12, cursor: 'pointer', color: '#374151', fontWeight: 600

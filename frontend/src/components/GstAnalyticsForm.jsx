@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
-import { CheckCircle2, AlertCircle, RefreshCw, FileText, Download } from 'lucide-react';
+import { CheckCircle2, AlertCircle, RefreshCw, FileText, Download, FileSpreadsheet, FileJson } from 'lucide-react';
 import FormField from './ui/FormField';
 import api from '../api/axiosInstance';
 import { downloadDocument } from '../api/documentHelper';
@@ -317,41 +317,57 @@ const GstAnalyticsForm = ({ caseId, customerId, applicantId = null, linkedGstins
 
                                 {(req.status === 'REPORT_READY' || req.status === 'COMPLETED') && (
                                     <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
-                                        {/* PDF: prefer internal document, fallback to source URL for legacy records */}
-                                        {req.gst_pdf_document_id ? (
-                                            <button type="button" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-                                                onClick={() => downloadDocument(req.gst_pdf_document_id, `gst_${req.gstin}.pdf`).catch(e => toast.error(e.message))}>
-                                                <FileText size={14} /> PDF Report
-                                            </button>
-                                        ) : req.report_pdf_url ? (
-                                            <a href={req.report_pdf_url} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                                <FileText size={14} /> PDF Report
-                                            </a>
-                                        ) : null}
+                                        {/* PDF */}
+                                        {(req.gst_pdf_document_id || req.report_pdf_url) && (
+                                            req.gst_pdf_document_id ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        const token = localStorage.getItem('token');
+                                                        const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+                                                        window.open(`${baseUrl}/documents/${req.gst_pdf_document_id}/view?token=${token}`, '_blank');
+                                                    }}
+                                                    className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                    <FileText size={14} /> PDF
+                                                </button>
+                                            ) : (
+                                                <a href={req.report_pdf_url} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                    <FileText size={14} /> PDF
+                                                </a>
+                                            )
+                                        )}
 
                                         {/* Excel */}
-                                        {req.gst_excel_document_id ? (
-                                            <button type="button" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-                                                onClick={() => downloadDocument(req.gst_excel_document_id, `gst_${req.gstin}.xlsx`).catch(e => toast.error(e.message))}>
-                                                <Download size={14} /> Excel Report
-                                            </button>
-                                        ) : req.report_excel_url ? (
-                                            <a href={req.report_excel_url} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                                <Download size={14} /> Excel Report
-                                            </a>
-                                        ) : null}
+                                        {(req.gst_excel_document_id || req.report_excel_url) && (
+                                            req.gst_excel_document_id ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => downloadDocument(req.gst_excel_document_id, 'gst_report.xlsx').catch(e => toast.error(e.message))}
+                                                    className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                    <FileSpreadsheet size={14} /> Excel
+                                                </button>
+                                            ) : (
+                                                <a href={req.report_excel_url} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                    <FileSpreadsheet size={14} /> Excel
+                                                </a>
+                                            )
+                                        )}
 
                                         {/* JSON */}
-                                        {req.gst_json_document_id ? (
-                                            <button type="button" className="btn btn-ghost btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-                                                onClick={() => downloadDocument(req.gst_json_document_id, `gst_${req.gstin}.json`).catch(e => toast.error(e.message))}>
-                                                <Download size={14} /> Raw JSON
-                                            </button>
-                                        ) : req.report_json_url ? (
-                                            <a href={req.report_json_url} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                                <Download size={14} /> Raw JSON
-                                            </a>
-                                        ) : null}
+                                        {(req.gst_json_document_id || req.report_json_url) && (
+                                            req.gst_json_document_id ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => downloadDocument(req.gst_json_document_id, 'gst_report.json').catch(e => toast.error(e.message))}
+                                                    className="btn btn-ghost btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                    <FileJson size={14} /> JSON
+                                                </button>
+                                            ) : (
+                                                <a href={req.report_json_url} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                    <FileJson size={14} /> JSON
+                                                </a>
+                                            )
+                                        )}
                                     </div>
                                 )}
                             </div>

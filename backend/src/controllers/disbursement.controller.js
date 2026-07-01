@@ -35,7 +35,7 @@ async function getCaseSummary(req, res) {
 async function listPartialDisbursements(req, res) {
     try {
         const tenantId = req.user.tenant_id;
-        const result = await disbursementService.listPartialDisbursements(tenantId);
+        const result = await disbursementService.listPartialDisbursements(tenantId, req.user);
         res.json(result);
     } catch (error) {
         console.error('[DISBURSEMENT CONTROLLER] Error:', error);

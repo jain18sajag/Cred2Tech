@@ -45,13 +45,20 @@ async function deductCredits({ tenantId, userId, customerId, caseId, apiCode, id
     let walletTx = null;
     let employeeWalletTx = null;
 
-    if (employeeAllocationEnabled && !isDsaAdmin) {
-      const empWallet = await tx.employeeWallet.findUnique({
+    let empWallet = null;
+    if (!isDsaAdmin) {
+      empWallet = await tx.employeeWallet.findUnique({
         where: { tenant_id_user_id: { tenant_id: tenantId, user_id: userId } }
       });
+      if (empWallet) {
+        employeeAllocationEnabled = true;
+      }
+    }
+
+    if (employeeAllocationEnabled && !isDsaAdmin) {
       
       if (!empWallet || empWallet.status !== 'ACTIVE' || empWallet.allocated_balance < cost) {
-        const error = new Error('INSUFFICIENT_EMPLOYEE_CREDITS');
+        const error = new Error('Your allocated credits have been exhausted. Please request the admin to allocate more credits.');
         error.status = 402;
         throw error;
       }
@@ -161,10 +168,17 @@ async function refundCredits(tenantId, logId, cost, userId) {
 
     let updatedWallet = null;
 
-    if (employeeAllocationEnabled && !isDsaAdmin) {
-      const empWallet = await tx.employeeWallet.findUnique({
+    let empWallet = null;
+    if (!isDsaAdmin) {
+      empWallet = await tx.employeeWallet.findUnique({
         where: { tenant_id_user_id: { tenant_id: tenantId, user_id: userId } }
       });
+      if (empWallet) {
+        employeeAllocationEnabled = true;
+      }
+    }
+
+    if (employeeAllocationEnabled && !isDsaAdmin) {
       if (empWallet) {
         updatedWallet = await tx.employeeWallet.update({
           where: { id: empWallet.id },

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { User, Mail, Phone, Shield, Building2, Layers, GitBranch, Calendar, Key, Activity } from 'lucide-react';
+import { User, Mail, Phone, Shield, Building2, Layers, GitBranch, Calendar, Key, Activity, Edit, X } from 'lucide-react';
 import { getMe } from '../api/authService';
+import { updateTenant } from '../api/tenantService';
 import { useAuth } from '../context/AuthContext';
 import PageHeader from '../components/ui/PageHeader';
 import Badge from '../components/ui/Badge';
@@ -33,19 +34,42 @@ const ProfilePage = () => {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Edit Organization State
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editTenantData, setEditTenantData] = useState(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editError, setEditError] = useState('');
+
+  const fetchProfile = async () => {
+    try {
+      const data = await getMe();
+      setProfile(data.user || data);
+    } catch {
+      setProfile(authUser); // fallback to context data
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetch = async () => {
-      try {
-        const data = await getMe();
-        setProfile(data.user || data);
-      } catch {
-        setProfile(authUser); // fallback to context data
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetch();
+    fetchProfile();
   }, [authUser]);
+
+  const handleEditSubmit = async (e) => {
+    e.preventDefault();
+    setIsEditing(true);
+    setEditError('');
+    try {
+      await updateTenant(editTenantData.id, editTenantData);
+      setShowEditModal(false);
+      setEditTenantData(null);
+      await fetchProfile(); // refresh data
+    } catch (err) {
+      setEditError(err?.response?.data?.error || 'Failed to update organization details.');
+    } finally {
+      setIsEditing(false);
+    }
+  };
 
   if (loading) return <LoadingSpinner fullPage />;
 
@@ -107,7 +131,20 @@ const ProfilePage = () => {
           </SectionCard>
 
           <SectionCard title="Hierarchy & Organization">
-            <InfoRow icon={Building2} label="DSA Organization" value={u.dsa?.name} />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12, marginTop: -32 }}>
+              {u.role?.name === 'DSA_ADMIN' && u.tenant && (
+                <button 
+                  className="btn btn-outline btn-sm" 
+                  onClick={() => {
+                    setEditTenantData(u.tenant);
+                    setShowEditModal(true);
+                  }}
+                >
+                  <Edit size={14} style={{ marginRight: 4 }} /> Edit Organization
+                </button>
+              )}
+            </div>
+            <InfoRow icon={Building2} label="DSA Organization" value={u.tenant?.name || u.dsa?.name} />
             <InfoRow icon={Layers} label="Hierarchy Level" value={u.hierarchy_level} />
             <InfoRow icon={GitBranch} label="Hierarchy Path" value={formatHierarchyPath(u.hierarchy_path)} />
             <InfoRow icon={User} label="Manager ID" value={u.manager_id?.toString()} />
@@ -119,6 +156,69 @@ const ProfilePage = () => {
           </SectionCard>
         </div>
       </div>
+
+      {/* Edit Organization Modal */}
+      {showEditModal && editTenantData && (
+        <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 500 }}>
+            <div className="modal-header">
+              <h3 className="modal-title"><Edit size={16} /> Edit Organization ({editTenantData.name})</h3>
+              <button className="icon-btn" onClick={() => setShowEditModal(false)}><X size={16} /></button>
+            </div>
+            <div className="modal-body">
+              {editError && <div className="notice notice-error" style={{ marginBottom: 16 }}>{editError}</div>}
+              <form onSubmit={handleEditSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div>
+                  <label className="form-label">Organization Name</label>
+                  <input type="text" className="form-control" required value={editTenantData.name || ''} onChange={e => setEditTenantData({ ...editTenantData, name: e.target.value })} />
+                </div>
+                <div>
+                  <label className="form-label">Contact Mobile</label>
+                  <input type="text" className="form-control" value={editTenantData.mobile || ''} onChange={e => setEditTenantData({ ...editTenantData, mobile: e.target.value })} />
+                </div>
+                <div>
+                  <label className="form-label">PAN Number</label>
+                  <input type="text" className="form-control" value={editTenantData.pan_number || ''} onChange={e => setEditTenantData({ ...editTenantData, pan_number: e.target.value })} style={{ textTransform: 'uppercase' }} />
+                </div>
+                <div>
+                  <label className="form-label">GST Number</label>
+                  <input type="text" className="form-control" value={editTenantData.gst_number || ''} onChange={e => setEditTenantData({ ...editTenantData, gst_number: e.target.value })} style={{ textTransform: 'uppercase' }} />
+                </div>
+                <div>
+                  <label className="form-label">Company Type</label>
+                  <select className="form-control" value={editTenantData.company_type || ''} onChange={e => setEditTenantData({ ...editTenantData, company_type: e.target.value })}>
+                    <option value="">Select Company Type</option>
+                    <option value="Proprietorship">Proprietorship</option>
+                    <option value="Partnership">Partnership</option>
+                    <option value="Private Limited">Private Limited</option>
+                    <option value="Public Limited">Public Limited</option>
+                    <option value="LLP">LLP</option>
+                  </select>
+                </div>
+                <div style={{ display: 'flex', gap: 16 }}>
+                  <div style={{ flex: 1 }}>
+                    <label className="form-label">City</label>
+                    <input type="text" className="form-control" value={editTenantData.city || ''} onChange={e => setEditTenantData({ ...editTenantData, city: e.target.value })} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label className="form-label">State</label>
+                    <input type="text" className="form-control" value={editTenantData.state || ''} onChange={e => setEditTenantData({ ...editTenantData, state: e.target.value })} />
+                  </div>
+                </div>
+                <div>
+                  <label className="form-label">Pincode</label>
+                  <input type="text" className="form-control" value={editTenantData.pincode || ''} onChange={e => setEditTenantData({ ...editTenantData, pincode: e.target.value })} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+                  <button type="button" className="btn btn-outline" onClick={() => setShowEditModal(false)}>Cancel</button>
+                  <button type="submit" className="btn btn-primary" disabled={isEditing}>{isEditing ? 'Saving...' : 'Save Changes'}</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

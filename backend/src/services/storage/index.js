@@ -11,27 +11,31 @@
  */
 const LocalStorageProvider = require('./local.storage');
 const CloudflareR2StorageProvider = require('./cloudflare.storage');
+const S3StorageProvider = require('./s3.storage');
 
-let _instance = null;
+const instances = {};
 
-function getStorageProvider() {
-    if (_instance) return _instance;
+function getStorageProvider(providerName) {
+    const provider = (providerName || process.env.STORAGE_PROVIDER || 'LOCAL').toUpperCase();
 
-    const provider = (process.env.STORAGE_PROVIDER || 'LOCAL').toUpperCase();
+    if (instances[provider]) return instances[provider];
 
     switch (provider) {
         case 'LOCAL':
-            _instance = new LocalStorageProvider();
+            instances[provider] = new LocalStorageProvider();
             break;
         case 'CLOUDFLARE_R2':
-            _instance = new CloudflareR2StorageProvider();
+            instances[provider] = new CloudflareR2StorageProvider();
+            break;
+        case 'S3':
+            instances[provider] = new S3StorageProvider();
             break;
         default:
-            throw new Error(`Unknown STORAGE_PROVIDER: "${provider}". Valid options: LOCAL, CLOUDFLARE_R2`);
+            throw new Error(`Unknown STORAGE_PROVIDER: "${provider}". Valid options: LOCAL, CLOUDFLARE_R2, S3`);
     }
 
     console.log(`[storage] Provider initialized: ${provider}`);
-    return _instance;
+    return instances[provider];
 }
 
 module.exports = { getStorageProvider };
