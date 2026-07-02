@@ -119,6 +119,7 @@ test('loan application summary copies only requested GST and ITR source sheets',
 
   const gstSource = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(gstSource, XLSX.utils.aoa_to_sheet([['Account Details'], ['PAN', 'AAAAA0000A']]), 'Account Details');
+  XLSX.utils.book_append_sheet(gstSource, XLSX.utils.aoa_to_sheet([['Particulars', 'FY 2024-25'], ['Sales', 1000]]), 'Overview Yearly');
   XLSX.utils.book_append_sheet(gstSource, XLSX.utils.aoa_to_sheet([['Particulars', 'Total'], ['Sales', 1000]]), 'Overview Monthly');
   XLSX.utils.book_append_sheet(gstSource, XLSX.utils.aoa_to_sheet([['Customer Summary'], ['A', 1]]), 'Customer Summary');
 
@@ -133,8 +134,9 @@ test('loan application summary copies only requested GST and ITR source sheets',
   const gstValues = JSON.stringify(gstSheet.getSheetValues());
   const itrValues = JSON.stringify(itrSheet.getSheetValues());
 
+  assert.match(gstValues, /Account Details/);
+  assert.match(gstValues, /Overview Yearly/);
   assert.match(gstValues, /Overview Monthly/);
-  assert.doesNotMatch(gstValues, /Account Details/);
   assert.doesNotMatch(gstValues, /Customer Summary/);
   ['General Information', 'Tax Calculation', 'Balance Sheet', 'Profit and Loss Statement', 'Ratio Analysis'].forEach((name) => {
     assert.match(itrValues, new RegExp(name));
@@ -217,6 +219,39 @@ test('loan application summary maps Bank credit total and average monthly balanc
 
   assert.equal(extractCreditTxnTotal(bankWorkbook), 600);
   assert.equal(extractMonthlyAverageBalance(bankWorkbook), 20);
+});
+
+test('loan application summary calculates bank average balance from monthly cells instead of total', () => {
+  const bankWorkbook = makeWorkbook({
+    Summary: [
+      ['Description', 'Apr 2025', 'May 2025', 'Jun 2025', 'Total'],
+      ['Monthly Average Balance', 10, 20, 30, 999999]
+    ]
+  });
+
+  assert.equal(extractMonthlyAverageBalance(bankWorkbook), 20);
+});
+
+test('loan application summary divides average balance total by detected month count when monthly cells are blank', () => {
+  const bankWorkbook = makeWorkbook({
+    Summary: [
+      ['Description', 'Apr 2025', 'May 2025', 'Jun 2025', 'Total'],
+      ['Monthly Average Balance', '', '', '', 60]
+    ]
+  });
+
+  assert.equal(extractMonthlyAverageBalance(bankWorkbook), 20);
+});
+
+test('loan application summary returns no bank average balance when no monthly values are available', () => {
+  const bankWorkbook = makeWorkbook({
+    Summary: [
+      ['Description', 'Value'],
+      ['Monthly Average Balance', 60]
+    ]
+  });
+
+  assert.equal(extractMonthlyAverageBalance(bankWorkbook), null);
 });
 
 test('loan application summary maps combined financial snapshot from source workbooks', () => {

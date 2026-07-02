@@ -34,7 +34,7 @@ const MAX_SOURCE_EXCEL_SIZE_BYTES = 15 * 1024 * 1024;
 const SOURCE_SHEET_LIMITS = {
   bank: ['Summary'],
   itr: ['General Information', 'Tax Calculation', 'Balance Sheet', 'Profit and Loss Statement', 'Ratio Analysis'],
-  gst: ['Overview Monthly']
+  gst: ['Entity Details', 'Account Details', 'Overview Yearly', 'Overview Monthly']
 };
 
 function buildReportFileName(caseId) {
@@ -396,6 +396,25 @@ function findHeaderRowForMetric(rows, metricRowIndex) {
   return null;
 }
 
+function isMonthHeader(value) {
+  const text = String(value || '').trim();
+  return /^(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*[\s\-']*\d{2,4}$/i.test(text)
+    || /^(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*$/i.test(text);
+}
+
+function getMetricRowDetails(rows, labels) {
+  const rowIndex = findRowIndexByLabels(rows, labels);
+  if (rowIndex < 0) return null;
+  const row = rows[rowIndex];
+  const labelCol = findLabelColumn(row, labels);
+  return {
+    rowIndex,
+    row,
+    labelCol,
+    header: findHeaderRowForMetric(rows, rowIndex)
+  };
+}
+
 function getKeyValue(rows, labels) {
   const row = findRowByLabels(rows, labels);
   if (!row) return '';
@@ -408,11 +427,9 @@ function numericCells(row) {
 }
 
 function metricTotal(rows, labels) {
-  const rowIndex = findRowIndexByLabels(rows, labels);
-  if (rowIndex < 0) return null;
-  const row = rows[rowIndex];
-  const labelCol = findLabelColumn(row, labels);
-  const header = findHeaderRowForMetric(rows, rowIndex);
+  const details = getMetricRowDetails(rows, labels);
+  if (!details) return null;
+  const { row, labelCol, header } = details;
   if (header) {
     const totalIdx = header.findIndex(value => labelsMatch(value, 'Total'));
     if (totalIdx > labelCol) {
@@ -425,14 +442,13 @@ function metricTotal(rows, labels) {
 }
 
 function metricMonthlyValues(rows, labels) {
-  const rowIndex = findRowIndexByLabels(rows, labels);
-  if (rowIndex < 0) return [];
-  const row = rows[rowIndex];
-  const labelCol = findLabelColumn(row, labels);
-  const header = findHeaderRowForMetric(rows, rowIndex);
+  const details = getMetricRowDetails(rows, labels);
+  if (!details) return [];
+  const { row, labelCol, header } = details;
+  if (!header) return [];
   const values = [];
   for (let idx = Math.max(labelCol + 1, 1); idx < row.length; idx += 1) {
-    if (header && labelsMatch(header[idx], 'Total')) continue;
+    if (labelsMatch(header[idx], 'Total') || !isMonthHeader(header[idx])) continue;
     const n = toNumber(row[idx]);
     if (n !== null) values.push(n);
   }
@@ -440,11 +456,9 @@ function metricMonthlyValues(rows, labels) {
 }
 
 function latestYearMetric(rows, labels) {
-  const rowIndex = findRowIndexByLabels(rows, labels);
-  if (rowIndex < 0) return null;
-  const row = rows[rowIndex];
-  const labelCol = findLabelColumn(row, labels);
-  const header = findHeaderRowForMetric(rows, rowIndex);
+  const details = getMetricRowDetails(rows, labels);
+  if (!details) return null;
+  const { row, labelCol, header } = details;
   const values = [];
   for (let idx = Math.max(labelCol + 1, 1); idx < row.length; idx += 1) {
     if (header && labelsMatch(header[idx], 'Total')) continue;
@@ -541,8 +555,14 @@ function extractMonthlyAverageBalance(bankWorkbook) {
   const rows = getSourceRows(bankWorkbook, 'Summary');
   const monthly = metricMonthlyValues(rows, 'Monthly Average Balance');
   if (monthly.length) return calculateAverageFromMonthlyValues(monthly);
+
+  const details = getMetricRowDetails(rows, 'Monthly Average Balance');
+  const monthCount = details?.header
+    ? details.header.filter((value, idx) => idx > details.labelCol && isMonthHeader(value)).length
+    : 0;
   const total = metricTotal(rows, 'Monthly Average Balance');
-  return total;
+  if (total !== null && monthCount > 0) return total / monthCount;
+  return null;
 }
 
 function extractBankCharges(bankWorkbook) {
