@@ -200,10 +200,10 @@ function setFinancialCell(ws, address, value) {
   const n = toNumber(value);
   const cell = ws.getCell(address);
   if (n === null) {
-    cell.value = 'N/A';
+    cell.value = '';
   } else {
     cell.value = n;
-    cell.numFmt = '#,##0.00';
+    cell.numFmt = '[$₹-en-IN] #,##,##0.00';
   }
 }
 
@@ -892,11 +892,50 @@ function sourceUnavailable(caseRecord, source) {
 
 function writeNoDataMessage(ws, message) {
   if (!ws) return;
-  ws.spliceRows(1, Math.max(ws.rowCount, 1));
-  ws.getCell('A1').value = message;
-  ws.getCell('A1').font = { bold: true, size: 12, color: { argb: 'FF1F2937' } };
-  ws.getCell('A1').alignment = { wrapText: true, vertical: 'middle' };
-  ws.getColumn(1).width = Math.max(ws.getColumn(1).width || 10, 64);
+  clearWorksheet(ws);
+
+  const title = String(message || ws.name || 'Report')
+    .replace(/\s+data\s+is\s+not\s+available\s+for\s+this\s+case\.?/i, '')
+    .trim() || ws.name || 'Report';
+
+  ws.mergeCells('A1:D1');
+  ws.getCell('A1').value = title;
+  ws.getCell('A1').font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+  ws.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E78' } };
+  ws.getCell('A1').alignment = { horizontal: 'left', vertical: 'middle' };
+  ws.getRow(1).height = 24;
+
+  ['A3', 'B3', 'C3', 'D3'].forEach((address) => {
+    const cell = ws.getCell(address);
+    cell.value = address === 'A3' ? 'Particulars' : '';
+    cell.font = { bold: true, color: { argb: 'FF0F172A' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9EAF7' } };
+    cell.border = {
+      top: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+      left: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+      bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+      right: { style: 'thin', color: { argb: 'FFE5E7EB' } }
+    };
+  });
+
+  ['A4', 'B4', 'C4', 'D4'].forEach((address) => {
+    const cell = ws.getCell(address);
+    cell.value = '';
+    cell.border = {
+      top: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+      left: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+      bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+      right: { style: 'thin', color: { argb: 'FFE5E7EB' } }
+    };
+  });
+
+  ws.columns = [
+    { width: 28 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 }
+  ];
+  ws.views = [{ state: 'frozen', ySplit: 3 }];
 }
 
 function validateWorkbook(workbook, { requireCaseSummary = false } = {}) {
@@ -1539,9 +1578,11 @@ module.exports = {
   SHEET_NAMES,
   buildReportFileName,
   sanitizeExcelValue,
+  setFinancialCell,
   ensureWorksheetContract,
   validateWorkbook,
   copySourceWorkbookToSheet,
+  writeNoDataMessage,
   findStoredExcelDocument,
   isSafeHttpsSourceUrl,
   mapSourceWorkbooks,

@@ -29,6 +29,8 @@ const {
   ensureWorksheetContract,
   validateWorkbook,
   copySourceWorkbookToSheet,
+  setFinancialCell,
+  writeNoDataMessage,
   findStoredExcelDocument,
   isSafeHttpsSourceUrl,
   mapSourceWorkbooks,
@@ -219,6 +221,35 @@ test('loan application summary maps Bank credit total and average monthly balanc
 
   assert.equal(extractCreditTxnTotal(bankWorkbook), 600);
   assert.equal(extractMonthlyAverageBalance(bankWorkbook), 20);
+});
+
+test('loan application summary leaves missing financial values blank for report cells', () => {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Summary');
+
+  setFinancialCell(sheet, 'B26', null);
+  setFinancialCell(sheet, 'B27', undefined);
+  setFinancialCell(sheet, 'B28', Number.NaN);
+
+  assert.equal(sheet.getCell('B26').value, '');
+  assert.equal(sheet.getCell('B27').value, '');
+  assert.equal(sheet.getCell('B28').value, '');
+});
+
+test('loan application summary uses a styled blank sheet when source data is missing', () => {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('GST Analysis');
+
+  writeNoDataMessage(sheet, 'GST Analysis data is not available for this case.');
+
+  assert.equal(sheet.getCell('A1').value, 'GST Analysis');
+  assert.equal(sheet.getCell('A3').value, 'Particulars');
+  assert.equal(sheet.getCell('A4').value, '');
+  sheet.eachRow((row) => {
+    row.eachCell((cell) => {
+      assert.doesNotMatch(String(cell.value || ''), /not available|null|undefined|NaN|None/i);
+    });
+  });
 });
 
 test('loan application summary calculates bank average balance from monthly cells instead of total', () => {
