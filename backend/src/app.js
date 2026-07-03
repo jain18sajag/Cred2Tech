@@ -12,14 +12,24 @@ app.set('trust proxy', 1); // Trust the reverse proxy for accurate client IPs
 app.use(helmet({ contentSecurityPolicy: false }));
 
 // CORS Policy Lockdown using env variables
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000').split(',').map(o => o.trim());
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+const allowAnyOrigin = allowedOrigins.includes('*');
+
+function isCorsOriginAllowed(origin) {
+  if (!origin) return true;
+  if (allowAnyOrigin) return true;
+
+  return allowedOrigins.some(allowedUrl =>
+    origin === allowedUrl || (allowedUrl.includes('localhost') && origin.includes('localhost'))
+  );
+}
+
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    const isAllowed = allowedOrigins.some(allowedUrl =>
-      origin === allowedUrl || (allowedUrl.includes('localhost') && origin.includes('localhost'))
-    );
-    if (isAllowed) {
+    if (isCorsOriginAllowed(origin)) {
       callback(null, true);
     } else {
       console.warn(`[CORS] Blocked origin: ${origin} | Allowed: ${allowedOrigins.join(', ')}`);
