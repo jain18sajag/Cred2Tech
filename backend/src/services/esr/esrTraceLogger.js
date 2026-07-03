@@ -1,5 +1,29 @@
 const fs = require('fs');
 const path = require('path');
+const { getStorageProvider } = require('../storage');
+
+const BACKEND_ROOT = path.resolve(__dirname, '../../..');
+
+function getLocalEsrLogsDir() {
+    if (process.env.ESR_TRACE_LOG_DIR) {
+        return path.resolve(process.env.ESR_TRACE_LOG_DIR);
+    }
+
+    if (process.env.ESR_LOG_DIR) {
+        return path.resolve(process.env.ESR_LOG_DIR);
+    }
+
+    if (process.env.LOGS_DIR) {
+        return path.resolve(process.env.LOGS_DIR, 'esr');
+    }
+
+    return path.join(BACKEND_ROOT, 'logs', 'esr');
+}
+
+function shouldUploadTraceToStorage() {
+    const provider = (process.env.STORAGE_PROVIDER || 'LOCAL').toUpperCase();
+    return provider === 'S3' && process.env.ESR_TRACE_STORAGE !== 'false';
+}
 
 class EsrTraceLogger {
     constructor(options = {}) {
@@ -226,20 +250,34 @@ class EsrTraceLogger {
 
     flushTrace() {
         if (!this.enabled) return;
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T');
+        const fileName = `ESR_CASE_${this.caseId || 'UNKNOWN'}_${timestamp[0]}T${timestamp[1]}.log`;
+        const content = this.buffer.join('\n');
+
         try {
-            const logsDir = path.join(process.cwd(), 'logs', 'esr');
+            const logsDir = getLocalEsrLogsDir();
             if (!fs.existsSync(logsDir)) {
                 fs.mkdirSync(logsDir, { recursive: true });
             }
 
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T');
-            const fileName = `ESR_CASE_${this.caseId || 'UNKNOWN'}_${timestamp[0]}T${timestamp[1]}.log`;
             const filePath = path.join(logsDir, fileName);
 
-            fs.writeFileSync(filePath, this.buffer.join('\n'), 'utf8');
-            console.log(`\n[ESR TRACE] Generated: logs/esr/${fileName}`);
+            fs.writeFileSync(filePath, content, 'utf8');
+            console.log(`\n[ESR TRACE] Generated: ${filePath}`);
         } catch (err) {
-            console.warn(`[ESR TRACE WARNING] Failed to write trace log: ${err.message}`);
+            console.warn(`[ESR TRACE WARNING] Failed to write local trace log to ${getLocalEsrLogsDir()}: ${err.message}`);
+        }
+
+        if (shouldUploadTraceToStorage()) {
+            const storageKey = path.posix.join('logs', 'esr', fileName);
+            getStorageProvider('S3')
+                .save(Buffer.from(content, 'utf8'), storageKey, 'text/plain; charset=utf-8')
+                .then(() => {
+                    console.log(`[ESR TRACE] Uploaded: s3://${process.env.S3_BUCKET_NAME || process.env.AWS_S3_BUCKET}/${storageKey}`);
+                })
+                .catch((err) => {
+                    console.warn(`[ESR TRACE WARNING] Failed to upload trace log to S3 (${storageKey}): ${err.message}`);
+                });
         }
     }
 }
