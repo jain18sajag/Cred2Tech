@@ -187,6 +187,100 @@ function getDeep(obj, paths, fallback = '') {
   return fallback;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Brand palette (matches the template's existing design language)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BRAND = {
+  // Section headers  (e.g. "1. APPLICANT / BORROWER DETAILS")
+  SECTION_BG: 'FFDDEBFF',
+  SECTION_FG: 'FF17365D',
+  // Sub-headers / column header rows
+  HEADER_BG: 'FFF1F5F9',
+  HEADER_FG: 'FF334155',
+  // Top banner (row 1 title)
+  BANNER_BG: 'FFEAF2FF',
+  BANNER_FG: 'FF0A2540',
+  // Meta rows (rows 2-4)
+  META_BG: 'FFF8FAFC',
+  // Eligibility / Sanction highlight
+  ELIGIBILITY_BG: 'FFD9F2E6',
+  ELIGIBILITY_FG: 'FF065F46',
+  // Document status
+  STATUS_UPLOADED_BG: 'FFECFDF3',
+  STATUS_UPLOADED_FG: 'FF027A48',
+  STATUS_PENDING_BG: 'FFFFF7ED',
+  STATUS_PENDING_FG: 'FFC2410C',
+  // Data rows alternating
+  ROW_ALT_BG: 'FFFAFBFC',
+  // Borders
+  BORDER_COLOR: 'FFD1D5DB',
+  BORDER_INNER: 'FFE5E7EB',
+};
+
+const INR_FORMAT = '[$₹-en-IN]#,##,##0';
+const INR_FORMAT_DEC = '[$₹-en-IN]#,##,##0.00';
+
+function applyBorder(cell, style = 'thin') {
+  cell.border = {
+    top:    { style, color: { argb: BRAND.BORDER_COLOR } },
+    left:   { style, color: { argb: BRAND.BORDER_COLOR } },
+    bottom: { style, color: { argb: BRAND.BORDER_COLOR } },
+    right:  { style, color: { argb: BRAND.BORDER_COLOR } }
+  };
+}
+
+function styleSectionHeader(cell, { merged = false } = {}) {
+  cell.font      = { bold: true, size: 11, color: { argb: BRAND.SECTION_FG }, name: 'Arial' };
+  cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.SECTION_BG } };
+  cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: false };
+  applyBorder(cell);
+}
+
+function styleColumnHeader(cell) {
+  cell.font      = { bold: true, size: 9, color: { argb: BRAND.HEADER_FG }, name: 'Arial' };
+  cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.HEADER_BG } };
+  cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+  applyBorder(cell);
+}
+
+function styleDataCell(cell, { align = 'left', wrap = true, bold = false, altRow = false } = {}) {
+  cell.font      = { bold, size: 9, name: 'Arial' };
+  cell.fill      = altRow
+    ? { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.ROW_ALT_BG } }
+    : { type: 'pattern', pattern: 'none' };
+  cell.alignment = { horizontal: align, vertical: 'top', wrapText: wrap };
+  applyBorder(cell, 'hair');
+}
+
+function styleLabelCell(cell, altRow = false) {
+  cell.font      = { bold: true, size: 9, name: 'Arial' };
+  cell.fill      = altRow
+    ? { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.ROW_ALT_BG } }
+    : { type: 'pattern', pattern: 'none' };
+  cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+  applyBorder(cell, 'hair');
+}
+
+function styleStatusCell(cell, status) {
+  const isUploaded = String(status || '').toLowerCase().includes('upload');
+  cell.font  = { bold: true, size: 9, name: 'Arial', color: { argb: isUploaded ? BRAND.STATUS_UPLOADED_FG : BRAND.STATUS_PENDING_FG } };
+  cell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: isUploaded ? BRAND.STATUS_UPLOADED_BG : BRAND.STATUS_PENDING_BG } };
+  cell.alignment = { horizontal: 'center', vertical: 'middle' };
+  applyBorder(cell, 'hair');
+}
+
+function styleFinancialDataCell(cell) {
+  cell.font      = { size: 9, name: 'Arial' };
+  cell.fill      = { type: 'pattern', pattern: 'none' };
+  cell.alignment = { horizontal: 'right', vertical: 'middle' };
+  applyBorder(cell, 'hair');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cell write helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
 function setCell(ws, address, value, fallback = '') {
   ws.getCell(address).value = sanitizeExcelValue(value, fallback);
 }
@@ -203,8 +297,32 @@ function setFinancialCell(ws, address, value) {
     cell.value = '';
   } else {
     cell.value = n;
-    cell.numFmt = '[$₹-en-IN] #,##,##0.00';
+    cell.numFmt = INR_FORMAT;
   }
+}
+
+function setStyledCell(ws, address, value, styleFn, fallback = '') {
+  const cell = ws.getCell(address);
+  cell.value = sanitizeExcelValue(value, fallback);
+  styleFn(cell);
+}
+
+function setStyledFinancialCell(ws, address, value) {
+  const n = toNumber(value);
+  const cell = ws.getCell(address);
+  if (n === null) {
+    cell.value = '';
+  } else {
+    cell.value = n;
+    cell.numFmt = INR_FORMAT;
+  }
+  styleFinancialDataCell(cell);
+}
+
+function setStyledStatusCell(ws, address, status) {
+  const cell = ws.getCell(address);
+  cell.value = sanitizeExcelValue(status, 'Pending');
+  styleStatusCell(cell, status);
 }
 
 function cellDisplayValue(cell, leftLabel = '') {
@@ -723,33 +841,38 @@ function applySourceSheetLayout(ws, { sectionRows = new Set(), headerRows = new 
   };
 
   ws.eachRow((row, rowNumber) => {
+    const isSection = sectionRows.has(rowNumber);
+    const isHeader  = headerRows.has(rowNumber);
+    const isAlt     = !isSection && !isHeader && rowNumber % 2 === 0;
+
     row.eachCell({ includeEmpty: true }, (cell) => {
+      cell.font      = { size: 9, name: 'Arial' };
       cell.alignment = { vertical: 'top', wrapText: true };
-      cell.border = {
-        top: { style: 'thin', color: { argb: 'FFE5E7EB' } },
-        left: { style: 'thin', color: { argb: 'FFE5E7EB' } },
-        bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
-        right: { style: 'thin', color: { argb: 'FFE5E7EB' } }
-      };
-      if (sectionRows.has(rowNumber)) {
-        cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 12 };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E78' } };
-        cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
-      } else if (headerRows.has(rowNumber)) {
-        cell.font = { bold: true, color: { argb: 'FF0F172A' } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9EAF7' } };
+      applyBorder(cell, 'hair');
+
+      if (isSection) {
+        cell.font      = { bold: true, size: 11, color: { argb: BRAND.SECTION_FG }, name: 'Arial' };
+        cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.SECTION_BG } };
+        cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: false };
+        applyBorder(cell, 'thin');
+      } else if (isHeader) {
+        cell.font = { bold: true, size: 9, color: { argb: BRAND.HEADER_FG }, name: 'Arial' };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.HEADER_BG } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      } else if (isAlt) {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.ROW_ALT_BG } };
       }
     });
-    row.height = sectionRows.has(rowNumber) ? 21 : undefined;
+    row.height = isSection ? 22 : isHeader ? 24 : undefined;
   });
 
   for (let i = 1; i <= Math.max(maxColumns, ws.columnCount, 1); i += 1) {
-    let maxLength = i === 1 ? 18 : 12;
+    let maxLength = i === 1 ? 20 : 13;
     ws.getColumn(i).eachCell({ includeEmpty: false }, (cell) => {
       const length = String(cell.value || '').length;
-      maxLength = Math.max(maxLength, Math.min(length + 2, 42));
+      maxLength = Math.max(maxLength, Math.min(length + 2, 44));
     });
-    ws.getColumn(i).width = Math.min(Math.max(maxLength, i === 1 ? 20 : 12), i === 1 ? 38 : 30);
+    ws.getColumn(i).width = Math.min(Math.max(maxLength, i === 1 ? 22 : 13), i === 1 ? 40 : 32);
   }
 }
 
@@ -899,34 +1022,37 @@ function writeNoDataMessage(ws, message) {
     .trim() || ws.name || 'Report';
 
   ws.mergeCells('A1:D1');
-  ws.getCell('A1').value = title;
-  ws.getCell('A1').font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
-  ws.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E78' } };
-  ws.getCell('A1').alignment = { horizontal: 'left', vertical: 'middle' };
-  ws.getRow(1).height = 24;
+  const banner = ws.getCell('A1');
+  banner.value = title;
+  banner.font      = { bold: true, size: 14, color: { argb: BRAND.BANNER_FG }, name: 'Arial' };
+  banner.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.BANNER_BG } };
+  banner.alignment = { horizontal: 'left', vertical: 'middle' };
+  applyBorder(banner);
+  ws.getRow(1).height = 34;
 
-  ['A3', 'B3', 'C3', 'D3'].forEach((address) => {
+  // Row 2 — subtle info message
+  ws.mergeCells('A2:D2');
+  const infoCell = ws.getCell('A2');
+  infoCell.value     = 'No source data available for this case.';
+  infoCell.font      = { italic: true, size: 9, color: { argb: BRAND.HEADER_FG }, name: 'Arial' };
+  infoCell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.META_BG } };
+  infoCell.alignment = { horizontal: 'left', vertical: 'middle' };
+  applyBorder(infoCell, 'hair');
+  ws.getRow(2).height = 20;
+
+  // Row 3 — column header
+  ['A3', 'B3', 'C3', 'D3'].forEach((address, idx) => {
     const cell = ws.getCell(address);
-    cell.value = address === 'A3' ? 'Particulars' : '';
-    cell.font = { bold: true, color: { argb: 'FF0F172A' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9EAF7' } };
-    cell.border = {
-      top: { style: 'thin', color: { argb: 'FFE5E7EB' } },
-      left: { style: 'thin', color: { argb: 'FFE5E7EB' } },
-      bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
-      right: { style: 'thin', color: { argb: 'FFE5E7EB' } }
-    };
+    cell.value = idx === 0 ? 'Particulars' : '';
+    styleColumnHeader(cell);
   });
+  ws.getRow(3).height = 24;
 
+  // Row 4 — empty data row with borders
   ['A4', 'B4', 'C4', 'D4'].forEach((address) => {
     const cell = ws.getCell(address);
     cell.value = '';
-    cell.border = {
-      top: { style: 'thin', color: { argb: 'FFE5E7EB' } },
-      left: { style: 'thin', color: { argb: 'FFE5E7EB' } },
-      bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
-      right: { style: 'thin', color: { argb: 'FFE5E7EB' } }
-    };
+    applyBorder(cell, 'hair');
   });
 
   ws.columns = [
@@ -1127,22 +1253,32 @@ function findLatestEligibility(caseRecord) {
 // Workbook visual/header helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function addLogoAndPrintSettings(workbook) {
-  if (!fs.existsSync(LOGO_PATH)) return;
+// Tab colours per sheet for quick navigation
+const SHEET_TAB_COLORS = {
+  'Summary':                '0A2540',
+  'Bank Statement Analysis':'1D4ED8',
+  'ITR Analysis':           '065F46',
+  'GST Analysis':           '7C3AED',
+  'Cibil - Transunion':     'B45309'
+};
 
-  const imageId = workbook.addImage({
-    filename: LOGO_PATH,
-    extension: 'jpeg'
-  });
+function addLogoAndPrintSettings(workbook) {
+  const hasLogo = fs.existsSync(LOGO_PATH);
+  const imageId = hasLogo ? workbook.addImage({ filename: LOGO_PATH, extension: 'jpeg' }) : null;
 
   workbook.worksheets.forEach((ws) => {
-    // Put logo in the top-right area without changing template cells.
-    // Repeating row header is configured so Excel repeats the report header when printed.
-    ws.addImage(imageId, {
-      tl: { col: Math.max(0, (ws.columnCount || 8) - 3), row: 0.15 },
-      ext: { width: 145, height: 52 },
-      editAs: 'oneCell'
-    });
+    // Tab colour
+    const tabColor = SHEET_TAB_COLORS[ws.name];
+    if (tabColor) ws.properties = { ...(ws.properties || {}), tabColor: { argb: `FF${tabColor}` } };
+
+    // Logo (top-right, doesn't overwrite template cells)
+    if (imageId !== null) {
+      ws.addImage(imageId, {
+        tl: { col: Math.max(0, (ws.columnCount || 8) - 3), row: 0.15 },
+        ext: { width: 145, height: 52 },
+        editAs: 'oneCell'
+      });
+    }
 
     ws.pageSetup = {
       ...(ws.pageSetup || {}),
@@ -1151,20 +1287,14 @@ function addLogoAndPrintSettings(workbook) {
       fitToHeight: 0,
       orientation: ws.name === 'Summary' ? 'portrait' : 'landscape',
       horizontalCentered: true,
-      margins: {
-        left: 0.25,
-        right: 0.25,
-        top: 0.55,
-        bottom: 0.45,
-        header: 0.25,
-        footer: 0.25
-      },
+      margins: { left: 0.25, right: 0.25, top: 0.55, bottom: 0.45, header: 0.25, footer: 0.25 },
       printTitlesRow: '1:4'
     };
 
     ws.headerFooter = {
       ...(ws.headerFooter || {}),
-      oddFooter: '&LLoan Application Summary&CPage &P of &N&RGenerated by Cred2Tech'
+      oddHeader: `&C&"Arial,Bold"&14${ws.name}`,
+      oddFooter: '&L&"Arial"&9Loan Application Summary&C&"Arial"&9Page &P of &N&R&"Arial"&9Generated by Cred2Tech'
     };
   });
 }
@@ -1172,6 +1302,96 @@ function addLogoAndPrintSettings(workbook) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Sheet fillers
 // ─────────────────────────────────────────────────────────────────────────────
+
+function applySummarySheetFormatting(ws) {
+  // ── Column widths (mirror the template exactly) ───────────────────────────
+  ws.getColumn('A').width = 22;
+  ws.getColumn('B').width = 28;
+  ws.getColumn('C').width = 24;
+  ws.getColumn('D').width = 23;
+  ws.getColumn('E').width = 22;
+  ws.getColumn('F').width = 24;
+  ws.getColumn('G').width = 42;
+
+  // ── Row 1: Banner title ───────────────────────────────────────────────────
+  ws.getRow(1).height = 34;
+  const bannerCell = ws.getCell('A1');
+  bannerCell.font      = { bold: true, size: 14, color: { argb: BRAND.BANNER_FG }, name: 'Arial' };
+  bannerCell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.BANNER_BG } };
+  bannerCell.alignment = { horizontal: 'left', vertical: 'middle' };
+  applyBorder(bannerCell);
+  // Shade the full banner row
+  ['B', 'C', 'D', 'E', 'F', 'G'].forEach(col => {
+    const c = ws.getCell(`${col}1`);
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.BANNER_BG } };
+    applyBorder(c);
+  });
+
+  // ── Rows 2–4: Meta header block ───────────────────────────────────────────
+  [2, 3, 4].forEach(r => {
+    ws.getRow(r).height = 24;
+    ['A', 'B', 'C', 'D', 'E', 'F', 'G'].forEach(col => {
+      const c = ws.getCell(`${col}${r}`);
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.META_BG } };
+      applyBorder(c, 'hair');
+      // Label cells (A-column and C-column are labels in the meta block)
+      if (col === 'A' || col === 'C') {
+        c.font = { bold: true, size: 9, name: 'Arial' };
+      } else {
+        c.font = { size: 9, name: 'Arial' };
+      }
+      c.alignment = { vertical: 'middle', wrapText: false };
+    });
+  });
+
+  // ── Section divider rows ──────────────────────────────────────────────────
+  const SECTION_ROWS = [6, 13, 19, 23, 43, 50, 57, 62];
+  SECTION_ROWS.forEach(r => {
+    ws.getRow(r).height = 23;
+    ['A', 'B', 'C', 'D', 'E', 'F', 'G'].forEach(col => {
+      styleSectionHeader(ws.getCell(`${col}${r}`));
+    });
+  });
+
+  // ── Column-header rows ────────────────────────────────────────────────────
+  const HEADER_ROWS = [7, 14, 24, 44, 51, 58, 63];
+  HEADER_ROWS.forEach(r => {
+    ws.getRow(r).height = 26;
+    ['A', 'B', 'C', 'D', 'E', 'F', 'G'].forEach(col => {
+      styleColumnHeader(ws.getCell(`${col}${r}`));
+    });
+  });
+
+  // ── Applicant data rows (8-11): taller for multi-line contact ─────────────
+  [8, 9, 10, 11].forEach(r => {
+    ws.getRow(r).height = 42;
+    ['A', 'B', 'C', 'D', 'E', 'F', 'G'].forEach((col, idx) => {
+      const c = ws.getCell(`${col}${r}`);
+      styleDataCell(c, { wrap: true, altRow: r % 2 === 0 });
+      if (col === 'A') styleLabelCell(c, r % 2 === 0);
+    });
+  });
+
+  // ── Standard data rows ────────────────────────────────────────────────────
+  const DATA_ROWS = [
+    15, 16, 17, 18,          // Loan requirement
+    20, 21,                   // Bureau
+    25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, // Financials
+    42,                       // Eligibility
+    45, 46, 47, 48, 49,       // KYC docs
+    52, 53, 54, 55, 56,       // Property docs
+    59, 60, 61,               // References
+    64, 65, 66                // Contacts (if present)
+  ];
+  DATA_ROWS.forEach(r => {
+    ['A', 'B', 'C', 'D', 'E', 'F', 'G'].forEach(col => {
+      styleDataCell(ws.getCell(`${col}${r}`), { altRow: r % 2 === 0 });
+    });
+  });
+
+  // ── Freeze pane + print settings ─────────────────────────────────────────
+  ws.views = [{ state: 'frozen', ySplit: 4 }];
+}
 
 function fillSummarySheet(workbook, caseRecord, mappedSources = {}) {
   const ws = workbook.getWorksheet('Summary');
@@ -1188,24 +1408,47 @@ function fillSummarySheet(workbook, caseRecord, mappedSources = {}) {
   const financials = caseRecord.esr_financials || {};
   const { latestEsr, best } = findLatestEligibility(caseRecord);
 
-  setCell(ws, 'B2', `CASE-${caseRecord.id}`);
-  setCell(ws, 'D2', formatLakhs(firstNonBlank(caseRecord.loan_amount, financials.requested_loan_amount)) || 'N/A');
-  setCell(ws, 'B3', firstNonBlank(caseRecord.customer_name, customer.business_name, primary.name, 'N/A'));
-  setCell(ws, 'D3', firstNonBlank(caseRecord.product_type, financials.product_type, 'N/A'));
-  setCell(ws, 'B4', [caseRecord.created_by?.name, caseRecord.dsa_code].filter(Boolean).join(' · ') || 'N/A');
-  setCell(ws, 'D4', formatDate(new Date()));
+  // Apply full formatting pass first (so it doesn't overwrite values set after)
+  applySummarySheetFormatting(ws);
 
-  // Applicant / borrower details
+  // ── Row 1: Banner ─────────────────────────────────────────────────────────
+  ws.getCell('A1').value = 'LOAN APPLICATION SUMMARY';
+
+  // ── Rows 2–4: Meta ────────────────────────────────────────────────────────
+  setCell(ws, 'A2', 'Case Ref');
+  setCell(ws, 'B2', `CASE-${caseRecord.id}`);
+  setCell(ws, 'C2', 'Required Amount');
+  setCell(ws, 'D2', formatLakhs(firstNonBlank(caseRecord.loan_amount, financials.requested_loan_amount)) || 'N/A');
+  setCell(ws, 'A3', 'Customer');
+  setCell(ws, 'B3', firstNonBlank(caseRecord.customer_name, customer.business_name, primary.name, 'N/A'));
+  setCell(ws, 'C3', 'Product');
+  setCell(ws, 'D3', firstNonBlank(caseRecord.product_type, financials.product_type, 'N/A'));
+  setCell(ws, 'A4', 'DSA / Source');
+  setCell(ws, 'B4', [caseRecord.created_by?.name, caseRecord.dsa_code].filter(Boolean).join(' · ') || 'N/A');
+  setCell(ws, 'C4', 'Prepared On');
+  setCell(ws, 'D4', formatDate(new Date()));
+  setCell(ws, 'G4', latestEsr ? `ESR v${latestEsr.version_number || ''}`.trim() : 'ESR Pending');
+
+  // ── Section 1: Applicant header row ───────────────────────────────────────
+  setCell(ws, 'A6', '1. APPLICANT / BORROWER DETAILS');
+  setCell(ws, 'A7', 'Party');
+  setCell(ws, 'B7', 'Name / Entity');
+  setCell(ws, 'C7', 'Role / Relationship');
+  setCell(ws, 'D7', 'PAN');
+  setCell(ws, 'E7', 'GSTIN / DIN');
+  setCell(ws, 'F7', 'Contact Details');
+  setCell(ws, 'G7', 'Address');
+
+  // ── Applicant rows ────────────────────────────────────────────────────────
+  setCell(ws, 'A8', 'Applicant / Business');
   setCell(ws, 'B8', firstNonBlank(applicantDetails.gst.legalName, applicantDetails.gst.tradeName, customer.business_name, caseRecord.customer_name, primary.name, 'N/A'));
   setCell(ws, 'C8', 'Primary Borrower');
   setCell(ws, 'D8', firstNonBlank(applicantDetails.itr.pan, customer.business_pan, primary.pan_number, 'N/A'));
   setCell(ws, 'E8', gstin || 'N/A');
-  setCell(ws, 'F8', contactText({
-    mobile: applicantDetails.itr.mobile || customer.business_mobile || primary.mobile,
-    email: applicantDetails.itr.email || customer.business_email || primary.email
-  }) || 'N/A');
+  setCell(ws, 'F8', contactText({ mobile: applicantDetails.itr.mobile || customer.business_mobile || primary.mobile, email: applicantDetails.itr.email || customer.business_email || primary.email }) || 'N/A');
   setCell(ws, 'G8', firstNonBlank(applicantDetails.itr.address, resolveAddress(caseRecord), 'N/A'));
 
+  setCell(ws, 'A9', 'Promoter / Contact Person');
   setCell(ws, 'B9', firstNonBlank(applicantDetails.itr.applicantName, primary.name, customer.business_name, 'N/A'));
   setCell(ws, 'C9', firstNonBlank(primary.employment_type, 'Promoter / Contact Person'));
   setCell(ws, 'D9', firstNonBlank(applicantDetails.itr.pan, primary.pan_number, customer.business_pan, 'N/A'));
@@ -1215,11 +1458,11 @@ function fillSummarySheet(workbook, caseRecord, mappedSources = {}) {
 
   ['10', '11'].forEach((row, idx) => {
     const app = coApps[idx];
+    setCell(ws, `A${row}`, `Co-Applicant ${idx + 1}`);
     if (!app) {
       ['B', 'C', 'D', 'E', 'F', 'G'].forEach(col => setCell(ws, `${col}${row}`, ''));
       return;
     }
-    setCell(ws, `A${row}`, `Co-Applicant ${idx + 1}`);
     setCell(ws, `B${row}`, getApplicantLabel(app, idx));
     setCell(ws, `C${row}`, firstNonBlank(app.relationship_to_primary, app.employment_type, app.type));
     setCell(ws, `D${row}`, firstNonBlank(app.pan_number, 'N/A'));
@@ -1228,49 +1471,116 @@ function fillSummarySheet(workbook, caseRecord, mappedSources = {}) {
     setCell(ws, `G${row}`, '');
   });
 
-  // Loan requirement & collateral
+  // ── Section 2: Loan Requirement ───────────────────────────────────────────
+  setCell(ws, 'A13', '2. LOAN REQUIREMENT & COLLATERAL');
+  setCell(ws, 'A14', 'Parameter');
+  setCell(ws, 'B14', 'Details');
+  setCell(ws, 'C14', 'Parameter');
+  setCell(ws, 'D14', 'Details');
+  setCell(ws, 'E14', 'Parameter');
+  setCell(ws, 'F14', 'Details');
+
+  setCell(ws, 'A15', 'Loan Amount Required');
   setCell(ws, 'B15', formatLakhs(firstNonBlank(caseRecord.loan_amount, financials.requested_loan_amount), 'N/A'));
+  setCell(ws, 'C15', 'Tenure Required');
   setCell(ws, 'D15', financials.requested_tenure_months ? `${financials.requested_tenure_months} Months` : 'N/A');
+  setCell(ws, 'E15', 'Ownership');
   setCell(ws, 'F15', firstNonBlank(property.ownership_type, 'N/A'));
+
+  setCell(ws, 'A17', 'Property Type');
   setCell(ws, 'B17', firstNonBlank(property.property_type, financials.property_type, caseRecord.property_type, 'N/A'));
+  setCell(ws, 'C17', 'Occupancy');
   setCell(ws, 'D17', firstNonBlank(property.occupancy_status, financials.occupancy_type, caseRecord.occupancy, 'N/A'));
+  setCell(ws, 'A18', 'Property Market Value');
   setCell(ws, 'B18', formatInr(resolvePropertyValue(caseRecord), 'N/A'));
+  setCell(ws, 'C18', 'Property Address');
   setCell(ws, 'D18', firstNonBlank(property.remarks, caseRecord.location, 'N/A'));
 
-  // Bureau details
-  coApps.slice(0, 2).forEach((app, idx) => setCell(ws, idx === 0 ? 'B20' : 'C20', getApplicantLabel(app, idx)));
-  setCell(ws, 'A21', 'Cibil Score');
-  setCell(ws, 'B21', firstNonBlank(primary.cibil_score, latestBureau(primary)?.score, caseRecord.cibil_score, financials.bureau_score, 'N/A'));
+  // ── Bureau section ────────────────────────────────────────────────────────
+  setCell(ws, 'A19', 'BUREAU DETAILS');
+  setCell(ws, 'A20', 'Bureau Details');
+  setCell(ws, 'B20', firstNonBlank(primary.name, customer.business_name, 'Primary Applicant'));
+  coApps.slice(0, 2).forEach((app, idx) => setCell(ws, idx === 0 ? 'C20' : 'D20', getApplicantLabel(app, idx)));
+  setCell(ws, 'A21', 'CIBIL Score');
+  {
+    const score = firstNonBlank(primary.cibil_score, latestBureau(primary)?.score, caseRecord.cibil_score, financials.bureau_score, 'N/A');
+    const scoreCell = ws.getCell('B21');
+    scoreCell.value = sanitizeExcelValue(score, 'N/A');
+    // Colour-code CIBIL score: green ≥ 750, orange 650-749, red < 650
+    const n = toNumber(score);
+    if (n !== null) {
+      const fg = n >= 750 ? BRAND.STATUS_UPLOADED_BG : n >= 650 ? BRAND.STATUS_PENDING_BG : 'FFFEF2F2';
+      const fc = n >= 750 ? BRAND.STATUS_UPLOADED_FG : n >= 650 ? BRAND.STATUS_PENDING_FG : 'FFB91C1C';
+      scoreCell.font = { bold: true, size: 11, color: { argb: fc }, name: 'Arial' };
+      scoreCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fg } };
+      scoreCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      applyBorder(scoreCell, 'thin');
+    }
+  }
   if (coApps[0]) setCell(ws, 'C21', firstNonBlank(coApps[0].cibil_score, latestBureau(coApps[0])?.score, 'N/A'));
   if (coApps[1]) setCell(ws, 'D21', firstNonBlank(coApps[1].cibil_score, latestBureau(coApps[1])?.score, 'N/A'));
 
-  // Financial & credit snapshot
-  const rentBankAnnual = sumIncomeByType(caseRecord, type => type.includes('rental') && type.includes('bank'));
-  const rentCashAnnual = sumIncomeByType(caseRecord, type => type.includes('rental') && type.includes('cash'));
-  const agriAnnual = sumIncomeByType(caseRecord, type => type.includes('agriculture'));
-  const salaryAnnual = sumIncomeByType(caseRecord, type => type === 'salary' || type.includes('director salary') || type.includes("partner"));
-  const incentiveAnnual = sumIncomeByType(caseRecord, type => type.includes('incentive'));
-  const bonusAnnual = sumIncomeByType(caseRecord, type => type.includes('bonus'));
+  // ── Section 3: Financial snapshot ─────────────────────────────────────────
+  setCell(ws, 'A23', '3. FINANCIAL & CREDIT SNAPSHOT');
+  setCell(ws, 'A24', 'Key Financials / Income Parameters');
+  setCell(ws, 'B24', 'Current Year (X)');
+  setCell(ws, 'C24', 'X-1');
+  setCell(ws, 'D24', 'X-2');
+  setCell(ws, 'E24', 'Last 12 Months');
+  setCell(ws, 'F24', 'Monthly');
 
-  setFinancialCell(ws, 'B26', sourceFinancials.netProfitAfterTax);
-  setFinancialCell(ws, 'B27', sourceFinancials.depreciation);
-  setFinancialCell(ws, 'B28', sourceFinancials.interestOnLoan);
-  setFinancialCell(ws, 'B29', null);
-  setFinancialCell(ws, 'B30', sourceFinancials.annualGstrSales);
-  setFinancialCell(ws, 'B31', sourceFinancials.last12MonthGstrSales);
-  setFinancialCell(ws, 'B32', sourceFinancials.turnoverReceiptItr);
-  setFinancialCell(ws, 'B33', sourceFinancials.annualBusinessReceiptBank);
-  setFinancialCell(ws, 'B34', sourceFinancials.averageBankBalance);
-  setFinancialCell(ws, 'F34', sourceFinancials.averageBankBalance);
-  setNumberCell(ws, 'F35', rentBankAnnual ? rentBankAnnual / 12 : null);
-  setNumberCell(ws, 'F36', rentCashAnnual ? rentCashAnnual / 12 : null);
-  setFinancialCell(ws, 'B37', firstNonBlank(sourceFinancials.agriculturalIncome, agriAnnual || null));
-  setFinancialCell(ws, 'F38', sourceFinancials.salaryIncome ? sourceFinancials.salaryIncome / 12 : (salaryAnnual ? salaryAnnual / 12 : null));
-  setNumberCell(ws, 'B39', incentiveAnnual);
-  setNumberCell(ws, 'B40', bonusAnnual);
+  const rentBankAnnual   = sumIncomeByType(caseRecord, type => type.includes('rental') && type.includes('bank'));
+  const rentCashAnnual   = sumIncomeByType(caseRecord, type => type.includes('rental') && type.includes('cash'));
+  const agriAnnual       = sumIncomeByType(caseRecord, type => type.includes('agriculture'));
+  const salaryAnnual     = sumIncomeByType(caseRecord, type => type === 'salary' || type.includes('director salary') || type.includes('partner'));
+  const incentiveAnnual  = sumIncomeByType(caseRecord, type => type.includes('incentive'));
+  const bonusAnnual      = sumIncomeByType(caseRecord, type => type.includes('bonus'));
 
-  // Reuse blank space in the template for key eligibility/sanction summary without altering layout.
+  const financialRows = [
+    { row: 26, label: 'Net Profit After Tax',                              colB: sourceFinancials.netProfitAfterTax },
+    { row: 27, label: 'Depreciation',                                      colB: sourceFinancials.depreciation },
+    { row: 28, label: 'Interest on Loan',                                  colB: sourceFinancials.interestOnLoan },
+    { row: 29, label: 'Director Remuneration / Partner Salary',            colB: null },
+    { row: 30, label: 'Annual Sales as per GSTR',                          colB: sourceFinancials.annualGstrSales },
+    { row: 31, label: 'Last 12 Month Sales as per GSTR',                   colB: sourceFinancials.last12MonthGstrSales },
+    { row: 32, label: 'Turnover / Receipt as per ITR/P&L',                 colB: sourceFinancials.turnoverReceiptItr },
+    { row: 33, label: 'Annual Business Receipt as per Banking (12 mo)',     colB: sourceFinancials.annualBusinessReceiptBank },
+    { row: 34, label: 'Average Bank Balance',                              colB: sourceFinancials.averageBankBalance, colF: sourceFinancials.averageBankBalance },
+    { row: 35, label: 'Monthly Rental Income — Bank Credit',               colF: rentBankAnnual ? rentBankAnnual / 12 : null },
+    { row: 36, label: 'Monthly Rental Income — Cash Rental',               colF: rentCashAnnual ? rentCashAnnual / 12 : null },
+    { row: 37, label: 'Annual Agricultural Income as per ITR',             colB: firstNonBlank(sourceFinancials.agriculturalIncome, agriAnnual || null) },
+    { row: 38, label: 'Salary Income — As per Pay Slip',                   colF: sourceFinancials.salaryIncome ? sourceFinancials.salaryIncome / 12 : (salaryAnnual ? salaryAnnual / 12 : null) },
+    { row: 39, label: 'Incentive Income — Variable',                       colB: incentiveAnnual || null },
+    { row: 40, label: 'Bonus Income — Variable',                           colB: bonusAnnual || null }
+  ];
+
+  financialRows.forEach(({ row, label, colB, colF }) => {
+    setCell(ws, `A${row}`, label);
+    styleLabelCell(ws.getCell(`A${row}`), row % 2 === 0);
+    setStyledFinancialCell(ws, `B${row}`, colB !== undefined ? colB : null);
+    ['C', 'D', 'E'].forEach(col => {
+      const c = ws.getCell(`${col}${row}`);
+      c.value = '';
+      styleFinancialDataCell(c);
+    });
+    setStyledFinancialCell(ws, `F${row}`, colF !== undefined ? colF : null);
+    styleDataCell(ws.getCell(`G${row}`), { altRow: row % 2 === 0 });
+  });
+
+  // ── Eligibility / Sanction row ────────────────────────────────────────────
   setCell(ws, 'A42', 'ELIGIBILITY / SANCTION SUMMARY');
+  {
+    const eligCells = ['A42', 'B42', 'C42', 'D42', 'E42', 'F42', 'G42'];
+    eligCells.forEach(addr => {
+      const c = ws.getCell(addr);
+      c.font = { bold: true, size: 10, name: 'Arial', color: { argb: BRAND.ELIGIBILITY_FG } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.ELIGIBILITY_BG } };
+      c.alignment = { horizontal: 'center', vertical: 'middle' };
+      applyBorder(c, 'thin');
+    });
+    ws.getRow(42).height = 22;
+    ws.getCell('A42').alignment = { horizontal: 'left', vertical: 'middle' };
+  }
   setCell(ws, 'B42', best?.lender_name || caseRecord.lender_name || 'N/A');
   setCell(ws, 'C42', best?.best_scheme_name || financials.selected_income_method || 'N/A');
   setCell(ws, 'D42', formatInr(best?.eligible_amount, 'N/A'));
@@ -1278,40 +1588,118 @@ function fillSummarySheet(workbook, caseRecord, mappedSources = {}) {
   setCell(ws, 'F42', best?.tenure_months ? `${best.tenure_months} Months` : 'N/A');
   setCell(ws, 'G42', caseRecord.sanction?.sanctioned_amount ? formatInr(caseRecord.sanction.sanctioned_amount) : 'N/A');
 
-  // KYC document status
-  setCell(ws, 'B45', `Primary / ${firstNonBlank(primary.name, customer.business_name, 'Applicant')}`);
-  setCell(ws, 'C45', documentStatus(caseRecord, ['PAN_CARD'], primary));
-  setCell(ws, 'E45', `Primary / ${firstNonBlank(primary.name, customer.business_name, 'Applicant')}`);
-  setCell(ws, 'F45', documentStatus(caseRecord, ['AADHAAR'], primary));
+  // ── Section 4: KYC Document Status ────────────────────────────────────────
+  setCell(ws, 'A43', 'KYC DOCUMENT STATUS');
+  setCell(ws, 'A44', 'Document');
+  setCell(ws, 'B44', 'For Whom / Related To');
+  setCell(ws, 'C44', 'Status');
+  setCell(ws, 'D44', 'Document');
+  setCell(ws, 'E44', 'For Whom / Related To');
+  setCell(ws, 'F44', 'Status');
+
+  const primaryLabel = firstNonBlank(primary.name, customer.business_name, 'Applicant');
+  setCell(ws, 'A45', 'PAN Card');
+  setCell(ws, 'B45', `Primary / ${primaryLabel}`);
+  setStyledStatusCell(ws, 'C45', documentStatus(caseRecord, ['PAN_CARD'], primary));
+  setCell(ws, 'D45', 'Aadhaar');
+  setCell(ws, 'E45', `Primary / ${primaryLabel}`);
+  setStyledStatusCell(ws, 'F45', documentStatus(caseRecord, ['AADHAAR'], primary));
 
   coApps.slice(0, 2).forEach((app, idx) => {
-    const row = 46 + idx;
-    setCell(ws, `B${row}`, `Co-Borrower ${idx + 1} / ${getApplicantLabel(app, idx)}`);
-    setCell(ws, `C${row}`, documentStatus(caseRecord, ['PAN_CARD'], app));
-    setCell(ws, `E${row}`, `Co-Borrower ${idx + 1} / ${getApplicantLabel(app, idx)}`);
-    setCell(ws, `F${row}`, documentStatus(caseRecord, ['AADHAAR'], app));
+    const r = 46 + idx;
+    const lbl = `Co-Borrower ${idx + 1} / ${getApplicantLabel(app, idx)}`;
+    setCell(ws, `A${r}`, 'PAN Card');
+    setCell(ws, `B${r}`, lbl);
+    setStyledStatusCell(ws, `C${r}`, documentStatus(caseRecord, ['PAN_CARD'], app));
+    setCell(ws, `D${r}`, 'Aadhaar');
+    setCell(ws, `E${r}`, lbl);
+    setStyledStatusCell(ws, `F${r}`, documentStatus(caseRecord, ['AADHAAR'], app));
   });
 
-  setCell(ws, 'C48', documentStatus(caseRecord, ['GST_PDF', 'GST_REPORT_PDF', 'GST_REPORT_EXCEL']));
-  setCell(ws, 'F48', documentStatus(caseRecord, ['OTHER']));
+  setCell(ws, 'A48', 'GST Registration Certificate');
+  setCell(ws, 'B48', 'Borrower business');
+  setStyledStatusCell(ws, 'C48', documentStatus(caseRecord, ['GST_PDF', 'GST_REPORT_PDF', 'GST_REPORT_EXCEL']));
+  setCell(ws, 'D48', 'Partnership Deed / MOA');
+  setCell(ws, 'E48', 'Borrower business');
+  setStyledStatusCell(ws, 'F48', documentStatus(caseRecord, ['OTHER']));
 
-  // Property documents
-  setCell(ws, 'C52', documentStatus(caseRecord, ['SALE_DEED', 'PROPERTY_DOCUMENT']));
-  setCell(ws, 'F52', documentStatus(caseRecord, ['PROPERTY_DOCUMENT']));
-  setCell(ws, 'C53', documentStatus(caseRecord, ['PROPERTY_DOCUMENT']));
-  setCell(ws, 'F53', documentStatus(caseRecord, ['PROPERTY_DOCUMENT']));
+  // ── Section 5: Property Documents ────────────────────────────────────────
+  setCell(ws, 'A50', 'PROPERTY DOCUMENT STATUS');
+  setCell(ws, 'A51', 'Document');
+  setCell(ws, 'B51', 'For Whom / Related To');
+  setCell(ws, 'C51', 'Status');
+  setCell(ws, 'D51', 'Document');
+  setCell(ws, 'E51', 'For Whom / Related To');
+  setCell(ws, 'F51', 'Status');
+
+  setCell(ws, 'A52', 'Sale Deed / Title Deed');
+  setCell(ws, 'B52', 'Collateral property');
+  setStyledStatusCell(ws, 'C52', documentStatus(caseRecord, ['SALE_DEED', 'PROPERTY_DOCUMENT']));
+  setCell(ws, 'D52', 'Property Tax Receipt');
+  setCell(ws, 'E52', 'Collateral property');
+  setStyledStatusCell(ws, 'F52', documentStatus(caseRecord, ['PROPERTY_DOCUMENT']));
+
+  setCell(ws, 'A53', 'Encumbrance Certificate');
+  setCell(ws, 'B53', 'Collateral property');
+  setStyledStatusCell(ws, 'C53', documentStatus(caseRecord, ['PROPERTY_DOCUMENT']));
+  setCell(ws, 'D53', 'Approved Building Plan');
+  setCell(ws, 'E53', 'Collateral property');
+  setStyledStatusCell(ws, 'F53', documentStatus(caseRecord, ['PROPERTY_DOCUMENT']));
+
+  setCell(ws, 'A54', 'Borrower Photograph');
   setCell(ws, 'B54', firstNonBlank(primary.name, customer.business_name, 'Applicant'));
-  setCell(ws, 'C54', documentStatus(caseRecord, ['OTHER'], primary));
+  setStyledStatusCell(ws, 'C54', documentStatus(caseRecord, ['OTHER'], primary));
+  setCell(ws, 'D54', 'Co-Applicant Photograph');
   setCell(ws, 'E54', coApps[0] ? getApplicantLabel(coApps[0], 0) : 'Co-Applicant');
-  setCell(ws, 'F54', coApps[0] ? documentStatus(caseRecord, ['OTHER'], coApps[0]) : 'Pending');
+  setStyledStatusCell(ws, 'F54', coApps[0] ? documentStatus(caseRecord, ['OTHER'], coApps[0]) : 'Pending');
 
-  // References are not currently stored as structured fields; blank sample data instead of hard-code.
-  for (const row of [58, 59]) {
-    for (const col of ['B', 'C', 'D', 'E']) setCell(ws, `${col}${row}`, '');
+  setCell(ws, 'A55', 'Property Photographs');
+  setCell(ws, 'B55', 'Collateral property');
+  setStyledStatusCell(ws, 'C55', documentStatus(caseRecord, ['PROPERTY_DOCUMENT']));
+  setCell(ws, 'D55', 'Business Premises Photos');
+  setCell(ws, 'E55', 'Business premises');
+  setStyledStatusCell(ws, 'F55', documentStatus(caseRecord, ['OTHER']));
+
+  // ── Section 6: References ─────────────────────────────────────────────────
+  setCell(ws, 'A57', '5. REFERENCES');
+  setCell(ws, 'A58', 'Reference');
+  setCell(ws, 'B58', 'Name');
+  setCell(ws, 'C58', 'Mobile');
+  setCell(ws, 'D58', 'Relationship');
+  setCell(ws, 'E58', 'Address');
+  for (const row of [59, 60]) {
+    for (const col of ['A', 'B', 'C', 'D', 'E']) setCell(ws, `${col}${row}`, '');
   }
+  setCell(ws, 'A59', 'Reference 1');
+  setCell(ws, 'A60', 'Reference 2');
+}
 
-  // Record report date/status in available cells/comments style.
-  setCell(ws, 'G4', latestEsr ? `ESR v${latestEsr.version_number || ''}`.trim() : 'ESR Pending');
+function applyAnalysisSheetHeaderStyle(ws, title) {
+  // Row 1 banner
+  ws.getRow(1).height = 34;
+  const numCols = Math.max(ws.columnCount || 4, 4);
+  try { ws.mergeCells(1, 1, 1, numCols); } catch (_) {}
+  const banner = ws.getCell('A1');
+  banner.value     = title;
+  banner.font      = { bold: true, size: 14, color: { argb: BRAND.BANNER_FG }, name: 'Arial' };
+  banner.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.BANNER_BG } };
+  banner.alignment = { horizontal: 'left', vertical: 'middle' };
+  applyBorder(banner);
+  for (let c = 2; c <= numCols; c++) {
+    const cell = ws.getCell(1, c);
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.BANNER_BG } };
+    applyBorder(cell);
+  }
+}
+
+function styleKvBlock(ws, startRow, endRow) {
+  for (let r = startRow; r <= endRow; r++) {
+    ws.getRow(r).height = 21;
+    const labelCell = ws.getCell(r, 1);
+    const valueCell = ws.getCell(r, 2);
+    styleLabelCell(labelCell, r % 2 === 0);
+    styleDataCell(valueCell, { altRow: r % 2 === 0 });
+  }
 }
 
 function fillBankStatementSheet(workbook, caseRecord) {
@@ -1326,24 +1714,54 @@ function fillBankStatementSheet(workbook, caseRecord) {
   const bankInfo = extractBankAccountInfo(caseRecord);
   const financials = caseRecord.esr_financials || {};
 
-  setCell(ws, 'B2', [bankInfo.bankName, bankInfo.accountNumber, bankInfo.accountType].filter(Boolean).join(' - ') || 'Bank Statement Analysis');
-  setCell(ws, 'B3', bankInfo.accountHolder || 'N/A');
-  setCell(ws, 'B4', bankInfo.accountNumber || 'N/A');
-  setCell(ws, 'B5', bankInfo.bankName || 'N/A');
-  setCell(ws, 'B6', bankInfo.accountType || 'N/A');
-  setCell(ws, 'B7', bankInfo.email || 'N/A');
-  setCell(ws, 'B8', bankInfo.phone || 'N/A');
-  setCell(ws, 'B9', formatDate(bankInfo.statementFrom) || 'N/A');
-  setCell(ws, 'B10', formatDate(bankInfo.statementTo) || 'N/A');
-  setCell(ws, 'B11', formatDate(bankInfo.statementFrom) || 'N/A');
-  setCell(ws, 'B12', formatDate(bankInfo.statementTo) || 'N/A');
+  applyAnalysisSheetHeaderStyle(ws, 'BANK STATEMENT ANALYSIS');
 
-  // Fill totals/fallback snapshots into the Total column while preserving all monthly-layout columns.
-  setNumberCell(ws, 'N19', financials.bank_total_credits);
-  setNumberCell(ws, 'N27', firstNonBlank(financials.bank_avg_balance, bankInfo.avgBalance));
-  setNumberCell(ws, 'N43', firstNonBlank(financials.bank_avg_balance, bankInfo.avgBalance));
-  setNumberCell(ws, 'N39', financials.bank_total_credits);
-  setNumberCell(ws, 'N40', financials.itr_finance_cost);
+  // ── Account details KV block ──────────────────────────────────────────────
+  const kvRows = [
+    ['Bank Accounts', [bankInfo.bankName, bankInfo.accountNumber, bankInfo.accountType].filter(Boolean).join(' - ') || 'N/A'],
+    ['Description',  [bankInfo.bankName, bankInfo.accountNumber, bankInfo.accountType].filter(Boolean).join(' - ') || 'N/A'],
+    ['Account Holders', bankInfo.accountHolder || 'N/A'],
+    ['Account Number',  bankInfo.accountNumber || 'N/A'],
+    ['Bank Name',       bankInfo.bankName || 'N/A'],
+    ['Account Type',    bankInfo.accountType || 'N/A'],
+    ['Email',           bankInfo.email || 'N/A'],
+    ['Phone',           bankInfo.phone || 'N/A'],
+    ['Statement From',  formatDate(bankInfo.statementFrom) || 'N/A'],
+    ['Statement To',    formatDate(bankInfo.statementTo) || 'N/A']
+  ];
+  kvRows.forEach(([label, value], idx) => {
+    const r = 2 + idx;
+    setCell(ws, ws.getCell(r, 1).address, label);
+    setCell(ws, ws.getCell(r, 2).address, value);
+    styleLabelCell(ws.getCell(r, 1), r % 2 === 0);
+    styleDataCell(ws.getCell(r, 2), { altRow: r % 2 === 0 });
+    ws.getRow(r).height = 21;
+  });
+
+  // ── Section header above monthly table ───────────────────────────────────
+  const sectionRow = 13;
+  ws.getRow(sectionRow).height = 22;
+  const secCell = ws.getCell(sectionRow, 1);
+  secCell.value = 'Monthly Banking Summary';
+  styleSectionHeader(secCell);
+  for (let c = 2; c <= Math.max(ws.columnCount, 14); c++) {
+    styleSectionHeader(ws.getCell(sectionRow, c));
+  }
+
+  // ── Column widths ─────────────────────────────────────────────────────────
+  ws.getColumn(1).width = 36;
+  for (let c = 2; c <= Math.max(ws.columnCount, 14); c++) {
+    ws.getColumn(c).width = 14;
+  }
+
+  // ── Totals in the Total column (N) ────────────────────────────────────────
+  setStyledFinancialCell(ws, 'N19', financials.bank_total_credits);
+  setStyledFinancialCell(ws, 'N27', firstNonBlank(financials.bank_avg_balance, bankInfo.avgBalance));
+  setStyledFinancialCell(ws, 'N43', firstNonBlank(financials.bank_avg_balance, bankInfo.avgBalance));
+  setStyledFinancialCell(ws, 'N39', financials.bank_total_credits);
+  setStyledFinancialCell(ws, 'N40', financials.itr_finance_cost);
+
+  ws.views = [{ state: 'frozen', ySplit: 1 }];
 }
 
 function fillItrSheet(workbook, caseRecord) {
@@ -1355,12 +1773,15 @@ function fillItrSheet(workbook, caseRecord) {
     return;
   }
 
-  const customer = caseRecord.customer || {};
-  const primary = getPrimaryApplicant(caseRecord);
+  const customer   = caseRecord.customer || {};
+  const primary    = getPrimaryApplicant(caseRecord);
   const panProfile = latestPanProfile(customer);
-  const itr = getLatest(caseRecord.itr_analytics || []);
+  const itr        = getLatest(caseRecord.itr_analytics || []);
   const financials = caseRecord.esr_financials || {};
 
+  applyAnalysisSheetHeaderStyle(ws, 'ITR ANALYSIS');
+
+  // ── Applicant header fields ───────────────────────────────────────────────
   setCell(ws, 'F5', itr?.reference_id || '');
   setCell(ws, 'H5', itr?.reference_id || '');
   setCell(ws, 'F6', firstNonBlank(primary.name, customer.business_name));
@@ -1378,15 +1799,14 @@ function fillItrSheet(workbook, caseRecord) {
   setCell(ws, 'H20', formatDate(itr?.updated_at || itr?.created_at));
   setCell(ws, 'H22', firstNonBlank(customer.entity_type, financials.constitution_type));
 
-  setNumberCell(ws, 'H40', financials.itr_pat);
-  setNumberCell(ws, 'H43', financials.itr_pat);
-  setNumberCell(ws, 'H44', financials.itr_pat);
-  setNumberCell(ws, 'H46', financials.itr_pat);
-  setNumberCell(ws, 'H50', financials.itr_pat);
-  setNumberCell(ws, 'H52', sumIncomeByType(caseRecord, type => type.includes('agriculture')));
+  // ── Financial values with INR formatting ─────────────────────────────────
+  [['H40', financials.itr_pat], ['H43', financials.itr_pat], ['H44', financials.itr_pat],
+   ['H46', financials.itr_pat], ['H50', financials.itr_pat]].forEach(([addr, val]) => {
+    setStyledFinancialCell(ws, addr, val);
+  });
+  setStyledFinancialCell(ws, 'H52', sumIncomeByType(caseRecord, type => type.includes('agriculture')) || null);
 
-  // Common business addbacks near balance/profit rows if template has them farther down.
-  // Cells below row 80 are not listed here to avoid overwriting sections we did not inspect.
+  ws.views = [{ state: 'frozen', ySplit: 1 }];
 }
 
 function fillGstSheet(workbook, caseRecord) {
@@ -1398,36 +1818,82 @@ function fillGstSheet(workbook, caseRecord) {
     return;
   }
 
-  const customer = caseRecord.customer || {};
+  const customer   = caseRecord.customer || {};
   const gstProfile = latestGstProfile(customer);
   const panProfile = latestPanProfile(customer);
-  const gstReq = getLatest(caseRecord.gst_requests || []);
+  const gstReq     = getLatest(caseRecord.gst_requests || []);
   const financials = caseRecord.esr_financials || {};
-  const gstin = getGstin(caseRecord);
+  const gstin      = getGstin(caseRecord);
   const annualSales = toNumber(financials.gst_avg_monthly_sales) ? Number(financials.gst_avg_monthly_sales) * 12 : null;
 
-  setCell(ws, 'A1', `${firstNonBlank(customer.business_name, caseRecord.customer_name, 'Borrower')} - GST ANALYTICS REPORT`);
-  setCell(ws, 'B3', firstNonBlank(panProfile?.legal_name, gstProfile?.raw_response?.legal_name, customer.business_name));
-  setCell(ws, 'B4', firstNonBlank(panProfile?.trade_name, customer.business_name));
-  setCell(ws, 'B5', gstin);
-  setCell(ws, 'B6', firstNonBlank(customer.business_pan, panProfile?.pan));
-  setCell(ws, 'B7', customer.business_email);
-  setCell(ws, 'B8', customer.business_mobile);
-  setCell(ws, 'B9', Array.isArray(panProfile?.director_names) ? panProfile.director_names.join(', ') : '');
-  setCell(ws, 'B10', firstNonBlank(customer.entity_type, panProfile?.constitution_of_business));
-  setCell(ws, 'B11', firstNonBlank(customer.industry, financials.gst_industry_type));
-  setCell(ws, 'B12', firstNonBlank(panProfile?.principal_address, ''));
-  setCell(ws, 'B13', '');
-  setCell(ws, 'B14', firstNonBlank(gstProfile?.filing_status, gstReq?.status));
-  setCell(ws, 'B18', firstNonBlank(panProfile?.principal_state, ''));
-  setCell(ws, 'B19', [financials.financial_year_latest, financials.financial_year_previous].filter(Boolean).join(' / '));
-  setCell(ws, 'B20', formatDate(new Date()));
+  // ── Banner ────────────────────────────────────────────────────────────────
+  applyAnalysisSheetHeaderStyle(ws, `${firstNonBlank(customer.business_name, caseRecord.customer_name, 'Borrower')} — GST ANALYTICS REPORT`);
 
-  setNumberCell(ws, 'B25', annualSales);
-  setNumberCell(ws, 'C25', annualSales);
-  setNumberCell(ws, 'D25', annualSales);
-  setNumberCell(ws, 'B27', annualSales && financials.gst_income ? financials.gst_income * 12 : null);
+  // ── Entity details KV block (rows 2-20) ───────────────────────────────────
+  const kvPairs = [
+    ['Legal Name',           firstNonBlank(panProfile?.legal_name, gstProfile?.raw_response?.legal_name, customer.business_name)],
+    ['Trade Name',           firstNonBlank(panProfile?.trade_name, customer.business_name)],
+    ['GSTIN',                gstin],
+    ['PAN',                  firstNonBlank(customer.business_pan, panProfile?.pan)],
+    ['Email',                customer.business_email],
+    ['Mobile',               customer.business_mobile],
+    ['Director(s)',          Array.isArray(panProfile?.director_names) ? panProfile.director_names.join(', ') : ''],
+    ['Constitution',         firstNonBlank(customer.entity_type, panProfile?.constitution_of_business)],
+    ['Industry',             firstNonBlank(customer.industry, financials.gst_industry_type)],
+    ['Registered Address',   firstNonBlank(panProfile?.principal_address, '')],
+    ['Principal Place',      ''],
+    ['Filing Status',        firstNonBlank(gstProfile?.filing_status, gstReq?.status)],
+    ['',                     ''], ['', ''], ['', ''],
+    ['State',                firstNonBlank(panProfile?.principal_state, '')],
+    ['Financial Year(s)',    [financials.financial_year_latest, financials.financial_year_previous].filter(Boolean).join(' / ')],
+    ['Report Generated On',  formatDate(new Date())]
+  ];
+  kvPairs.forEach(([label, value], idx) => {
+    const r = 2 + idx;
+    const bAddr = ws.getCell(r, 1).address;
+    const vAddr = ws.getCell(r, 2).address;
+    setCell(ws, bAddr, label);
+    setCell(ws, vAddr, sanitizeExcelValue(value, ''));
+    if (label) {
+      styleLabelCell(ws.getCell(bAddr), r % 2 === 0);
+      styleDataCell(ws.getCell(vAddr), { altRow: r % 2 === 0 });
+      ws.getRow(r).height = 21;
+    }
+  });
+
+  // ── GST summary section ───────────────────────────────────────────────────
+  const sumSecRow = 21;
+  ws.getRow(sumSecRow).height = 22;
+  ['A', 'B', 'C', 'D'].forEach(col => styleSectionHeader(ws.getCell(`${col}${sumSecRow}`)));
+  setCell(ws, `A${sumSecRow}`, 'GST SUMMARY');
+
+  setCell(ws, 'A22', 'Parameter');
+  setCell(ws, 'B22', 'Current Year');
+  setCell(ws, 'C22', 'Previous Year');
+  setCell(ws, 'D22', 'Industry Avg');
+  ['A22', 'B22', 'C22', 'D22'].forEach(addr => styleColumnHeader(ws.getCell(addr)));
+  ws.getRow(22).height = 24;
+
+  [
+    ['A25', 'Annual GSTR Sales'],
+    ['A27', 'Annual GST Income'],
+    ['A29', 'Industry Margin']
+  ].forEach(([addr, lbl]) => {
+    styleLabelCell(ws.getCell(addr));
+    setCell(ws, addr, lbl);
+  });
+
+  setStyledFinancialCell(ws, 'B25', annualSales);
+  setStyledFinancialCell(ws, 'C25', annualSales);
+  setStyledFinancialCell(ws, 'D25', annualSales);
+  setStyledFinancialCell(ws, 'B27', annualSales && financials.gst_income ? financials.gst_income * 12 : null);
   setCell(ws, 'B29', financials.gst_industry_margin ? `${Number(financials.gst_industry_margin) * 100}%` : '');
+
+  ws.getColumn(1).width = 28;
+  ws.getColumn(2).width = 20;
+  ws.getColumn(3).width = 20;
+  ws.getColumn(4).width = 20;
+  ws.views = [{ state: 'frozen', ySplit: 1 }];
 }
 
 function fillCibilSheet(workbook, caseRecord) {
@@ -1439,29 +1905,112 @@ function fillCibilSheet(workbook, caseRecord) {
     return;
   }
 
-  const primary = getPrimaryApplicant(caseRecord);
-  const coApps = getCoApplicants(caseRecord);
-  const obligations = caseRecord.obligations || [];
+  const primary       = getPrimaryApplicant(caseRecord);
+  const coApps        = getCoApplicants(caseRecord);
+  const obligations   = caseRecord.obligations || [];
   const primaryBureau = latestBureau(primary);
+  const primaryScore  = toNumber(firstNonBlank(primary.cibil_score, primaryBureau?.score, caseRecord.cibil_score));
 
-  setCell(ws, 'A2', [
-    `Primary: ${getApplicantLabel(primary) || 'N/A'}`,
-    `PAN: ${primary.pan_number || 'N/A'}`,
-    `Mobile: ${primary.mobile || 'N/A'}`,
-    `CIBIL Score: ${firstNonBlank(primary.cibil_score, primaryBureau?.score, caseRecord.cibil_score, 'N/A')}`
-  ].join('\n'));
+  applyAnalysisSheetHeaderStyle(ws, 'CIBIL — TRANSUNION CREDIT REPORT');
 
-  setCell(ws, 'A4', obligations.length
-    ? `Active obligations: ${obligations.length}; Total EMI: ${formatInr(obligations.reduce((s, o) => s + (toNumber(o.emi_per_month) || 0), 0), '₹0')}`
-    : 'No obligations available');
+  // ── Section: Applicant Summary ────────────────────────────────────────────
+  ws.getRow(2).height = 22;
+  ['A', 'B', 'C', 'D', 'E'].forEach(col => styleSectionHeader(ws.getCell(`${col}2`)));
+  setCell(ws, 'A2', 'APPLICANT CREDIT SUMMARY');
 
-  setCell(ws, 'A6', obligations.map((o, idx) => (
-    `${idx + 1}. ${cleanString(o.lender_name) || 'Lender'} | ${cleanString(o.loan_type) || 'Loan'} | EMI ${formatInr(o.emi_per_month, '₹0')} | Outstanding ${formatInr(o.outstanding_amount, '₹0')} | ${o.status || 'ACTIVE'}`
-  )).join('\n') || 'No loanwise obligation data available');
+  // ── Column headers ────────────────────────────────────────────────────────
+  ws.getRow(3).height = 26;
+  ['Name', 'PAN', 'Mobile', 'CIBIL Score', 'Remarks'].forEach((hdr, idx) => {
+    const addr = ws.getCell(3, idx + 1).address;
+    setCell(ws, addr, hdr);
+    styleColumnHeader(ws.getCell(addr));
+  });
 
-  setCell(ws, 'A7', coApps.length
-    ? `Co-applicants: ${coApps.map((a, idx) => `${getApplicantLabel(a, idx)} (${firstNonBlank(a.cibil_score, latestBureau(a)?.score, 'CIBIL N/A')})`).join('; ')}`
-    : 'Co-applicants: N/A');
+  // ── Primary applicant row ─────────────────────────────────────────────────
+  ws.getRow(4).height = 24;
+  setCell(ws, 'A4', getApplicantLabel(primary) || 'N/A');
+  setCell(ws, 'B4', primary.pan_number || 'N/A');
+  setCell(ws, 'C4', primary.mobile || 'N/A');
+  {
+    const scoreCell = ws.getCell('D4');
+    scoreCell.value = primaryScore !== null ? primaryScore : 'N/A';
+    scoreCell.font      = { bold: true, size: 11, name: 'Arial',
+      color: { argb: primaryScore === null ? 'FF334155' : primaryScore >= 750 ? BRAND.STATUS_UPLOADED_FG : primaryScore >= 650 ? BRAND.STATUS_PENDING_FG : 'FFB91C1C' } };
+    scoreCell.fill      = { type: 'pattern', pattern: 'solid',
+      fgColor: { argb: primaryScore === null ? BRAND.META_BG : primaryScore >= 750 ? BRAND.STATUS_UPLOADED_BG : primaryScore >= 650 ? BRAND.STATUS_PENDING_BG : 'FFFEF2F2' } };
+    scoreCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    applyBorder(scoreCell, 'thin');
+  }
+  setCell(ws, 'E4', 'Primary Borrower');
+  ['A4', 'B4', 'C4', 'E4'].forEach(addr => styleDataCell(ws.getCell(addr)));
+
+  // ── Co-applicant rows ─────────────────────────────────────────────────────
+  coApps.forEach((app, idx) => {
+    const r = 5 + idx;
+    ws.getRow(r).height = 22;
+    const coScore = toNumber(firstNonBlank(app.cibil_score, latestBureau(app)?.score));
+    setCell(ws, ws.getCell(r, 1).address, getApplicantLabel(app, idx) || 'N/A');
+    setCell(ws, ws.getCell(r, 2).address, app.pan_number || 'N/A');
+    setCell(ws, ws.getCell(r, 3).address, app.mobile || 'N/A');
+    const scoreCo = ws.getCell(r, 4);
+    scoreCo.value      = coScore !== null ? coScore : 'N/A';
+    scoreCo.font       = { bold: true, size: 10, name: 'Arial',
+      color: { argb: coScore === null ? 'FF334155' : coScore >= 750 ? BRAND.STATUS_UPLOADED_FG : coScore >= 650 ? BRAND.STATUS_PENDING_FG : 'FFB91C1C' } };
+    scoreCo.fill       = { type: 'pattern', pattern: 'solid',
+      fgColor: { argb: coScore === null ? BRAND.META_BG : coScore >= 750 ? BRAND.STATUS_UPLOADED_BG : coScore >= 650 ? BRAND.STATUS_PENDING_BG : 'FFFEF2F2' } };
+    scoreCo.alignment  = { horizontal: 'center', vertical: 'middle' };
+    applyBorder(scoreCo, 'thin');
+    setCell(ws, ws.getCell(r, 5).address, firstNonBlank(app.relationship_to_primary, app.employment_type, 'Co-Applicant'));
+    [1, 2, 3, 5].forEach(c => styleDataCell(ws.getCell(r, c), { altRow: idx % 2 !== 0 }));
+  });
+
+  // ── Section: Obligations ─────────────────────────────────────────────────
+  const oblSecRow = 5 + coApps.length + 2;
+  ws.getRow(oblSecRow).height = 22;
+  ['A', 'B', 'C', 'D', 'E'].forEach(col => styleSectionHeader(ws.getCell(`${col}${oblSecRow}`)));
+  const totalEmi = obligations.reduce((s, o) => s + (toNumber(o.emi_per_month) || 0), 0);
+  setCell(ws, `A${oblSecRow}`, obligations.length
+    ? `ACTIVE OBLIGATIONS (${obligations.length})  —  Total EMI: ${formatInr(totalEmi)}`
+    : 'ACTIVE OBLIGATIONS — None');
+
+  // ── Obligation table header ───────────────────────────────────────────────
+  const oblHdrRow = oblSecRow + 1;
+  ws.getRow(oblHdrRow).height = 26;
+  ['Lender', 'Loan Type', 'EMI / Month', 'Outstanding', 'Status'].forEach((hdr, idx) => {
+    const addr = ws.getCell(oblHdrRow, idx + 1).address;
+    setCell(ws, addr, hdr);
+    styleColumnHeader(ws.getCell(addr));
+  });
+
+  // ── Obligation data rows ──────────────────────────────────────────────────
+  if (obligations.length) {
+    obligations.forEach((o, idx) => {
+      const r = oblHdrRow + 1 + idx;
+      ws.getRow(r).height = 22;
+      setCell(ws, ws.getCell(r, 1).address, cleanString(o.lender_name) || 'Lender');
+      setCell(ws, ws.getCell(r, 2).address, cleanString(o.loan_type) || 'Loan');
+      setStyledFinancialCell(ws, ws.getCell(r, 3).address, o.emi_per_month);
+      setStyledFinancialCell(ws, ws.getCell(r, 4).address, o.outstanding_amount);
+      const statusAddr = ws.getCell(r, 5).address;
+      setStyledStatusCell(ws, statusAddr, o.status === 'ACTIVE' ? 'Uploaded' : 'Pending');
+      ws.getCell(statusAddr).value = sanitizeExcelValue(o.status || 'ACTIVE');
+      [1, 2].forEach(c => styleDataCell(ws.getCell(r, c), { altRow: idx % 2 !== 0 }));
+    });
+  } else {
+    const emptyRow = oblHdrRow + 1;
+    ws.getRow(emptyRow).height = 21;
+    setCell(ws, ws.getCell(emptyRow, 1).address, 'No obligation data available');
+    styleDataCell(ws.getCell(emptyRow, 1));
+  }
+
+  // ── Column widths ─────────────────────────────────────────────────────────
+  ws.getColumn(1).width = 32;
+  ws.getColumn(2).width = 22;
+  ws.getColumn(3).width = 16;
+  ws.getColumn(4).width = 16;
+  ws.getColumn(5).width = 14;
+
+  ws.views = [{ state: 'frozen', ySplit: 1 }];
 }
 
 async function fetchReportCase(caseId, tenantId, currentUser) {
