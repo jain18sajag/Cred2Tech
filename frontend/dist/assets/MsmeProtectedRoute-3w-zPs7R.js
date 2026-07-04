@@ -1,0 +1,1 @@
+import{j as e,e as r,N as i,O as n}from"./index-B63Y-fJF.js";import{u as o}from"./MsmeAuthContext-CgCZw3_j.js";import"./directMsme-DpsuP6JB.js";const l=()=>{const{user:t,loading:s}=o();return s?e.jsx("div",{className:"flex-1 flex items-center justify-center min-h-[50vh]",children:e.jsx(r,{size:40})}):t?e.jsx(n,{}):e.jsx(i,{to:"/msme/login",replace:!0})};export{l as default};

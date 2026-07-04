@@ -141,7 +141,13 @@ export const caseService = {
     return response.data;
   },
   getESR: async (caseId) => {
-    const response = await axiosInstance.get(`/cases/${caseId}/esr`);
+    const response = await axiosInstance.get(`/cases/${caseId}/esr`, {
+      params: { _: Date.now() },
+      headers: {
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache'
+      }
+    });
     return response.data;
   },
 

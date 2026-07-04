@@ -2,6 +2,7 @@ const esrService = require('../services/esr.service');
 
 async function generate(req, res) {
   try {
+    _setNoStoreHeaders(res);
     const caseId = parseInt(req.params.id, 10);
     const userId = req.user.id;
     const result = await esrService.generateESR(caseId, userId, req.user.tenant_id);
@@ -45,6 +46,7 @@ function _scrubESRResult(result, userRole) {
 
 async function get(req, res) {
   try {
+    _setNoStoreHeaders(res);
     const caseId = parseInt(req.params.id, 10);
     const result = await esrService.getESR(caseId, req.user.tenant_id);
     const scrubbedResult = _scrubESRResult(result, req.user.role);
@@ -55,6 +57,13 @@ async function get(req, res) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch ESR.' });
   }
+}
+
+function _setNoStoreHeaders(res) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
 }
 
 module.exports = { generate, get };

@@ -1,0 +1,1 @@
+import{b as t,q as n}from"./index-B63Y-fJF.js";const o=async()=>(await t.get("/tenants")).data,p=async s=>(await t.post("/tenants",s)).data,c=async s=>(await n.post(`${t.defaults.baseURL||""}/tenants/public-register`,s)).data,i=async s=>(await t.get(`/admin/tenants/${s}/summary`)).data,u=async(s,a)=>(await t.put(`/tenants/${s}`,a)).data;export{i as a,p as c,o as g,c as p,u};
