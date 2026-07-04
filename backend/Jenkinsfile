@@ -416,7 +416,8 @@ pipeline {
                             sh """
                                 mkdir -p ${DEPLOY_BASE}/shared/uploads
                                 mkdir -p ${DEPLOY_BASE}/shared/logs/esr
-                                chmod 775 ${DEPLOY_BASE}/shared/logs ${DEPLOY_BASE}/shared/logs/esr
+                                chmod 775 ${DEPLOY_BASE}/shared/logs ${DEPLOY_BASE}/shared/logs/esr 2>/dev/null || \
+                                  echo "WARN: Could not chmod shared logs; continuing because directories already exist."
                                 ln -sfn ${DEPLOY_BASE}/shared/uploads ${env.RELEASE_DIR}/uploads
                                 ln -sfn ${DEPLOY_BASE}/shared/logs    ${env.RELEASE_DIR}/logs
                                 echo "Shared uploads and logs symlinked into release."
