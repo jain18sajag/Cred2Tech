@@ -195,7 +195,7 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
                         const val = pv.value?.raw ?? pv.value?.normalized ?? pv.value;
                         if (key === 'lender_policy_key' && val) lender_policy_key = String(val).toUpperCase();
                         if (key === 'banking_income_policy' && val) banking_income_policy = String(val).toUpperCase();
-                        if ((key === 'banking_abb_divisor' || key === 'banking_abb_multiplier') && !isNaN(Number(val))) {
+                        if ((key === 'abbDivisor' || key === 'abb_divisor' || key === 'banking_abb_divisor' || key === 'banking_abb_multiplier') && !isNaN(Number(val))) {
                             // ICICI requirement labels this as multiplier in places, but the policy text says ABB is divided.
                             banking_abb_divisor = Number(val);
                         }

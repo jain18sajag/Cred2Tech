@@ -719,8 +719,10 @@ class EsrCalculationLogBuilder {
         const monthlyTotals = {};
         if (transactions.length === 0 && bankSummary.avgBalance != null) {
             const avgBalance = normalizeNumber(bankSummary.avgBalance) || 0;
-            const multiplier = normalizeNumber(policy.banking_abb_multiplier) || 1;
-            const averageMonthlyBankingIncome = avgBalance * multiplier;
+            const divisor = normalizeNumber(policy.banking_abb_divisor)
+                || normalizeNumber(policy.banking_abb_multiplier)
+                || 1;
+            const averageMonthlyBankingIncome = divisor > 0 ? avgBalance / divisor : 0;
             return {
                 methodName: 'calculateBankingIncome',
                 sourcePath: 'Bank Summary',
@@ -728,8 +730,8 @@ class EsrCalculationLogBuilder {
                 excludedCredits: [],
                 totalBankingCredits: avgBalance,
                 bankingCalculation: {
-                    formula: 'averageMonthlyBankingIncome = bank_avg_balance × ABB multiplier',
-                    calculation: `bank_avg_balance (${avgBalance}) × ABB multiplier (${multiplier}) = ${averageMonthlyBankingIncome}`
+                    formula: 'averageMonthlyBankingIncome = bank_avg_balance / ABB divisor',
+                    calculation: `bank_avg_balance (${avgBalance}) / ABB divisor (${divisor}) = ${averageMonthlyBankingIncome}`
                 },
                 numberOfBankingMonths: avgBalance > 0 ? 1 : 0,
                 averageMonthlyBankingIncome,

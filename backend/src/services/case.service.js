@@ -1,4 +1,11 @@
 const prisma = require('../../config/db');
+
+function parseNumericInput(value, fieldName) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(String(value).replace(/[^0-9.-]+/g, ''));
+  if (!Number.isFinite(parsed)) throw new Error(`${fieldName} must be a valid number.`);
+  return parsed;
+}
 async function createCase(customer_id, product_type, tenant_id, user_id) {
   // 1. Verify that the customer exists and belongs to the correct tenant
   const customer = await prisma.customer.findFirst({
@@ -340,6 +347,15 @@ async function updateProductProperty(case_id, payload, tenant_id) {
     throw new Error('Market value is required for LAP/HL products.');
   }
 
+  const propertyPayload = property
+    ? {
+        ...property,
+        market_value: property.market_value !== undefined
+          ? parseNumericInput(property.market_value, 'property.market_value')
+          : undefined
+      }
+    : null;
+
   const [updatedCase] = await prisma.$transaction([
     prisma.case.update({
       where: { id: case_id },
@@ -350,13 +366,17 @@ async function updateProductProperty(case_id, payload, tenant_id) {
         entity_type: existingCase.customer.entity_type
       }
     }),
-    ...(property ? [
+    ...(propertyPayload ? [
       prisma.casePropertyDetails.upsert({
         where: { case_id },
-        create: { case_id, ...property },
-        update: { ...property, updated_at: new Date() }
+        create: { case_id, ...propertyPayload },
+        update: { ...propertyPayload, updated_at: new Date() }
       })
     ] : []),
+    prisma.caseEsrFinancials.updateMany({
+      where: { case_id },
+      data: { extraction_status: 'PENDING' }
+    }),
     prisma.caseStageHistory.create({
       data: {
         case_id: case_id,

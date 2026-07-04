@@ -1,0 +1,2803 @@
+====================================================
+ESR UNDERWRITING TRACE
+======================
+Case ID: 578
+Tenant: 11
+Product: LAP
+Generated At: 2026-07-04 09:08:55
+
+====================================================
+INPUT SNAPSHOT
+==============
+Selected Monthly Income: ₹1,19,790.25
+Property Value: ₹9,87,65,43,213
+Market Value: ₹9,87,65,43,213
+Property Type: Residential — House / Flat
+Occupancy: Vacant
+Ownership: N/A
+Product Type: LAP
+Income Method: NET_PROFIT
+Property Details Updated At: Sat Jul 04 2026 10:31:43 GMT+0530 (India Standard Time)
+Manual Income Updated At: Sun Jun 28 2026 21:29:11 GMT+0530 (India Standard Time)
+Bureau Obligation Updated At: N/A
+Source Property Value Used: 9876543213
+Source Obligation Total Used: 0
+Primary CIBIL: 810
+Lowest CIBIL: 810
+Manual Income Rows: 1
+Manual Income Annual Total: ₹2,54,400
+Manual Income Monthly Total: ₹21,200
+Source Manual Income Monthly Total Used: 21200
+Total Obligations: 0
+Total EMI: ₹0
+Lenders Evaluated: 4
+
+---
+## PROPERTY & COLLATERAL SNAPSHOT
+Duration: 1ms
+
+{
+  "product_type": "LAP",
+  "property_type": "Residential — House / Flat",
+  "occupancy_status": "Vacant",
+  "ownership": null,
+  "market_value": XXXXXX3213,
+  "property_value": XXXXXX3213,
+  "requested_loan_amount": 0,
+  "requested_tenure_months": 0,
+  "selected_income_method": "NET_PROFIT",
+  "selected_monthly_income": 119790.25,
+  "existing_obligations": 0
+}
+
+MANUAL INCOME ADDITION ROWS USED:
+  Type     | Annual   | Monthly   | Doc           | Rent Class   | Auto Included   | Remarks                                   
+  Salary   | 254400   | 21200     | Salary Slip   |              | Yes             | Generated from Salary Slip OCR (1 slips)  
+
+EDITABLE BUREAU / CREDIT OBLIGATIONS USED:
+  Lender   | Type   | Outstanding   | EMI/mo   | Include FOIR   | Source  
+
+
+====================================================
+LENDER: ICICI BANK
+SCHEME: SALARIED
+====================================================
+
+---
+## PARAMETER MAP
+Duration: 3ms
+
+bureau_name: CIBIL
+lap_ltv_ind_vacant: MANUAL_REVIEW_REQUIRED
+elig_rental_bank: MANUAL_REVIEW_REQUIRED
+elig_rental_cash: MANUAL_REVIEW_REQUIRED
+elig_agri_itr: MANUAL_REVIEW_REQUIRED
+dbr_rental_bank: MANUAL_REVIEW_REQUIRED
+dbr_rental_cash: MANUAL_REVIEW_REQUIRED
+dbr_agri_itr: MANUAL_REVIEW_REQUIRED
+age_maturity_income: 60
+lap_dbr_foir: <75k -60%, >75k - 70%
+hl_dbr_foir: 
+lap_max_loan: No Capping
+lap_roi_min: 8.25%
+lap_roi_max: 8.5%
+lap_pf_min: 0.50%
+lap_pf_max: 1%
+age_maturity_non_income: 75
+bureau_cutoff: 700
+lap_ltv_res_self: 70%
+lap_ltv_res_rented: 70%
+lap_ltv_res_vacant: 70%
+lap_ltv_com_self: 70%
+lap_ltv_com_rented: 70%
+lap_ltv_com_vacant: 70%
+lap_ltv_ind_self: 40%
+lap_ltv_ind_rented: 40%
+lap_ltv_mix_self: 70%
+lap_ltv_mix_rented: 70%
+lap_ltv_mix_vacant: 70%
+lap_ltv_plot_self: 40%
+lap_ltv_plot_rented: 40%
+lap_ltv_plot_vacant: 40%
+lap_ltv_special: 50%
+lap_min_loan: 1000000
+lap_max_tenure: 180 Months
+existing_obligation: All Obligation to be considered except getting closed in next 12 months
+
+---
+## LENDER POLICY
+Duration: 0ms
+
+ICICI — ICICI Bank Policy
+
+---
+## INFO
+Duration: 0ms
+
+Scheme method Salaried differs from selected case method Net Profit Method; evaluated for comparison.
+
+[PARSER] parseIntegerSafe for bureau_cutoff
+  Raw Type:        string
+  Raw Value:       "700"
+  Status:          OK
+  Normalized:      700
+  Note:            Legacy string parsing used
+
+---
+## BUREAU CHECK
+Duration: 0ms
+
+PASS — Effective CIBIL 810 >= Cutoff 700
+
+ICICI SALARIED POLICY-WEIGHTED INCOME SOURCE TRACE
+
+Lender Policy:
+  ICICI Bank Policy
+
+Gross Salary Monthly:
+  21200
+
+Salary Allowed %:
+  70%
+
+Considered Salary:
+  14839.XXXXXXXX9998
+
+Agriculture Source:
+  NONE
+
+Considered Agriculture:
+  0
+
+Rent Source:
+  NONE
+
+Considered Rent:
+  0
+
+Total Considered Income:
+  14839.XXXXXXXX9998
+
+---
+## STEP 1-2 — INCOME COMPOSITION
+Duration: 2ms
+
+Primary Income:       ₹14,840
+Rental (Bank):        ₹0
+Agri Income:          ₹0
+Other Income:         ₹0
+Total Eligible:       ₹14,840
+Breakdown:            [{"type":"Salary Income","raw_monthly":21200,"allowed_pct":70,"eligible_monthly":14839.XXXXXXXX9998,"source":"ESR salary snapshot","rule":"ICICI Salaried method: salary income considered at 70%; manual salary used only if OCR/API/bank salary is missing"}]
+
+[PARSER] parseDynamicFoir for lap_dbr_foir
+  Raw Type:        string
+  Raw Value:       "<75k -60%, >75k - 70%"
+  Status:          OK
+  Normalized:      0.6
+  Note:            Legacy slab string dynamically converted
+
+---
+## STEP 3 — FOIR RESOLUTION
+Duration: 0ms
+
+Raw FOIR Param:       "<75k -60%, >75k - 70%"
+FOIR Allowed %:       60.00%
+Skip FOIR Check:      false
+Conditional Flags:    None
+
+---
+## STEP 4 — NET OBLIGATIONS
+Duration: 1ms
+
+Obligation Rule:      "All Obligation to be considered except getting closed in next 12 months"
+Total Obligations:    0
+Excluded:             None
+Net Obligations EMI:  ₹0
+
+[PARSER] parseTenureSafe for lap_max_tenure
+  Raw Type:        string
+  Raw Value:       "180 Months"
+  Status:          OK
+  Normalized:      180
+  Note:            Legacy string parsing used
+
+---
+## STEP 5 — TENURE RESOLUTION
+Duration: 0ms
+
+Lender Max Tenure:    180 months
+Age-Based Limit:      No restriction
+Final Tenure Used:    180 months
+
+[PARSER] parsePercentSafe for lap_roi_min
+  Raw Type:        string
+  Raw Value:       "8.25%"
+  Status:          OK
+  Normalized:      0.0825
+  Note:            Legacy string parsing used
+
+[PARSER] parsePercentSafe for lap_roi_max
+  Raw Type:        string
+  Raw Value:       "8.5%"
+  Status:          OK
+  Normalized:      0.085
+  Note:            Legacy string parsing used
+
+---
+## STEP 6 — ROI RESOLUTION
+Duration: 0ms
+
+ROI Min:              8.25%
+ROI Max:              8.5%
+Underwriting ROI:     8.5% (roi_max preferred)
+
+STEP 7 — ELIGIBLE EMI CAPACITY:
+
+Formula:
+(FOIR% × Income) − Obligations
+
+Calculation:
+(60.0% × ₹14,840) − ₹0
+
+= ₹8,904
+
+STEP 8 — FOIR-BASED LOAN ELIGIBILITY:
+
+Formula:
+Reverse EMI: EMI, ROI, Tenure → Loan Amount
+
+Calculation:
+EMI=₹8,904 | ROI=8.5% | Tenure=180m
+
+= ₹9,04,198
+
+[PARSER] parsePercentSafe for lap_ltv_res_vacant
+  Raw Type:        string
+  Raw Value:       "70%"
+  Status:          OK
+  Normalized:      0.7
+  Note:            Legacy string parsing used
+
+---
+## STEP 9 — LTV EVALUATION
+Duration: 1ms
+
+Property Value:       ₹9,87,65,43,213
+Property Type:        Residential — House / Flat
+Occupancy:            Vacant
+LTV Param Key:        lap_ltv_res_vacant
+LTV %:                70%
+LTV Eligible Loan:    ₹6,91,35,80,249
+
+STEP 10 — FINAL ELIGIBILITY:
+
+Formula:
+MIN of valid candidates: [FOIR Eligibility, LTV Eligibility, Product Max Loan, Requested Loan, NWM Cap]
+
+Calculation:
+Candidates: [₹9,04,198, ₹6,91,35,80,249, No Product Cap, No Requested Cap, N/A Banking Credit Cap, No HDFC POS Deduction]
+
+= ₹9,04,198
+
+[FAILURE: MIN_LOAN_REJECT] Eligible ₹9,04,198 < Lender Min ₹10,00,000
+
+FOIR ACTUAL:
+
+Formula:
+(Existing Obligations + Proposed EMI) / Eligible Monthly Income
+
+Calculation:
+(₹0 + ₹8,904) / ₹14,840
+
+= 60.00%
+
+[FAILURE: INELIGIBLE] Maximum eligible loan ₹9,04,198 is below lender minimum ₹10,00,000
+
+
+====================================================
+LENDER: ICICI BANK
+SCHEME: NET PROFIT METHOD
+====================================================
+
+---
+## PARAMETER MAP
+Duration: 2ms
+
+bureau_name: CIBIL
+lap_max_loan: No Capping
+lap_roi_min: 8.25%
+lap_roi_max: 8.5%
+lap_min_loan: 1000000
+lap_ltv_ind_vacant: MANUAL_REVIEW_REQUIRED
+lap_pf_min: 0.50%
+lap_pf_max: 1%
+age_maturity_non_income: 75
+bureau_cutoff: 700
+lap_ltv_res_self: 70%
+lap_ltv_res_rented: 70%
+lap_ltv_res_vacant: 70%
+lap_ltv_com_self: 70%
+lap_ltv_com_rented: 70%
+lap_ltv_com_vacant: 70%
+lap_ltv_ind_self: 40%
+lap_ltv_ind_rented: 40%
+dbr_agri_itr: MANUAL_REVIEW_REQUIRED
+lap_ltv_plot_self: 40%
+age_maturity_income: MANUAL_REVIEW_REQUIRED
+elig_rental_bank: MANUAL_REVIEW_REQUIRED
+elig_rental_cash: MANUAL_REVIEW_REQUIRED
+elig_agri_itr: MANUAL_REVIEW_REQUIRED
+dbr_rental_bank: MANUAL_REVIEW_REQUIRED
+dbr_rental_cash: MANUAL_REVIEW_REQUIRED
+lap_ltv_mix_self: 70%
+lap_ltv_mix_rented: 70%
+lap_ltv_mix_vacant: 70%
+lap_ltv_plot_rented: 40%
+lap_ltv_plot_vacant: 40%
+lap_ltv_special: 50%
+lap_max_tenure: 180 Months
+lap_dbr_foir: Max 100% (Double whammy - 140%)
+npm_depreciation_fraction: 66.67%
+existing_obligation: All Obligation to be considered except getting closed in next 12 months
+
+---
+## LENDER POLICY
+Duration: 0ms
+
+ICICI — ICICI Bank Policy
+
+[PARSER] parseIntegerSafe for bureau_cutoff
+  Raw Type:        string
+  Raw Value:       "700"
+  Status:          OK
+  Normalized:      700
+  Note:            Legacy string parsing used
+
+---
+## BUREAU CHECK
+Duration: 0ms
+
+PASS — Effective CIBIL 810 >= Cutoff 700
+
+NET PROFIT METHOD (NPM) CALCULATION SOURCE TRACE
+
+PAT:
+  ₹14,37,483
+
+Depreciation:
+  ₹0
+
+Depreciation Fraction:
+  66.67%
+
+Depreciation Addback:
+  ₹0
+
+Finance Cost:
+  ₹0
+
+Remuneration:
+  ₹0
+
+Director Interest:
+  ₹0
+
+Monthly NPM Income:
+  ₹1,19,790.25
+
+---
+## STEP 1-2 — INCOME COMPOSITION
+Duration: 1ms
+
+Primary Income:       ₹1,19,790.25
+Rental (Bank):        ₹0
+Agri Income:          ₹0
+Other Income:         ₹0
+Total Eligible:       ₹1,19,790.25
+Breakdown:            []
+
+[PARSER] parseDynamicFoir for lap_dbr_foir
+  Raw Type:        string
+  Raw Value:       "Max 100% (Double whammy - 140%)"
+  Status:          OK
+  Normalized:      {"type":"conditional_foir","base_limit":100,"special_program":"double_wammy","special_limit":140,"requires_manual_underwriting":true}
+
+---
+## STEP 3 — FOIR RESOLUTION
+Duration: 0ms
+
+Raw FOIR Param:       "Max 100% (Double whammy - 140%)"
+FOIR Allowed %:       100.00%
+Skip FOIR Check:      false
+Conditional Flags:    {"type":"conditional_foir","base_limit":100,"special_program":"double_wammy","special_limit":140,"requires_manual_underwriting":true}
+
+---
+## STEP 4 — NET OBLIGATIONS
+Duration: 0ms
+
+Obligation Rule:      "All Obligation to be considered except getting closed in next 12 months"
+Total Obligations:    0
+Excluded:             None
+Net Obligations EMI:  ₹0
+
+[PARSER] parseTenureSafe for lap_max_tenure
+  Raw Type:        string
+  Raw Value:       "180 Months"
+  Status:          OK
+  Normalized:      180
+  Note:            Legacy string parsing used
+
+---
+## STEP 5 — TENURE RESOLUTION
+Duration: 0ms
+
+Lender Max Tenure:    180 months
+Age-Based Limit:      No restriction
+Final Tenure Used:    180 months
+
+[PARSER] parsePercentSafe for lap_roi_min
+  Raw Type:        string
+  Raw Value:       "8.25%"
+  Status:          OK
+  Normalized:      0.0825
+  Note:            Legacy string parsing used
+
+[PARSER] parsePercentSafe for lap_roi_max
+  Raw Type:        string
+  Raw Value:       "8.5%"
+  Status:          OK
+  Normalized:      0.085
+  Note:            Legacy string parsing used
+
+---
+## STEP 6 — ROI RESOLUTION
+Duration: 1ms
+
+ROI Min:              8.25%
+ROI Max:              8.5%
+Underwriting ROI:     8.5% (roi_max preferred)
+
+STEP 7 — ELIGIBLE EMI CAPACITY:
+
+Formula:
+(FOIR% × Income) − Obligations
+
+Calculation:
+(100.0% × ₹1,19,790.25) − ₹0
+
+= ₹1,19,790.25
+
+STEP 8 — FOIR-BASED LOAN ELIGIBILITY:
+
+Formula:
+Reverse EMI: EMI, ROI, Tenure → Loan Amount
+
+Calculation:
+EMI=₹1,19,790.25 | ROI=8.5% | Tenure=180m
+
+= ₹1,21,64,663
+
+[PARSER] parsePercentSafe for lap_ltv_res_vacant
+  Raw Type:        string
+  Raw Value:       "70%"
+  Status:          OK
+  Normalized:      0.7
+  Note:            Legacy string parsing used
+
+---
+## STEP 9 — LTV EVALUATION
+Duration: 0ms
+
+Property Value:       ₹9,87,65,43,213
+Property Type:        Residential — House / Flat
+Occupancy:            Vacant
+LTV Param Key:        lap_ltv_res_vacant
+LTV %:                70%
+LTV Eligible Loan:    ₹6,91,35,80,249
+
+STEP 10 — FINAL ELIGIBILITY:
+
+Formula:
+MIN of valid candidates: [FOIR Eligibility, LTV Eligibility, Product Max Loan, Requested Loan, NWM Cap]
+
+Calculation:
+Candidates: [₹1,21,64,663, ₹6,91,35,80,249, No Product Cap, No Requested Cap, N/A Banking Credit Cap, No HDFC POS Deduction]
+
+= ₹1,21,64,663
+
+FOIR ACTUAL:
+
+Formula:
+(Existing Obligations + Proposed EMI) / Eligible Monthly Income
+
+Calculation:
+(₹0 + ₹1,19,790) / ₹1,19,790.25
+
+= 100.00%
+
+[SUCCESS] ELIGIBLE — ₹1,21,64,663 @ 8.5% ROI for 180m
+
+
+====================================================
+LENDER: ICICI BANK
+SCHEME: BANKING
+====================================================
+
+---
+## PARAMETER MAP
+Duration: 1ms
+
+bureau_name: CIBIL
+lap_ltv_ind_vacant: MANUAL_REVIEW_REQUIRED
+elig_rental_bank: MANUAL_REVIEW_REQUIRED
+elig_rental_cash: MANUAL_REVIEW_REQUIRED
+elig_agri_itr: MANUAL_REVIEW_REQUIRED
+dbr_rental_bank: MANUAL_REVIEW_REQUIRED
+dbr_rental_cash: MANUAL_REVIEW_REQUIRED
+dbr_agri_itr: MANUAL_REVIEW_REQUIRED
+lap_max_loan: No Capping
+lap_roi_min: 8.25%
+lap_roi_max: 8.5%
+lap_pf_min: 0.50%
+lap_pf_max: 1%
+age_maturity_non_income: 75
+bureau_cutoff: 700
+lap_ltv_res_self: 70%
+lap_ltv_res_rented: 70%
+lap_ltv_res_vacant: 70%
+lap_ltv_com_self: 70%
+lap_ltv_com_rented: 70%
+lap_ltv_com_vacant: 70%
+lap_ltv_ind_self: 40%
+lap_ltv_ind_rented: 40%
+lap_ltv_mix_self: 70%
+lap_ltv_mix_rented: 70%
+lap_ltv_mix_vacant: 70%
+lap_ltv_plot_self: 40%
+lap_ltv_plot_rented: 40%
+lap_ltv_plot_vacant: 40%
+lap_ltv_special: 50%
+lap_min_loan: 1000000
+lap_max_tenure: 180 Months
+age_maturity_income: 75
+lap_dbr_foir: No DBR
+existing_obligation: Loan availed in last 12 months to be obligated
+
+---
+## LENDER POLICY
+Duration: 0ms
+
+ICICI — ICICI Bank Policy
+
+---
+## INFO
+Duration: 0ms
+
+Scheme method Banking differs from selected case method Net Profit Method; evaluated for comparison.
+
+[PARSER] parseIntegerSafe for bureau_cutoff
+  Raw Type:        string
+  Raw Value:       "700"
+  Status:          OK
+  Normalized:      700
+  Note:            Legacy string parsing used
+
+---
+## BUREAU CHECK
+Duration: 0ms
+
+PASS — Effective CIBIL 810 >= Cutoff 700
+
+BANKING POLICY SOURCE TRACE
+
+Lender Policy:
+  ICICI Bank Policy
+
+Selected Policy:
+  ABB_DIVISOR
+
+Bank Avg Balance / ABB:
+  281639.XXXXXX6667
+
+ABB Divisor:
+  3
+
+ABB Divisor Source Key:
+  POLICY_DEFAULT
+
+Loan Reference:
+  N/A
+
+Threshold:
+  N/A
+
+Formula:
+  Monthly Income Used = ABB / divisor
+
+Calculated Banking Income:
+  93879.XXXXXXX2224
+
+---
+## STEP 1-2 — INCOME COMPOSITION
+Duration: 0ms
+
+Primary Income:       ₹93,879.777
+Rental (Bank):        ₹0
+Agri Income:          ₹0
+Other Income:         ₹0
+Total Eligible:       ₹93,879.777
+Breakdown:            []
+
+[PARSER] parseDynamicFoir for lap_dbr_foir
+  Raw Type:        string
+  Raw Value:       "No DBR"
+  Status:          OK
+  Normalized:      {"type":"no_dbr","skip_foir_check":true}
+
+---
+## STEP 3 — FOIR RESOLUTION
+Duration: 0ms
+
+Raw FOIR Param:       "No DBR"
+FOIR Allowed %:       N/A
+Skip FOIR Check:      true
+Conditional Flags:    None
+
+---
+## STEP 4 — NET OBLIGATIONS
+Duration: 1ms
+
+Obligation Rule:      "Loan availed in last 12 months to be obligated"
+Total Obligations:    0
+Excluded:             None
+Net Obligations EMI:  ₹0
+
+[PARSER] parseTenureSafe for lap_max_tenure
+  Raw Type:        string
+  Raw Value:       "180 Months"
+  Status:          OK
+  Normalized:      180
+  Note:            Legacy string parsing used
+
+---
+## STEP 5 — TENURE RESOLUTION
+Duration: 0ms
+
+Lender Max Tenure:    180 months
+Age-Based Limit:      No restriction
+Final Tenure Used:    180 months
+
+[PARSER] parsePercentSafe for lap_roi_min
+  Raw Type:        string
+  Raw Value:       "8.25%"
+  Status:          OK
+  Normalized:      0.0825
+  Note:            Legacy string parsing used
+
+[PARSER] parsePercentSafe for lap_roi_max
+  Raw Type:        string
+  Raw Value:       "8.5%"
+  Status:          OK
+  Normalized:      0.085
+  Note:            Legacy string parsing used
+
+---
+## STEP 6 — ROI RESOLUTION
+Duration: 0ms
+
+ROI Min:              8.25%
+ROI Max:              8.5%
+Underwriting ROI:     8.5% (roi_max preferred)
+
+STEP 7 — ELIGIBLE EMI CAPACITY (No DBR):
+
+Formula:
+Income − Obligations
+
+Calculation:
+₹93,879.777 − ₹0
+
+= ₹93,879.777
+
+STEP 8 — FOIR-BASED LOAN ELIGIBILITY (No DBR):
+
+Formula:
+Reverse EMI: EMI, ROI, Max Tenure → Loan Amount
+
+Calculation:
+EMI=₹93,879.777 | ROI=8.5% | Max Tenure=180m
+
+= ₹95,33,463
+
+[PARSER] parsePercentSafe for lap_ltv_res_vacant
+  Raw Type:        string
+  Raw Value:       "70%"
+  Status:          OK
+  Normalized:      0.7
+  Note:            Legacy string parsing used
+
+---
+## STEP 9 — LTV EVALUATION
+Duration: 0ms
+
+Property Value:       ₹9,87,65,43,213
+Property Type:        Residential — House / Flat
+Occupancy:            Vacant
+LTV Param Key:        lap_ltv_res_vacant
+LTV %:                70%
+LTV Eligible Loan:    ₹6,91,35,80,249
+
+STEP 10 — FINAL ELIGIBILITY:
+
+Formula:
+MIN of valid candidates: [FOIR Eligibility, LTV Eligibility, Product Max Loan, Requested Loan, NWM Cap]
+
+Calculation:
+Candidates: [₹95,33,463, ₹6,91,35,80,249, No Product Cap, No Requested Cap, N/A Banking Credit Cap, No HDFC POS Deduction]
+
+= ₹95,33,463
+
+FOIR ACTUAL:
+
+Formula:
+(Existing Obligations + Proposed EMI) / Eligible Monthly Income
+
+Calculation:
+(₹0 + ₹93,880) / ₹93,879.777
+
+= 100.00%
+
+[SUCCESS] ELIGIBLE — ₹95,33,463 @ 8.5% ROI for 180m
+
+
+====================================================
+LENDER: ICICI BANK
+SCHEME: GST
+====================================================
+
+---
+## PARAMETER MAP
+Duration: 0ms
+
+bureau_name: CIBIL
+lap_ltv_ind_vacant: MANUAL_REVIEW_REQUIRED
+elig_rental_bank: MANUAL_REVIEW_REQUIRED
+elig_rental_cash: MANUAL_REVIEW_REQUIRED
+elig_agri_itr: MANUAL_REVIEW_REQUIRED
+dbr_rental_bank: MANUAL_REVIEW_REQUIRED
+dbr_rental_cash: MANUAL_REVIEW_REQUIRED
+dbr_agri_itr: MANUAL_REVIEW_REQUIRED
+lap_max_loan: No Capping
+lap_roi_min: 8.25%
+lap_roi_max: 8.5%
+lap_pf_min: 0.50%
+lap_pf_max: 1%
+age_maturity_non_income: 75
+bureau_cutoff: 700
+lap_ltv_res_self: 70%
+lap_ltv_res_rented: 70%
+lap_ltv_res_vacant: 70%
+lap_ltv_com_self: 70%
+lap_ltv_com_rented: 70%
+lap_ltv_com_vacant: 70%
+lap_ltv_ind_self: 40%
+lap_ltv_ind_rented: 40%
+lap_ltv_mix_self: 70%
+lap_ltv_mix_rented: 70%
+lap_ltv_mix_vacant: 70%
+lap_ltv_plot_self: 40%
+lap_ltv_plot_rented: 40%
+lap_ltv_plot_vacant: 40%
+lap_ltv_special: 50%
+lap_min_loan: 1000000
+lap_max_tenure: 180 Months
+age_maturity_income: 75
+lap_dbr_foir: Max 100% (Double whammy - 140%)
+existing_obligation: All Obligation to be considered except getting closed in next 12 months
+
+---
+## LENDER POLICY
+Duration: 1ms
+
+ICICI — ICICI Bank Policy
+
+---
+## INFO
+Duration: 0ms
+
+Scheme method GST differs from selected case method Net Profit Method; evaluated for comparison.
+
+[PARSER] parseIntegerSafe for bureau_cutoff
+  Raw Type:        string
+  Raw Value:       "700"
+  Status:          OK
+  Normalized:      700
+  Note:            Legacy string parsing used
+
+---
+## BUREAU CHECK
+Duration: 0ms
+
+PASS — Effective CIBIL 810 >= Cutoff 700
+
+GST SCHEME MARGIN RESOLUTION SOURCE TRACE
+
+Lender Policy:
+  ICICI Bank Policy
+
+Resolved Category:
+  Unknown/DB
+
+Final Margin Used:
+  N/A
+
+Margin Source:
+  MISSING — manual review
+
+Formula:
+  Monthly Income Used = GST Avg Monthly Sales × Industry Margin
+
+GST Avg Monthly Sales:
+  689188.3125
+
+---
+## STEP 1-2 — INCOME COMPOSITION
+Duration: 1ms
+
+Primary Income:       ₹0
+Rental (Bank):        ₹0
+Agri Income:          ₹0
+Other Income:         ₹0
+Total Eligible:       ₹0
+Breakdown:            []
+
+[FAILURE: INCOME_REJECT] Composed eligible income is zero or missing
+
+[PARSER] parseDynamicFoir for lap_dbr_foir
+  Raw Type:        string
+  Raw Value:       "Max 100% (Double whammy - 140%)"
+  Status:          OK
+  Normalized:      {"type":"conditional_foir","base_limit":100,"special_program":"double_wammy","special_limit":140,"requires_manual_underwriting":true}
+
+---
+## STEP 3 — FOIR RESOLUTION
+Duration: 0ms
+
+Raw FOIR Param:       "Max 100% (Double whammy - 140%)"
+FOIR Allowed %:       100.00%
+Skip FOIR Check:      false
+Conditional Flags:    {"type":"conditional_foir","base_limit":100,"special_program":"double_wammy","special_limit":140,"requires_manual_underwriting":true}
+
+---
+## STEP 4 — NET OBLIGATIONS
+Duration: 0ms
+
+Obligation Rule:      "All Obligation to be considered except getting closed in next 12 months"
+Total Obligations:    0
+Excluded:             None
+Net Obligations EMI:  ₹0
+
+[PARSER] parseTenureSafe for lap_max_tenure
+  Raw Type:        string
+  Raw Value:       "180 Months"
+  Status:          OK
+  Normalized:      180
+  Note:            Legacy string parsing used
+
+---
+## STEP 5 — TENURE RESOLUTION
+Duration: 0ms
+
+Lender Max Tenure:    180 months
+Age-Based Limit:      No restriction
+Final Tenure Used:    180 months
+
+[PARSER] parsePercentSafe for lap_roi_min
+  Raw Type:        string
+  Raw Value:       "8.25%"
+  Status:          OK
+  Normalized:      0.0825
+  Note:            Legacy string parsing used
+
+[PARSER] parsePercentSafe for lap_roi_max
+  Raw Type:        string
+  Raw Value:       "8.5%"
+  Status:          OK
+  Normalized:      0.085
+  Note:            Legacy string parsing used
+
+---
+## STEP 6 — ROI RESOLUTION
+Duration: 0ms
+
+ROI Min:              8.25%
+ROI Max:              8.5%
+Underwriting ROI:     8.5% (roi_max preferred)
+
+[WARNING] STEP 7 — ELIGIBLE EMI CAPACITY: Could not calculate (missing FOIR% or income)
+
+[WARNING] STEP 8 — FOIR-BASED LOAN: Could not calculate (zero EMI capacity, ROI or tenure)
+
+[PARSER] parsePercentSafe for lap_ltv_res_vacant
+  Raw Type:        string
+  Raw Value:       "70%"
+  Status:          OK
+  Normalized:      0.7
+  Note:            Legacy string parsing used
+
+---
+## STEP 9 — LTV EVALUATION
+Duration: 0ms
+
+Property Value:       ₹9,87,65,43,213
+Property Type:        Residential — House / Flat
+Occupancy:            Vacant
+LTV Param Key:        lap_ltv_res_vacant
+LTV %:                70%
+LTV Eligible Loan:    ₹6,91,35,80,249
+
+STEP 10 — FINAL ELIGIBILITY:
+
+Formula:
+MIN of valid candidates: [FOIR Eligibility, LTV Eligibility, Product Max Loan, Requested Loan, NWM Cap]
+
+Calculation:
+Candidates: [₹0, ₹6,91,35,80,249, No Product Cap, No Requested Cap, N/A Banking Credit Cap, No HDFC POS Deduction]
+
+= ₹0
+
+[FAILURE: MIN_LOAN_REJECT] Eligible ₹0 < Lender Min ₹10,00,000
+
+FOIR ACTUAL:
+
+Formula:
+(Existing Obligations + Proposed EMI) / Eligible Monthly Income
+
+Calculation:
+(₹0 + ₹0) / ₹0
+
+= 0.00%
+
+[FAILURE: INELIGIBLE] Composed eligible income is 0 or missing.
+
+[FAILURE: INELIGIBLE] Maximum eligible loan ₹0 is below lender minimum ₹10,00,000
+
+
+====================================================
+LENDER: ICICI BANK
+SCHEME: GRP
+====================================================
+
+---
+## PARAMETER MAP
+Duration: 1ms
+
+bureau_name: CIBIL
+elig_rental_bank: MANUAL_REVIEW_REQUIRED
+elig_rental_cash: MANUAL_REVIEW_REQUIRED
+elig_agri_itr: MANUAL_REVIEW_REQUIRED
+lap_ltv_ind_vacant: MANUAL_REVIEW_REQUIRED
+dbr_rental_bank: MANUAL_REVIEW_REQUIRED
+dbr_rental_cash: MANUAL_REVIEW_REQUIRED
+dbr_agri_itr: MANUAL_REVIEW_REQUIRED
+lap_max_loan: No Capping
+lap_roi_min: 8.25%
+lap_roi_max: 8.5%
+lap_pf_min: 0.50%
+lap_pf_max: 1%
+age_maturity_non_income: 75
+bureau_cutoff: 700
+lap_ltv_res_self: 70%
+lap_ltv_res_rented: 70%
+lap_ltv_res_vacant: 70%
+lap_ltv_com_self: 70%
+lap_ltv_com_rented: 70%
+lap_ltv_com_vacant: 70%
+lap_ltv_ind_self: 40%
+lap_ltv_ind_rented: 40%
+lap_ltv_mix_self: 70%
+lap_ltv_mix_rented: 70%
+lap_ltv_mix_vacant: 70%
+lap_ltv_plot_self: 40%
+lap_ltv_plot_rented: 40%
+lap_ltv_plot_vacant: 40%
+lap_ltv_special: 50%
+lap_min_loan: 1000000
+lap_max_tenure: 180 Months
+age_maturity_income: 75
+lap_dbr_foir: No DBR
+existing_obligation: No need to obligate any loans
+
+---
+## LENDER POLICY
+Duration: 0ms
+
+ICICI — ICICI Bank Policy
+
+---
+## INFO
+Duration: 0ms
+
+Scheme method GRP differs from selected case method Net Profit Method; evaluated for comparison.
+
+[PARSER] parseIntegerSafe for bureau_cutoff
+  Raw Type:        string
+  Raw Value:       "700"
+  Status:          OK
+  Normalized:      700
+  Note:            Legacy string parsing used
+
+---
+## BUREAU CHECK
+Duration: 0ms
+
+PASS — Effective CIBIL 810 >= Cutoff 700
+
+---
+## STEP 1-2 — INCOME COMPOSITION
+Duration: 0ms
+
+Primary Income:       ₹0
+Rental (Bank):        ₹0
+Agri Income:          ₹0
+Other Income:         ₹0
+Total Eligible:       ₹0
+Breakdown:            []
+
+[PARSER] parseDynamicFoir for lap_dbr_foir
+  Raw Type:        string
+  Raw Value:       "No DBR"
+  Status:          OK
+  Normalized:      {"type":"no_dbr","skip_foir_check":true}
+
+---
+## STEP 3 — FOIR RESOLUTION
+Duration: 0ms
+
+Raw FOIR Param:       "No DBR"
+FOIR Allowed %:       N/A
+Skip FOIR Check:      true
+Conditional Flags:    None
+
+---
+## STEP 4 — NET OBLIGATIONS
+Duration: 0ms
+
+Obligation Rule:      "No need to obligate any loans"
+Total Obligations:    0
+Excluded:             None
+Net Obligations EMI:  ₹0
+
+[PARSER] parseTenureSafe for lap_max_tenure
+  Raw Type:        string
+  Raw Value:       "180 Months"
+  Status:          OK
+  Normalized:      180
+  Note:            Legacy string parsing used
+
+---
+## STEP 5 — TENURE RESOLUTION
+Duration: 1ms
+
+Lender Max Tenure:    180 months
+Age-Based Limit:      No restriction
+Final Tenure Used:    180 months
+
+[PARSER] parsePercentSafe for lap_roi_min
+  Raw Type:        string
+  Raw Value:       "8.25%"
+  Status:          OK
+  Normalized:      0.0825
+  Note:            Legacy string parsing used
+
+[PARSER] parsePercentSafe for lap_roi_max
+  Raw Type:        string
+  Raw Value:       "8.5%"
+  Status:          OK
+  Normalized:      0.085
+  Note:            Legacy string parsing used
+
+---
+## STEP 6 — ROI RESOLUTION
+Duration: 0ms
+
+ROI Min:              8.25%
+ROI Max:              8.5%
+Underwriting ROI:     8.5% (roi_max preferred)
+
+[WARNING] STEP 7 — NO DBR EMI CAPACITY: Could not calculate because income is missing/zero
+
+STEP 8 — GRP DIRECT LOAN ELIGIBILITY:
+
+Formula:
+(Gross Receipts × Multiplier) − ICICI Exposure
+
+Calculation:
+(₹62,66,702 × 3) − ₹0
+
+= ₹15,66,675.5 | Multiplier Source: GRP_DEFAULT_NON_DOCTOR_MULTIPLIER
+
+---
+## GRP POLICY SOURCE
+Duration: 0ms
+
+Formula Used: Gross Receipts / 12 * GRP Multiplier - Exposure
+Gross Receipts: 62,66,702
+Monthly Gross Receipts: 5,22,225.167
+GRP Multiplier Used: 3
+Profession Bucket: DEFAULT
+Multiplier Source: GRP_DEFAULT_NON_DOCTOR_MULTIPLIER
+Exposure Deducted: 0
+
+[PARSER] parsePercentSafe for lap_ltv_res_vacant
+  Raw Type:        string
+  Raw Value:       "70%"
+  Status:          OK
+  Normalized:      0.7
+  Note:            Legacy string parsing used
+
+---
+## STEP 9 — LTV EVALUATION
+Duration: 0ms
+
+Property Value:       ₹9,87,65,43,213
+Property Type:        Residential — House / Flat
+Occupancy:            Vacant
+LTV Param Key:        lap_ltv_res_vacant
+LTV %:                70%
+LTV Eligible Loan:    ₹6,91,35,80,249
+
+STEP 10 — FINAL ELIGIBILITY:
+
+Formula:
+MIN of valid candidates: [FOIR Eligibility, LTV Eligibility, Product Max Loan, Requested Loan, NWM Cap]
+
+Calculation:
+Candidates: [₹15,66,675.5, ₹6,91,35,80,249, No Product Cap, No Requested Cap, N/A Banking Credit Cap, No HDFC POS Deduction]
+
+= ₹15,66,675.5
+
+FOIR ACTUAL:
+
+Formula:
+(Existing Obligations + Proposed EMI) / Eligible Monthly Income
+
+Calculation:
+(₹0 + ₹15,428) / ₹0
+
+= N/A — GRP direct method / No DBR
+
+[SUCCESS] ELIGIBLE — ₹15,66,675.5 @ 8.5% ROI for 180m
+
+
+====================================================
+LENDER: ICICI BANK
+SCHEME: LIP
+====================================================
+
+---
+## PARAMETER MAP
+Duration: 1ms
+
+dbr_rental_bank: 
+dbr_rental_cash: 
+
+---
+## LENDER POLICY
+Duration: 0ms
+
+ICICI — ICICI Bank Policy
+
+---
+## INFO
+Duration: 0ms
+
+Scheme method LIP differs from selected case method Net Profit Method; evaluated for comparison.
+
+[PARSER] parseIntegerSafe for bureau_cutoff
+  Raw Type:        null
+  Raw Value:       "null"
+  Status:          CONFIG_MISSING (no lender value configured)
+
+---
+## BUREAU CHECK
+Duration: 0ms
+
+No bureau cutoff configured — Effective CIBIL: 810
+
+---
+## MANUAL / POLICY METHOD
+Duration: 0ms
+
+LIP requires manual/deviation underwriting. Auto FOIR/DSCR calculation skipped; common policy/LTV parameters remain seeded for UI/audit.
+
+
+====================================================
+LENDER: ICICI BANK
+SCHEME: LOW LTV
+====================================================
+
+---
+## PARAMETER MAP
+Duration: 1ms
+
+---
+## LENDER POLICY
+Duration: 0ms
+
+ICICI — ICICI Bank Policy
+
+---
+## INFO
+Duration: 0ms
+
+Scheme method Low LTV differs from selected case method Net Profit Method; evaluated for comparison.
+
+[PARSER] parseIntegerSafe for bureau_cutoff
+  Raw Type:        null
+  Raw Value:       "null"
+  Status:          CONFIG_MISSING (no lender value configured)
+
+---
+## BUREAU CHECK
+Duration: 0ms
+
+No bureau cutoff configured — Effective CIBIL: 810
+
+---
+## MANUAL / POLICY METHOD
+Duration: 0ms
+
+Low LTV requires manual/deviation underwriting. Auto FOIR/DSCR calculation skipped; common policy/LTV parameters remain seeded for UI/audit.
+
+
+====================================================
+LENDER: ICICI BANK
+SCHEME: NET WORTH METHOD
+====================================================
+
+---
+## PARAMETER MAP
+Duration: 0ms
+
+bureau_name: CIBIL
+elig_agri_itr: MANUAL_REVIEW_REQUIRED
+dbr_rental_bank: MANUAL_REVIEW_REQUIRED
+dbr_rental_cash: MANUAL_REVIEW_REQUIRED
+dbr_agri_itr: MANUAL_REVIEW_REQUIRED
+lap_ltv_ind_vacant: MANUAL_REVIEW_REQUIRED
+elig_rental_bank: MANUAL_REVIEW_REQUIRED
+elig_rental_cash: MANUAL_REVIEW_REQUIRED
+lap_max_loan: No Capping
+lap_roi_min: 8.25%
+lap_roi_max: 8.5%
+lap_pf_min: 0.50%
+lap_pf_max: 1%
+age_maturity_non_income: 75
+bureau_cutoff: 700
+lap_ltv_res_self: 70%
+lap_ltv_res_rented: 70%
+lap_ltv_res_vacant: 70%
+lap_ltv_com_self: 70%
+lap_ltv_com_rented: 70%
+lap_ltv_com_vacant: 70%
+lap_ltv_ind_self: 40%
+lap_ltv_ind_rented: 40%
+lap_ltv_mix_self: 70%
+lap_ltv_mix_rented: 70%
+lap_ltv_mix_vacant: 70%
+lap_ltv_plot_self: 40%
+lap_ltv_plot_rented: 40%
+lap_ltv_plot_vacant: 40%
+lap_ltv_special: 50%
+lap_min_loan: 1000000
+lap_max_tenure: 180 Months
+age_maturity_income: 75
+lap_dbr_foir: Max 100% (Double whammy - 140%)
+existing_obligation: All Obligation to be considered except getting closed in next 12 months
+
+---
+## LENDER POLICY
+Duration: 0ms
+
+ICICI — ICICI Bank Policy
+
+---
+## INFO
+Duration: 0ms
+
+Scheme method Net Worth Method differs from selected case method Net Profit Method; evaluated for comparison.
+
+[PARSER] parseIntegerSafe for bureau_cutoff
+  Raw Type:        string
+  Raw Value:       "700"
+  Status:          OK
+  Normalized:      700
+  Note:            Legacy string parsing used
+
+---
+## BUREAU CHECK
+Duration: 0ms
+
+PASS — Effective CIBIL 810 >= Cutoff 700
+
+
+====================================================
+LENDER: HDFC BANK
+SCHEME: SALARIED
+====================================================
+
+---
+## PARAMETER MAP
+Duration: 2ms
+
+lender_policy_key: HDFC_LAP
+lap_max_loan: No Capping
+lap_roi_min: 8%
+lap_pf_max: 1%
+lap_min_loan: 1100000
+elig_rental_bank: Yes
+elig_agri_itr: NO
+dbr_rental_bank: 70%
+dbr_agri_itr: No
+lap_roi_max: 10.25%
+dbr_rental_cash: No
+age_maturity_income: 58
+lap_pf_min: 0.35%
+lap_max_tenure: 180 Months
+age_maturity_non_income: 75
+bureau_cutoff: 710
+bureau_name: CIBIL
+elig_rental_cash: NO
+hdfc_other_income_policy: Rental bank/ITR income only for NPM/DSCR at 100% capped to main business profit. Rental cash and agriculture not considered.
+hdfc_unsecured_pos_treatment: For HDFC unsecured loans, deduct POS from final eligible loan amount instead of EMI obligation for Salaried/NPM/GST/GRP; add EMI back to ABB for Banking.
+lap_ltv_res_self: 65%
+lap_ltv_res_rented: 65%
+lap_ltv_res_vacant: 65%
+lap_ltv_com_self: 65%
+lap_ltv_com_rented: 65%
+lap_ltv_com_vacant: 65%
+lap_ltv_ind_self: NOT_ALLOWED
+lap_ltv_ind_rented: NOT_ALLOWED
+lap_ltv_ind_vacant: NOT_ALLOWED
+lap_ltv_mix_self: 65%
+lap_ltv_mix_rented: 65%
+lap_ltv_mix_vacant: 65%
+lap_ltv_plot_self: NOT_ALLOWED
+lap_ltv_plot_rented: NOT_ALLOWED
+lap_ltv_plot_vacant: NOT_ALLOWED
+lap_ltv_special: NOT_ALLOWED
+existing_obligation: All obligations considered except loans closing in next 12 months. For HDFC unsecured loans in Salaried/NPM/GST/GRP, POS is deducted from final eligible loan amount instead of EMI obligation.
+lap_dbr_foir: 65%
+hdfc_salaried_salary_threshold: 100000
+hdfc_salaried_salary_pct_upto_1lakh: 50%
+hdfc_salaried_salary_pct_above_1lakh: 60%
+hdfc_salaried_bank_salary_cap_pct: 70%
+
+---
+## LENDER POLICY
+Duration: 0ms
+
+HDFC — HDFC Bank Policy
+
+---
+## INFO
+Duration: 0ms
+
+Scheme method Salaried differs from selected case method Net Profit Method; evaluated for comparison.
+
+[PARSER] parseIntegerSafe for bureau_cutoff
+  Raw Type:        string
+  Raw Value:       "710"
+  Status:          OK
+  Normalized:      710
+  Note:            Legacy string parsing used
+
+---
+## BUREAU CHECK
+Duration: 0ms
+
+PASS — Effective CIBIL 810 >= Cutoff 710
+
+HDFC SALARIED POLICY-WEIGHTED INCOME SOURCE TRACE
+
+Lender Policy:
+  HDFC Bank Policy
+
+Gross Salary Monthly:
+  21200
+
+Salary Allowed %:
+  50%
+
+Considered Salary:
+  10600
+
+Agriculture Source:
+  N/A
+
+Considered Agriculture:
+  0
+
+Rent Source:
+  N/A
+
+Considered Rent:
+  0
+
+Total Considered Income:
+  10600
+
+---
+## STEP 1-2 — INCOME COMPOSITION
+Duration: 1ms
+
+Primary Income:       ₹10,600
+Rental (Bank):        ₹0
+Agri Income:          ₹0
+Other Income:         ₹0
+Total Eligible:       ₹10,600
+Breakdown:            [{"type":"Salary Income","raw_monthly":21200,"allowed_pct":50,"eligible_monthly_before_cap":10600,"bank_net_salary_monthly":0,"bank_salary_cap":null,"eligible_monthly":10600,"rule":"HDFC Salaried: 50% up to ₹1L, 60% above ₹1L, capped by 70% of bank net salary when available. This is treated as EMI capacity basis and FOIR is not applied again."}]
+
+[PARSER] parseDynamicFoir for lap_dbr_foir
+  Raw Type:        string
+  Raw Value:       "65%"
+  Status:          OK
+  Normalized:      0.65
+  Note:            Legacy string parsing used
+
+---
+## STEP 3 — FOIR RESOLUTION
+Duration: 0ms
+
+Raw FOIR Param:       "65%"
+FOIR Allowed %:       65.00%
+Skip FOIR Check:      false
+Conditional Flags:    None
+
+---
+## STEP 4 — NET OBLIGATIONS
+Duration: 0ms
+
+Obligation Rule:      "All obligations considered except loans closing in next 12 months. For HDFC unsecured loans in Salaried/NPM/GST/GRP, POS is deducted from final eligible loan amount instead of EMI obligation."
+Total Obligations:    0
+Excluded:             None
+Net Obligations EMI:  ₹0
+
+[PARSER] parseTenureSafe for lap_max_tenure
+  Raw Type:        string
+  Raw Value:       "180 Months"
+  Status:          OK
+  Normalized:      180
+  Note:            Legacy string parsing used
+
+---
+## STEP 5 — TENURE RESOLUTION
+Duration: 0ms
+
+Lender Max Tenure:    180 months
+Age-Based Limit:      No restriction
+Final Tenure Used:    180 months
+
+[PARSER] parsePercentSafe for lap_roi_min
+  Raw Type:        string
+  Raw Value:       "8%"
+  Status:          OK
+  Normalized:      0.08
+  Note:            Legacy string parsing used
+
+[PARSER] parsePercentSafe for lap_roi_max
+  Raw Type:        string
+  Raw Value:       "10.25%"
+  Status:          OK
+  Normalized:      0.1025
+  Note:            Legacy string parsing used
+
+---
+## STEP 6 — ROI RESOLUTION
+Duration: 0ms
+
+ROI Min:              8%
+ROI Max:              10.25%
+Underwriting ROI:     10.25% (roi_max preferred)
+
+STEP 7 — ELIGIBLE EMI CAPACITY:
+
+Formula:
+(FOIR% × Income) − Obligations
+
+Calculation:
+(65.0% × ₹10,600) − ₹0
+
+= ₹6,890
+
+STEP 8 — FOIR-BASED LOAN ELIGIBILITY:
+
+Formula:
+Reverse EMI: EMI, ROI, Tenure → Loan Amount
+
+Calculation:
+EMI=₹6,890 | ROI=10.25% | Tenure=180m
+
+= ₹6,32,139
+
+[PARSER] parsePercentSafe for lap_ltv_res_vacant
+  Raw Type:        string
+  Raw Value:       "65%"
+  Status:          OK
+  Normalized:      0.65
+  Note:            Legacy string parsing used
+
+---
+## STEP 9 — LTV EVALUATION
+Duration: 0ms
+
+Property Value:       ₹9,87,65,43,213
+Property Type:        Residential — House / Flat
+Occupancy:            Vacant
+LTV Param Key:        lap_ltv_res_vacant
+LTV %:                65%
+LTV Eligible Loan:    ₹6,41,97,53,088
+
+STEP 10 — FINAL ELIGIBILITY:
+
+Formula:
+MIN of valid candidates: [FOIR Eligibility, LTV Eligibility, Product Max Loan, Requested Loan, NWM Cap]
+
+Calculation:
+Candidates: [₹6,32,139, ₹6,41,97,53,088, No Product Cap, No Requested Cap, N/A Banking Credit Cap, No HDFC POS Deduction]
+
+= ₹6,32,139
+
+[FAILURE: MIN_LOAN_REJECT] Eligible ₹6,32,139 < Lender Min ₹11,00,000
+
+FOIR ACTUAL:
+
+Formula:
+(Existing Obligations + Proposed EMI) / Eligible Monthly Income
+
+Calculation:
+(₹0 + ₹6,890) / ₹10,600
+
+= 65.00%
+
+[FAILURE: INELIGIBLE] Maximum eligible loan ₹6,32,139 is below lender minimum ₹11,00,000
+
+
+====================================================
+LENDER: HDFC BANK
+SCHEME: NET PROFIT METHOD
+====================================================
+
+---
+## PARAMETER MAP
+Duration: 1ms
+
+elig_rental_bank: Yes
+elig_agri_itr: NO
+dbr_rental_bank: 70%
+dbr_rental_cash: No
+dbr_agri_itr: No
+lap_pf_max: 1%
+elig_rental_cash: NO
+lap_min_loan: 1100000
+lender_policy_key: HDFC_LAP
+lap_max_loan: No Capping
+lap_roi_min: 8%
+lap_roi_max: 10.25%
+lap_pf_min: 0.35%
+lap_max_tenure: 180 Months
+age_maturity_income: 65
+age_maturity_non_income: 75
+bureau_cutoff: 740
+bureau_name: CIBIL
+hdfc_other_income_policy: Rental bank/ITR income only for NPM/DSCR at 100% capped to main business profit. Rental cash and agriculture not considered.
+hdfc_unsecured_pos_treatment: For HDFC unsecured loans, deduct POS from final eligible loan amount instead of EMI obligation for Salaried/NPM/GST/GRP; add EMI back to ABB for Banking.
+lap_ltv_res_self: 65%
+lap_ltv_res_rented: 65%
+lap_ltv_res_vacant: 65%
+lap_ltv_com_self: 65%
+lap_ltv_com_rented: 65%
+lap_ltv_com_vacant: 65%
+lap_ltv_ind_self: 50%
+lap_ltv_ind_rented: 50%
+lap_ltv_ind_vacant: NOT_ALLOWED
+lap_ltv_mix_self: 65%
+lap_ltv_mix_rented: 65%
+lap_ltv_mix_vacant: 65%
+lap_ltv_plot_self: 30%
+lap_ltv_plot_rented: 30%
+lap_ltv_plot_vacant: 30%
+lap_ltv_special: 50%
+existing_obligation: All obligations considered except loans closing in next 12 months. For HDFC unsecured loans in Salaried/NPM/GST/GRP, POS is deducted from final eligible loan amount instead of EMI obligation.
+lap_dbr_foir: 65%
+npm_depreciation_fraction: 100%
+npm_growth_threshold: 100%
+npm_two_year_rule: IF_GROWTH_GT_100_USE_2_YEAR_AVERAGE_ELSE_LATEST_YEAR
+
+---
+## LENDER POLICY
+Duration: 0ms
+
+HDFC — HDFC Bank Policy
+
+[PARSER] parseIntegerSafe for bureau_cutoff
+  Raw Type:        string
+  Raw Value:       "740"
+  Status:          OK
+  Normalized:      740
+  Note:            Legacy string parsing used
+
+---
+## BUREAU CHECK
+Duration: 0ms
+
+PASS — Effective CIBIL 810 >= Cutoff 740
+
+HDFC NET PROFIT METHOD (NPM) CALCULATION SOURCE TRACE
+
+Latest Annual Income:
+  ₹14,37,483
+
+Previous Annual Income:
+  N/A
+
+Growth Rate:
+  N/A
+
+Growth Threshold:
+  100.00%
+
+Use 2Y Average:
+  false
+
+Depreciation Fraction:
+  100.00%
+
+Monthly NPM Income:
+  ₹1,19,790.25
+
+Rule:
+  HDFC LAP NPM: PAT + 100% depreciation + interest on loan + director remuneration; if growth > 100%, use 2-year average else latest year.
+
+HDFC MANUAL INCOME POLICY SOURCE TRACE
+
+Method:
+  Net Profit Method
+
+Primary Income:
+  119790.25
+
+Rental Bank Eligible:
+  0
+
+Rental Cash Eligible:
+  0
+
+Agriculture Eligible:
+  0
+
+Other Manual Eligible:
+  0
+
+Rule:
+  Only Rental Bank/ITR is allowed for NPM/DSCR and capped to 100% of main business profit; not counted for Salaried/Banking/GST/GRP.
+
+---
+## STEP 1-2 — INCOME COMPOSITION
+Duration: 1ms
+
+Primary Income:       ₹1,19,790.25
+Rental (Bank):        ₹0
+Agri Income:          ₹0
+Other Income:         ₹0
+Total Eligible:       ₹1,19,790.25
+Breakdown:            [{"type":"HDFC Primary Income","eligible_monthly":119790.25,"rule":"Method-specific HDFC primary income."},{"type":"Other Manual Income","raw_monthly":21200,"allowed_pct":0,"eligible_monthly":0,"rule":"HDFC LAP: other manual income is not auto-counted unless captured in the lender-specific ITR/GST/Banking source."}]
+
+[PARSER] parseDynamicFoir for lap_dbr_foir
+  Raw Type:        string
+  Raw Value:       "65%"
+  Status:          OK
+  Normalized:      0.65
+  Note:            Legacy string parsing used
+
+---
+## STEP 3 — FOIR RESOLUTION
+Duration: 1ms
+
+Raw FOIR Param:       "65%"
+FOIR Allowed %:       65.00%
+Skip FOIR Check:      false
+Conditional Flags:    None
+
+---
+## STEP 4 — NET OBLIGATIONS
+Duration: 0ms
+
+Obligation Rule:      "All obligations considered except loans closing in next 12 months. For HDFC unsecured loans in Salaried/NPM/GST/GRP, POS is deducted from final eligible loan amount instead of EMI obligation."
+Total Obligations:    0
+Excluded:             None
+Net Obligations EMI:  ₹0
+
+[PARSER] parseTenureSafe for lap_max_tenure
+  Raw Type:        string
+  Raw Value:       "180 Months"
+  Status:          OK
+  Normalized:      180
+  Note:            Legacy string parsing used
+
+---
+## STEP 5 — TENURE RESOLUTION
+Duration: 0ms
+
+Lender Max Tenure:    180 months
+Age-Based Limit:      No restriction
+Final Tenure Used:    180 months
+
+[PARSER] parsePercentSafe for lap_roi_min
+  Raw Type:        string
+  Raw Value:       "8%"
+  Status:          OK
+  Normalized:      0.08
+  Note:            Legacy string parsing used
+
+[PARSER] parsePercentSafe for lap_roi_max
+  Raw Type:        string
+  Raw Value:       "10.25%"
+  Status:          OK
+  Normalized:      0.1025
+  Note:            Legacy string parsing used
+
+---
+## STEP 6 — ROI RESOLUTION
+Duration: 0ms
+
+ROI Min:              8%
+ROI Max:              10.25%
+Underwriting ROI:     10.25% (roi_max preferred)
+
+STEP 7 — ELIGIBLE EMI CAPACITY:
+
+Formula:
+(FOIR% × Income) − Obligations
+
+Calculation:
+(65.0% × ₹1,19,790.25) − ₹0
+
+= ₹77,863.663
+
+STEP 8 — FOIR-BASED LOAN ELIGIBILITY:
+
+Formula:
+Reverse EMI: EMI, ROI, Tenure → Loan Amount
+
+Calculation:
+EMI=₹77,863.663 | ROI=10.25% | Tenure=180m
+
+= ₹71,43,777
+
+[PARSER] parsePercentSafe for lap_ltv_res_vacant
+  Raw Type:        string
+  Raw Value:       "65%"
+  Status:          OK
+  Normalized:      0.65
+  Note:            Legacy string parsing used
+
+---
+## STEP 9 — LTV EVALUATION
+Duration: 0ms
+
+Property Value:       ₹9,87,65,43,213
+Property Type:        Residential — House / Flat
+Occupancy:            Vacant
+LTV Param Key:        lap_ltv_res_vacant
+LTV %:                65%
+LTV Eligible Loan:    ₹6,41,97,53,088
+
+STEP 10 — FINAL ELIGIBILITY:
+
+Formula:
+MIN of valid candidates: [FOIR Eligibility, LTV Eligibility, Product Max Loan, Requested Loan, NWM Cap]
+
+Calculation:
+Candidates: [₹71,43,777, ₹6,41,97,53,088, No Product Cap, No Requested Cap, N/A Banking Credit Cap, No HDFC POS Deduction]
+
+= ₹71,43,777
+
+FOIR ACTUAL:
+
+Formula:
+(Existing Obligations + Proposed EMI) / Eligible Monthly Income
+
+Calculation:
+(₹0 + ₹77,864) / ₹1,19,790.25
+
+= 65.00%
+
+[SUCCESS] ELIGIBLE — ₹71,43,777 @ 10.25% ROI for 180m
+
+
+====================================================
+LENDER: HDFC BANK
+SCHEME: BANKING
+====================================================
+
+---
+## PARAMETER MAP
+Duration: 1ms
+
+elig_rental_bank: NO
+elig_rental_cash: NO
+elig_agri_itr: NO
+dbr_agri_itr: No
+dbr_rental_bank: No
+dbr_rental_cash: No
+lender_policy_key: HDFC_LAP
+lap_min_loan: 1100000
+lap_max_loan: XXXX0000
+lap_roi_min: 8%
+lap_roi_max: 10.25%
+lap_pf_min: 0.35%
+lap_pf_max: 1%
+lap_max_tenure: 120 Months
+age_maturity_income: 65
+age_maturity_non_income: 75
+bureau_cutoff: 740
+bureau_name: CIBIL
+hdfc_other_income_policy: Rental bank/ITR income only for NPM/DSCR at 100% capped to main business profit. Rental cash and agriculture not considered.
+hdfc_unsecured_pos_treatment: For HDFC unsecured loans, deduct POS from final eligible loan amount instead of EMI obligation for Salaried/NPM/GST/GRP; add EMI back to ABB for Banking.
+lap_ltv_res_self: 65%
+lap_ltv_res_rented: 65%
+lap_ltv_res_vacant: 65%
+lap_ltv_com_self: 65%
+lap_ltv_com_rented: 65%
+lap_ltv_com_vacant: 65%
+lap_ltv_ind_self: 50%
+lap_ltv_ind_rented: 50%
+lap_ltv_ind_vacant: NOT_ALLOWED
+lap_ltv_mix_self: 65%
+lap_ltv_mix_rented: 65%
+lap_ltv_mix_vacant: 65%
+lap_ltv_plot_self: 30%
+lap_ltv_plot_rented: 30%
+lap_ltv_plot_vacant: 30%
+lap_ltv_special: 50%
+existing_obligation: ADD_EMI_TO_ABB
+lap_dbr_foir: No DBR
+banking_abb_days: 5,15,25
+banking_abb_divisor_upto_75l: 3
+banking_abb_divisor_above_75l: 4
+banking_loan_switch_threshold: 7500000
+banking_business_credit_cap_multiplier: 1
+banking_obligation_treatment: ADD_EMI_TO_ABB
+
+---
+## LENDER POLICY
+Duration: 0ms
+
+HDFC — HDFC Bank Policy
+
+---
+## INFO
+Duration: 0ms
+
+Scheme method Banking differs from selected case method Net Profit Method; evaluated for comparison.
+
+[PARSER] parseIntegerSafe for bureau_cutoff
+  Raw Type:        string
+  Raw Value:       "740"
+  Status:          OK
+  Normalized:      740
+  Note:            Legacy string parsing used
+
+---
+## BUREAU CHECK
+Duration: 0ms
+
+PASS — Effective CIBIL 810 >= Cutoff 740
+
+BANKING POLICY SOURCE TRACE
+
+Lender Policy:
+  HDFC Bank Policy
+
+Selected Policy:
+  ABB_DIVISOR_UPTO_THRESHOLD
+
+Bank Avg Balance / ABB:
+  281639.XXXXXX6667
+
+ABB Divisor:
+  3
+
+ABB Divisor Source Key:
+  banking_abb_divisor_upto_75l
+
+Loan Reference:
+  0
+
+Threshold:
+  7500000
+
+Formula:
+  Monthly Income Used = ABB / divisor
+
+Calculated Banking Income:
+  93879.XXXXXXX2224
+
+HDFC MANUAL INCOME POLICY SOURCE TRACE
+
+Method:
+  Banking
+
+Primary Income:
+  93879.XXXXXXX2224
+
+Rental Bank Eligible:
+  0
+
+Rental Cash Eligible:
+  0
+
+Agriculture Eligible:
+  0
+
+Other Manual Eligible:
+  0
+
+Rule:
+  Only Rental Bank/ITR is allowed for NPM/DSCR and capped to 100% of main business profit; not counted for Salaried/Banking/GST/GRP.
+
+---
+## STEP 1-2 — INCOME COMPOSITION
+Duration: 0ms
+
+Primary Income:       ₹93,879.777
+Rental (Bank):        ₹0
+Agri Income:          ₹0
+Other Income:         ₹0
+Total Eligible:       ₹93,879.777
+Breakdown:            [{"type":"HDFC Primary Income","eligible_monthly":93879.XXXXXXX2224,"rule":"Method-specific HDFC primary income."},{"type":"Other Manual Income","raw_monthly":21200,"allowed_pct":0,"eligible_monthly":0,"rule":"HDFC LAP: other manual income is not auto-counted unless captured in the lender-specific ITR/GST/Banking source."}]
+
+[PARSER] parseDynamicFoir for lap_dbr_foir
+  Raw Type:        string
+  Raw Value:       "No DBR"
+  Status:          OK
+  Normalized:      {"type":"no_dbr","skip_foir_check":true}
+
+---
+## STEP 3 — FOIR RESOLUTION
+Duration: 0ms
+
+Raw FOIR Param:       "No DBR"
+FOIR Allowed %:       N/A
+Skip FOIR Check:      true
+Conditional Flags:    None
+
+---
+## STEP 4 — NET OBLIGATIONS
+Duration: 0ms
+
+Obligation Rule:      "ADD_EMI_TO_ABB"
+Total Obligations:    0
+Excluded:             None
+Net Obligations EMI:  ₹0
+
+STEP 4B — HDFC BANKING OBLIGATION ADD-BACK:
+
+Formula:
+(ABB + eligible EMI obligations) / divisor; obligations not deducted again
+
+Calculation:
+(₹2,81,639.332 + ₹0) / 3
+
+= ₹93,879.777
+
+[PARSER] parseTenureSafe for lap_max_tenure
+  Raw Type:        string
+  Raw Value:       "120 Months"
+  Status:          OK
+  Normalized:      120
+  Note:            Legacy string parsing used
+
+---
+## STEP 5 — TENURE RESOLUTION
+Duration: 1ms
+
+Lender Max Tenure:    120 months
+Age-Based Limit:      No restriction
+Final Tenure Used:    120 months
+
+[PARSER] parsePercentSafe for lap_roi_min
+  Raw Type:        string
+  Raw Value:       "8%"
+  Status:          OK
+  Normalized:      0.08
+  Note:            Legacy string parsing used
+
+[PARSER] parsePercentSafe for lap_roi_max
+  Raw Type:        string
+  Raw Value:       "10.25%"
+  Status:          OK
+  Normalized:      0.1025
+  Note:            Legacy string parsing used
+
+---
+## STEP 6 — ROI RESOLUTION
+Duration: 0ms
+
+ROI Min:              8%
+ROI Max:              10.25%
+Underwriting ROI:     10.25% (roi_max preferred)
+
+STEP 7 — ELIGIBLE EMI CAPACITY (No DBR):
+
+Formula:
+Income − Obligations
+
+Calculation:
+₹93,879.777 − ₹0
+
+= ₹93,879.777
+
+STEP 8 — FOIR-BASED LOAN ELIGIBILITY (No DBR):
+
+Formula:
+Reverse EMI: EMI, ROI, Max Tenure → Loan Amount
+
+Calculation:
+EMI=₹93,879.777 | ROI=10.25% | Max Tenure=120m
+
+= ₹70,30,139
+
+[PARSER] parsePercentSafe for lap_ltv_res_vacant
+  Raw Type:        string
+  Raw Value:       "65%"
+  Status:          OK
+  Normalized:      0.65
+  Note:            Legacy string parsing used
+
+---
+## STEP 9 — LTV EVALUATION
+Duration: 0ms
+
+Property Value:       ₹9,87,65,43,213
+Property Type:        Residential — House / Flat
+Occupancy:            Vacant
+LTV Param Key:        lap_ltv_res_vacant
+LTV %:                65%
+LTV Eligible Loan:    ₹6,41,97,53,088
+
+STEP 9C — HDFC BANKING BUSINESS CREDIT CAP:
+
+Formula:
+Final banking eligibility cannot exceed 1× business credit of last 12 months
+
+Calculation:
+Business Credit Cap = ₹1,35,02,621
+
+= ₹1,35,02,621
+
+STEP 10 — FINAL ELIGIBILITY:
+
+Formula:
+MIN of valid candidates: [FOIR Eligibility, LTV Eligibility, Product Max Loan, Requested Loan, NWM Cap]
+
+Calculation:
+Candidates: [₹70,30,139, ₹6,41,97,53,088, ₹5,00,00,000, No Requested Cap, ₹1,35,02,621 HDFC Banking Credit Cap, No HDFC POS Deduction]
+
+= ₹70,30,139
+
+FOIR ACTUAL:
+
+Formula:
+(Existing Obligations + Proposed EMI) / Eligible Monthly Income
+
+Calculation:
+(₹0 + ₹93,880) / ₹93,879.777
+
+= 100.00%
+
+[SUCCESS] ELIGIBLE — ₹70,30,139 @ 10.25% ROI for 120m
+
+
+====================================================
+LENDER: HDFC BANK
+SCHEME: GST
+====================================================
+
+---
+## PARAMETER MAP
+Duration: 1ms
+
+elig_rental_bank: NO
+elig_rental_cash: NO
+dbr_rental_bank: No
+dbr_agri_itr: No
+elig_agri_itr: NO
+dbr_rental_cash: No
+lender_policy_key: HDFC_LAP
+lap_min_loan: 1100000
+lap_max_loan: XXXX0000
+lap_roi_min: 8%
+lap_roi_max: 10.25%
+lap_pf_min: 0.35%
+lap_pf_max: 1%
+lap_max_tenure: 120 Months
+age_maturity_income: 65
+age_maturity_non_income: 75
+bureau_cutoff: 740
+bureau_name: CIBIL
+hdfc_other_income_policy: Rental bank/ITR income only for NPM/DSCR at 100% capped to main business profit. Rental cash and agriculture not considered.
+hdfc_unsecured_pos_treatment: For HDFC unsecured loans, deduct POS from final eligible loan amount instead of EMI obligation for Salaried/NPM/GST/GRP; add EMI back to ABB for Banking.
+lap_ltv_res_self: 65%
+lap_ltv_res_rented: 65%
+lap_ltv_res_vacant: 65%
+lap_ltv_com_self: 65%
+lap_ltv_com_rented: 65%
+lap_ltv_com_vacant: 65%
+lap_ltv_ind_self: 50%
+lap_ltv_ind_rented: 50%
+lap_ltv_ind_vacant: NOT_ALLOWED
+lap_ltv_mix_self: 65%
+lap_ltv_mix_rented: 65%
+lap_ltv_mix_vacant: 65%
+lap_ltv_plot_self: 30%
+lap_ltv_plot_rented: 30%
+lap_ltv_plot_vacant: 30%
+lap_ltv_special: 50%
+existing_obligation: All obligations considered except loans closing in next 12 months. For HDFC unsecured loans in Salaried/NPM/GST/GRP, POS is deducted from final eligible loan amount instead of EMI obligation.
+lap_dbr_foir: 65%
+gst_margin_manufacturing: 8%
+gst_margin_factory: 8%
+gst_margin_wholesale: 9%
+gst_margin_retail: 9%
+gst_margin_service: 10%
+
+---
+## LENDER POLICY
+Duration: 1ms
+
+HDFC — HDFC Bank Policy
+
+---
+## INFO
+Duration: 0ms
+
+Scheme method GST differs from selected case method Net Profit Method; evaluated for comparison.
+
+[PARSER] parseIntegerSafe for bureau_cutoff
+  Raw Type:        string
+  Raw Value:       "740"
+  Status:          OK
+  Normalized:      740
+  Note:            Legacy string parsing used
+
+---
+## BUREAU CHECK
+Duration: 0ms
+
+PASS — Effective CIBIL 810 >= Cutoff 740
+
+GST SCHEME MARGIN RESOLUTION SOURCE TRACE
+
+Lender Policy:
+  HDFC Bank Policy
+
+Resolved Category:
+  Unknown/DB
+
+Final Margin Used:
+  N/A
+
+Margin Source:
+  MISSING — manual review
+
+Formula:
+  Monthly Income Used = GST Avg Monthly Sales × Industry Margin
+
+GST Avg Monthly Sales:
+  689188.3125
+
+HDFC MANUAL INCOME POLICY SOURCE TRACE
+
+Method:
+  GST
+
+Primary Income:
+  0
+
+Rental Bank Eligible:
+  0
+
+Rental Cash Eligible:
+  0
+
+Agriculture Eligible:
+  0
+
+Other Manual Eligible:
+  0
+
+Rule:
+  Only Rental Bank/ITR is allowed for NPM/DSCR and capped to 100% of main business profit; not counted for Salaried/Banking/GST/GRP.
+
+---
+## STEP 1-2 — INCOME COMPOSITION
+Duration: 0ms
+
+Primary Income:       ₹0
+Rental (Bank):        ₹0
+Agri Income:          ₹0
+Other Income:         ₹0
+Total Eligible:       ₹0
+Breakdown:            [{"type":"HDFC Primary Income","eligible_monthly":0,"rule":"Method-specific HDFC primary income."},{"type":"Other Manual Income","raw_monthly":21200,"allowed_pct":0,"eligible_monthly":0,"rule":"HDFC LAP: other manual income is not auto-counted unless captured in the lender-specific ITR/GST/Banking source."}]
+
+[FAILURE: INCOME_REJECT] Composed eligible income is zero or missing
+
+[PARSER] parseDynamicFoir for lap_dbr_foir
+  Raw Type:        string
+  Raw Value:       "65%"
+  Status:          OK
+  Normalized:      0.65
+  Note:            Legacy string parsing used
+
+---
+## STEP 3 — FOIR RESOLUTION
+Duration: 0ms
+
+Raw FOIR Param:       "65%"
+FOIR Allowed %:       65.00%
+Skip FOIR Check:      false
+Conditional Flags:    None
+
+---
+## STEP 4 — NET OBLIGATIONS
+Duration: 0ms
+
+Obligation Rule:      "All obligations considered except loans closing in next 12 months. For HDFC unsecured loans in Salaried/NPM/GST/GRP, POS is deducted from final eligible loan amount instead of EMI obligation."
+Total Obligations:    0
+Excluded:             None
+Net Obligations EMI:  ₹0
+
+[PARSER] parseTenureSafe for lap_max_tenure
+  Raw Type:        string
+  Raw Value:       "120 Months"
+  Status:          OK
+  Normalized:      120
+  Note:            Legacy string parsing used
+
+---
+## STEP 5 — TENURE RESOLUTION
+Duration: 0ms
+
+Lender Max Tenure:    120 months
+Age-Based Limit:      No restriction
+Final Tenure Used:    120 months
+
+[PARSER] parsePercentSafe for lap_roi_min
+  Raw Type:        string
+  Raw Value:       "8%"
+  Status:          OK
+  Normalized:      0.08
+  Note:            Legacy string parsing used
+
+[PARSER] parsePercentSafe for lap_roi_max
+  Raw Type:        string
+  Raw Value:       "10.25%"
+  Status:          OK
+  Normalized:      0.1025
+  Note:            Legacy string parsing used
+
+---
+## STEP 6 — ROI RESOLUTION
+Duration: 0ms
+
+ROI Min:              8%
+ROI Max:              10.25%
+Underwriting ROI:     10.25% (roi_max preferred)
+
+[WARNING] STEP 7 — ELIGIBLE EMI CAPACITY: Could not calculate (missing FOIR% or income)
+
+[WARNING] STEP 8 — FOIR-BASED LOAN: Could not calculate (zero EMI capacity, ROI or tenure)
+
+[PARSER] parsePercentSafe for lap_ltv_res_vacant
+  Raw Type:        string
+  Raw Value:       "65%"
+  Status:          OK
+  Normalized:      0.65
+  Note:            Legacy string parsing used
+
+---
+## STEP 9 — LTV EVALUATION
+Duration: 0ms
+
+Property Value:       ₹9,87,65,43,213
+Property Type:        Residential — House / Flat
+Occupancy:            Vacant
+LTV Param Key:        lap_ltv_res_vacant
+LTV %:                65%
+LTV Eligible Loan:    ₹6,41,97,53,088
+
+STEP 10 — FINAL ELIGIBILITY:
+
+Formula:
+MIN of valid candidates: [FOIR Eligibility, LTV Eligibility, Product Max Loan, Requested Loan, NWM Cap]
+
+Calculation:
+Candidates: [₹0, ₹6,41,97,53,088, ₹5,00,00,000, No Requested Cap, N/A Banking Credit Cap, No HDFC POS Deduction]
+
+= ₹0
+
+[FAILURE: MIN_LOAN_REJECT] Eligible ₹0 < Lender Min ₹11,00,000
+
+FOIR ACTUAL:
+
+Formula:
+(Existing Obligations + Proposed EMI) / Eligible Monthly Income
+
+Calculation:
+(₹0 + ₹0) / ₹0
+
+= 0.00%
+
+[FAILURE: INELIGIBLE] Composed eligible income is 0 or missing.
+
+[FAILURE: INELIGIBLE] Maximum eligible loan ₹0 is below lender minimum ₹11,00,000
+
+
+====================================================
+LENDER: HDFC BANK
+SCHEME: GRP
+====================================================
+
+---
+## PARAMETER MAP
+Duration: 1ms
+
+elig_rental_bank: NO
+elig_agri_itr: NO
+dbr_agri_itr: No
+elig_rental_cash: NO
+dbr_rental_bank: No
+dbr_rental_cash: No
+lender_policy_key: HDFC_LAP
+lap_min_loan: 1100000
+lap_max_loan: XXXX0000
+lap_roi_min: 8%
+lap_roi_max: 10.25%
+lap_pf_min: 0.35%
+lap_pf_max: 1%
+lap_max_tenure: 120 Months
+age_maturity_income: 65
+age_maturity_non_income: 75
+bureau_cutoff: 740
+bureau_name: CIBIL
+hdfc_other_income_policy: Rental bank/ITR income only for NPM/DSCR at 100% capped to main business profit. Rental cash and agriculture not considered.
+hdfc_unsecured_pos_treatment: For HDFC unsecured loans, deduct POS from final eligible loan amount instead of EMI obligation for Salaried/NPM/GST/GRP; add EMI back to ABB for Banking.
+lap_ltv_res_self: 65%
+lap_ltv_res_rented: 65%
+lap_ltv_res_vacant: 65%
+lap_ltv_com_self: 65%
+lap_ltv_com_rented: 65%
+lap_ltv_com_vacant: 65%
+lap_ltv_ind_self: 50%
+lap_ltv_ind_rented: 50%
+lap_ltv_ind_vacant: NOT_ALLOWED
+lap_ltv_mix_self: 65%
+lap_ltv_mix_rented: 65%
+lap_ltv_mix_vacant: 65%
+lap_ltv_plot_self: 30%
+lap_ltv_plot_rented: 30%
+lap_ltv_plot_vacant: 30%
+lap_ltv_special: 50%
+existing_obligation: All obligations considered except loans closing in next 12 months. For HDFC unsecured loans in Salaried/NPM/GST/GRP, POS is deducted from final eligible loan amount instead of EMI obligation.
+lap_dbr_foir: No DBR
+grp_doctor_multiplier: 4
+grp_other_professional_multiplier: 3
+grp_exposure_field: hdfc_exposure
+hdfc_exposure_field: hdfc_exposure
+
+---
+## LENDER POLICY
+Duration: 0ms
+
+HDFC — HDFC Bank Policy
+
+---
+## INFO
+Duration: 0ms
+
+Scheme method GRP differs from selected case method Net Profit Method; evaluated for comparison.
+
+[PARSER] parseIntegerSafe for bureau_cutoff
+  Raw Type:        string
+  Raw Value:       "740"
+  Status:          OK
+  Normalized:      740
+  Note:            Legacy string parsing used
+
+---
+## BUREAU CHECK
+Duration: 0ms
+
+PASS — Effective CIBIL 810 >= Cutoff 740
+
+HDFC MANUAL INCOME POLICY SOURCE TRACE
+
+Method:
+  GRP
+
+Primary Income:
+  0
+
+Rental Bank Eligible:
+  0
+
+Rental Cash Eligible:
+  0
+
+Agriculture Eligible:
+  0
+
+Other Manual Eligible:
+  0
+
+Rule:
+  Only Rental Bank/ITR is allowed for NPM/DSCR and capped to 100% of main business profit; not counted for Salaried/Banking/GST/GRP.
+
+---
+## STEP 1-2 — INCOME COMPOSITION
+Duration: 1ms
+
+Primary Income:       ₹0
+Rental (Bank):        ₹0
+Agri Income:          ₹0
+Other Income:         ₹0
+Total Eligible:       ₹0
+Breakdown:            [{"type":"HDFC Primary Income","eligible_monthly":0,"rule":"Method-specific HDFC primary income."},{"type":"Other Manual Income","raw_monthly":21200,"allowed_pct":0,"eligible_monthly":0,"rule":"HDFC LAP: other manual income is not auto-counted unless captured in the lender-specific ITR/GST/Banking source."}]
+
+[PARSER] parseDynamicFoir for lap_dbr_foir
+  Raw Type:        string
+  Raw Value:       "No DBR"
+  Status:          OK
+  Normalized:      {"type":"no_dbr","skip_foir_check":true}
+
+---
+## STEP 3 — FOIR RESOLUTION
+Duration: 0ms
+
+Raw FOIR Param:       "No DBR"
+FOIR Allowed %:       N/A
+Skip FOIR Check:      true
+Conditional Flags:    None
+
+---
+## STEP 4 — NET OBLIGATIONS
+Duration: 0ms
+
+Obligation Rule:      "All obligations considered except loans closing in next 12 months. For HDFC unsecured loans in Salaried/NPM/GST/GRP, POS is deducted from final eligible loan amount instead of EMI obligation."
+Total Obligations:    0
+Excluded:             None
+Net Obligations EMI:  ₹0
+
+[PARSER] parseTenureSafe for lap_max_tenure
+  Raw Type:        string
+  Raw Value:       "120 Months"
+  Status:          OK
+  Normalized:      120
+  Note:            Legacy string parsing used
+
+---
+## STEP 5 — TENURE RESOLUTION
+Duration: 0ms
+
+Lender Max Tenure:    120 months
+Age-Based Limit:      No restriction
+Final Tenure Used:    120 months
+
+[PARSER] parsePercentSafe for lap_roi_min
+  Raw Type:        string
+  Raw Value:       "8%"
+  Status:          OK
+  Normalized:      0.08
+  Note:            Legacy string parsing used
+
+[PARSER] parsePercentSafe for lap_roi_max
+  Raw Type:        string
+  Raw Value:       "10.25%"
+  Status:          OK
+  Normalized:      0.1025
+  Note:            Legacy string parsing used
+
+---
+## STEP 6 — ROI RESOLUTION
+Duration: 0ms
+
+ROI Min:              8%
+ROI Max:              10.25%
+Underwriting ROI:     10.25% (roi_max preferred)
+
+[WARNING] STEP 7 — NO DBR EMI CAPACITY: Could not calculate because income is missing/zero
+
+STEP 8 — GRP DIRECT LOAN ELIGIBILITY:
+
+Formula:
+(Gross Receipts × Multiplier) − HDFC Exposure
+
+Calculation:
+(₹62,66,702 × 3) − ₹0
+
+= ₹15,66,675.5 | Multiplier Source: GRP_DEFAULT_NON_DOCTOR_MULTIPLIER
+
+---
+## GRP POLICY SOURCE
+Duration: 0ms
+
+Formula Used: Gross Receipts / 12 * GRP Multiplier - Exposure
+Gross Receipts: 62,66,702
+Monthly Gross Receipts: 5,22,225.167
+GRP Multiplier Used: 3
+Profession Bucket: DEFAULT
+Multiplier Source: GRP_DEFAULT_NON_DOCTOR_MULTIPLIER
+Exposure Deducted: 0
+
+[PARSER] parsePercentSafe for lap_ltv_res_vacant
+  Raw Type:        string
+  Raw Value:       "65%"
+  Status:          OK
+  Normalized:      0.65
+  Note:            Legacy string parsing used
+
+---
+## STEP 9 — LTV EVALUATION
+Duration: 0ms
+
+Property Value:       ₹9,87,65,43,213
+Property Type:        Residential — House / Flat
+Occupancy:            Vacant
+LTV Param Key:        lap_ltv_res_vacant
+LTV %:                65%
+LTV Eligible Loan:    ₹6,41,97,53,088
+
+STEP 10 — FINAL ELIGIBILITY:
+
+Formula:
+MIN of valid candidates: [FOIR Eligibility, LTV Eligibility, Product Max Loan, Requested Loan, NWM Cap]
+
+Calculation:
+Candidates: [₹15,66,675.5, ₹6,41,97,53,088, ₹5,00,00,000, No Requested Cap, N/A Banking Credit Cap, No HDFC POS Deduction]
+
+= ₹15,66,675.5
+
+FOIR ACTUAL:
+
+Formula:
+(Existing Obligations + Proposed EMI) / Eligible Monthly Income
+
+Calculation:
+(₹0 + ₹20,921) / ₹0
+
+= N/A — GRP direct method / No DBR
+
+[SUCCESS] ELIGIBLE — ₹15,66,675.5 @ 10.25% ROI for 120m
+
+
+====================================================
+LENDER: HDFC BANK
+SCHEME: DSCR
+====================================================
+
+---
+## PARAMETER MAP
+Duration: 1ms
+
+lender_policy_key: HDFC_LAP
+lap_min_loan: XXXX0000
+lap_max_loan: No Capping
+lap_roi_min: 8%
+lap_roi_max: 10.25%
+lap_pf_min: 0.35%
+lap_pf_max: 1%
+lap_max_tenure: 180 Months
+age_maturity_income: 65
+age_maturity_non_income: 75
+bureau_cutoff: 740
+bureau_name: CIBIL
+hdfc_other_income_policy: Rental bank/ITR income only for NPM/DSCR at 100% capped to main business profit. Rental cash and agriculture not considered.
+hdfc_unsecured_pos_treatment: For HDFC unsecured loans, deduct POS from final eligible loan amount instead of EMI obligation for Salaried/NPM/GST/GRP; add EMI back to ABB for Banking.
+lap_ltv_res_self: 65%
+lap_ltv_res_rented: 65%
+lap_ltv_res_vacant: 65%
+lap_ltv_com_self: 65%
+lap_ltv_com_rented: 65%
+lap_ltv_com_vacant: 65%
+lap_ltv_ind_self: 50%
+lap_ltv_ind_rented: 50%
+lap_ltv_ind_vacant: NOT_ALLOWED
+lap_ltv_mix_self: 65%
+lap_ltv_mix_rented: 65%
+lap_ltv_mix_vacant: 65%
+lap_ltv_plot_self: 30%
+lap_ltv_plot_rented: 30%
+lap_ltv_plot_vacant: 30%
+lap_ltv_special: 50%
+existing_obligation: All obligations considered except loans closing in next 12 months. For HDFC unsecured loans in Salaried/NPM/GST/GRP, POS is deducted from final eligible loan amount instead of EMI obligation.
+lap_dbr_foir: No DBR
+dscr_min_ratio: 1.25
+dscr_obligation_multiplier: 12
+dscr_calculation_rule: ANNUAL_INCOME_DIVIDED_BY_ANNUAL_OBLIGATION_PLUS_PROPOSED_ANNUAL_EMI
+dscr_income_source_rule: USE_DIRECT_ANNUAL_INCOME_OR_ITR_NPM_ANNUAL_INCOME_FALLBACK
+elig_rental_bank: Yes
+elig_rental_cash: NO
+elig_agri_itr: NO
+dbr_rental_bank: 100%
+dbr_rental_cash: No
+dbr_agri_itr: No
+
+---
+## LENDER POLICY
+Duration: 0ms
+
+HDFC — HDFC Bank Policy
+
+---
+## INFO
+Duration: 0ms
+
+Scheme method DSCR differs from selected case method Net Profit Method; evaluated for comparison.
+
+[PARSER] parseIntegerSafe for bureau_cutoff
+  Raw Type:        string
+  Raw Value:       "740"
+  Status:          OK
+  Normalized:      740
+  Note:            Legacy string parsing used
+
+---
+## BUREAU CHECK
+Duration: 0ms
+
+PASS — Effective CIBIL 810 >= Cutoff 740
+
+---
+## DSCR INCOME BUILD-UP
+Duration: 1ms
+
+Income Source:       HDFC_DSCR_HDFC_NPM_LATEST_YEAR
+Annual Income:       ₹14,37,483
+Monthly Equivalent:  ₹1,19,790.25
+HDFC rental bank/ITR add-on, if any, is included at 100% and capped to main business profit.
+
+[PARSER] parseDynamicFoir for lap_dbr_foir
+  Raw Type:        string
+  Raw Value:       "No DBR"
+  Status:          OK
+  Normalized:      {"type":"no_dbr","skip_foir_check":true}
+
+---
+## STEP 3 — FOIR RESOLUTION
+Duration: 0ms
+
+Raw FOIR Param:       "No DBR"
+FOIR Allowed %:       N/A
+Skip FOIR Check:      true
+Conditional Flags:    None
+
+---
+## STEP 4 — NET OBLIGATIONS
+Duration: 1ms
+
+Obligation Rule:      "All obligations considered except loans closing in next 12 months. For HDFC unsecured loans in Salaried/NPM/GST/GRP, POS is deducted from final eligible loan amount instead of EMI obligation."
+Total Obligations:    0
+Excluded:             None
+Net Obligations EMI:  ₹0
+
+[PARSER] parseTenureSafe for lap_max_tenure
+  Raw Type:        string
+  Raw Value:       "180 Months"
+  Status:          OK
+  Normalized:      180
+  Note:            Legacy string parsing used
+
+---
+## STEP 5 — TENURE RESOLUTION
+Duration: 0ms
+
+Lender Max Tenure:    180 months
+Age-Based Limit:      No restriction
+Final Tenure Used:    180 months
+
+[PARSER] parsePercentSafe for lap_roi_min
+  Raw Type:        string
+  Raw Value:       "8%"
+  Status:          OK
+  Normalized:      0.08
+  Note:            Legacy string parsing used
+
+[PARSER] parsePercentSafe for lap_roi_max
+  Raw Type:        string
+  Raw Value:       "10.25%"
+  Status:          OK
+  Normalized:      0.1025
+  Note:            Legacy string parsing used
+
+---
+## STEP 6 — ROI RESOLUTION
+Duration: 0ms
+
+ROI Min:              8%
+ROI Max:              10.25%
+Underwriting ROI:     10.25% (roi_max preferred)
+
+STEP 7 — DSCR EMI CAPACITY:
+
+Formula:
+Max Proposed Annual EMI = (Annual Income / DSCR Min Ratio) − Existing Annual Obligations
+
+Calculation:
+(₹14,37,483 / 1.25) − ₹0
+
+= Annual EMI ₹11,49,986.4 | Monthly EMI ₹95,832.2
+
+STEP 8 — DSCR LOAN ELIGIBILITY:
+
+Formula:
+Reverse EMI using DSCR-derived EMI capacity, ROI and Max Tenure
+
+Calculation:
+DSCR EMI=₹95,832.2 | ROI=10.25% | Max Tenure=180m
+
+= ₹87,92,341
+
+[PARSER] parsePercentSafe for lap_ltv_res_vacant
+  Raw Type:        string
+  Raw Value:       "65%"
+  Status:          OK
+  Normalized:      0.65
+  Note:            Legacy string parsing used
+
+---
+## STEP 9 — LTV EVALUATION
+Duration: 0ms
+
+Property Value:       ₹9,87,65,43,213
+Property Type:        Residential — House / Flat
+Occupancy:            Vacant
+LTV Param Key:        lap_ltv_res_vacant
+LTV %:                65%
+LTV Eligible Loan:    ₹6,41,97,53,088
+
+STEP 10 — FINAL ELIGIBILITY:
+
+Formula:
+MIN of valid candidates: [FOIR Eligibility, LTV Eligibility, Product Max Loan, Requested Loan, NWM Cap]
+
+Calculation:
+Candidates: [₹87,92,341, ₹6,41,97,53,088, No Product Cap, No Requested Cap, N/A Banking Credit Cap, No HDFC POS Deduction]
+
+= ₹87,92,341
+
+[FAILURE: MIN_LOAN_REJECT] Eligible ₹87,92,341 < Lender Min ₹5,00,00,000
+
+DSCR ACTUAL:
+
+Formula:
+Annual Income / ((Existing Obligations + Proposed EMI) × 12)
+
+Calculation:
+₹14,37,483 / ((₹0 + ₹95,832) × 12)
+
+= 1.25
+
+FOIR ACTUAL:
+
+Formula:
+(Existing Obligations + Proposed EMI) / Eligible Monthly Income
+
+Calculation:
+(₹0 + ₹95,832) / ₹1,19,790.25
+
+= N/A — DSCR method uses DSCR ratio
+
+[FAILURE: INELIGIBLE] Maximum eligible loan ₹87,92,341 is below lender minimum ₹5,00,00,000

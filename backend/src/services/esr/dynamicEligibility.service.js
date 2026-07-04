@@ -3,6 +3,7 @@ const { updateStage } = require('../case.service');
 const EsrTraceLogger = require('./esrTraceLogger');
 const EsrCalculationLogBuilder = require('./esrCalculationLogBuilder');
 const { buildIncomeCalculationLog } = require('./incomeCalculationLogBuilder');
+const { getAbbDivisor } = require('./bankAbbPolicy');
 const {
     parseMoneySafe,
     parsePercentSafe,
@@ -123,7 +124,7 @@ const LENDER_POLICY_REGISTRY = {
         salariedEmiCapacityRule: 'FOIR',
         banking: {
             mode: 'ABB_DIVISOR',
-            divisorParamKeys: ['banking_abb_divisor', 'banking_abb_multiplier'],
+            divisorParamKeys: ['abbDivisor', 'abb_divisor', 'banking_abb_divisor', 'banking_abb_multiplier'],
             defaultDivisor: 2
         },
         gstMargins: {},
@@ -145,7 +146,7 @@ const LENDER_POLICY_REGISTRY = {
         salariedEmiCapacityRule: 'INCOME_MINUS_OBLIGATIONS',
         banking: {
             mode: 'ABB_DIVISOR',
-            divisorParamKeys: ['banking_abb_divisor', 'banking_abb_multiplier'],
+            divisorParamKeys: ['abbDivisor', 'abb_divisor', 'banking_abb_divisor', 'banking_abb_multiplier'],
             defaultDivisor: 3,
             sampleDays: [5, 10, 15, 25]
         },
@@ -367,6 +368,37 @@ function getNumericParam(paramMap, keys = [], defaultValue = 0) {
     return defaultValue;
 }
 
+function resolveFirstConfiguredParam(paramMap, keys = []) {
+    for (const key of keys) {
+        if (!key) continue;
+        const raw = resolveRawParamValue(paramMap[key]);
+        if (raw === undefined || raw === null || raw === '') continue;
+        const num = toSafeNumber(raw);
+        if (num > 0) return { key, raw, value: num };
+    }
+    return null;
+}
+
+function normalizeProfessionForGrp(esr = {}) {
+    const profileText = [
+        esr.profession,
+        esr.professional_type,
+        esr.customer_profession,
+        esr.industry_type,
+        esr.gst_industry_type,
+        esr.business_nature,
+        esr.itr_profession,
+        esr.constitution_type,
+        esr.employment_type
+    ].filter(Boolean).join(' ').toLowerCase();
+
+    const isDoctor = /\b(dr|doctor|md|medical doctor|physician|mbbs|medical practitioner)\b/i.test(profileText);
+    return {
+        profileText,
+        bucket: isDoctor ? 'DOCTOR' : 'DEFAULT'
+    };
+}
+
 function normalizeIndustryBucket(industryType) {
     const text = String(industryType || '').toLowerCase();
     if (text.includes('manufactur') || text.includes('factory')) return 'manufacturing';
@@ -424,31 +456,54 @@ function resolveBankingAbbIncome({ esr, paramMap, lenderPolicy }) {
     const abb = toSafeNumber(esr.bank_avg_balance);
     const bankingPolicy = lenderPolicy.banking || LENDER_POLICY_REGISTRY.DEFAULT.banking;
     if (abb <= 0) {
-        return { abb, monthlyIncome: 0, divisor: null, basis: 'MISSING_ABB', threshold: null, loanReference: null };
+        return { abb, monthlyIncome: 0, divisor: null, divisorSourceKey: null, basis: 'MISSING_ABB', threshold: null, loanReference: null };
     }
 
     if (bankingPolicy.mode === 'ABB_DIVISOR_BY_LOAN_AMOUNT') {
         const threshold = getNumericParam(paramMap, [bankingPolicy.thresholdParamKey], bankingPolicy.defaultThreshold || 7500000);
         const loanReference = toSafeNumber(esr.requested_loan_amount) || toSafeNumber(esr.sanction_amount) || toSafeNumber(esr.loan_amount);
-        const divisorUpto = getNumericParam(paramMap, [bankingPolicy.divisorUptoParamKey], bankingPolicy.defaultDivisorUpto || 3);
-        const divisorAbove = getNumericParam(paramMap, [bankingPolicy.divisorAboveParamKey], bankingPolicy.defaultDivisorAbove || 4);
-        const divisor = loanReference > threshold ? divisorAbove : divisorUpto;
+        const divisorUptoConfig = resolveFirstConfiguredParam(paramMap, [bankingPolicy.divisorUptoParamKey]);
+        const divisorAboveConfig = resolveFirstConfiguredParam(paramMap, [bankingPolicy.divisorAboveParamKey]);
+        const divisorUpto = divisorUptoConfig?.value || bankingPolicy.defaultDivisorUpto || 3;
+        const divisorAbove = divisorAboveConfig?.value || bankingPolicy.defaultDivisorAbove || 4;
+        const useAbove = loanReference > threshold;
+        const divisor = useAbove ? divisorAbove : divisorUpto;
         return {
             abb,
             monthlyIncome: divisor > 0 ? abb / divisor : 0,
             divisor,
-            basis: loanReference > threshold ? 'ABB_DIVISOR_ABOVE_THRESHOLD' : 'ABB_DIVISOR_UPTO_THRESHOLD',
+            divisorSourceKey: useAbove ? divisorAboveConfig?.key : divisorUptoConfig?.key,
+            basis: useAbove ? 'ABB_DIVISOR_ABOVE_THRESHOLD' : 'ABB_DIVISOR_UPTO_THRESHOLD',
             threshold,
             loanReference
         };
     }
 
-    const divisor = getNumericParam(paramMap, bankingPolicy.divisorParamKeys || ['banking_abb_divisor', 'banking_abb_multiplier'], bankingPolicy.defaultDivisor || 2);
+    const configuredDivisor = resolveFirstConfiguredParam(paramMap, bankingPolicy.divisorParamKeys || ['abbDivisor', 'abb_divisor', 'banking_abb_divisor', 'banking_abb_multiplier']);
+    const profilePolicy = resolveRawParamValue(paramMap.banking_profile_divisor_policy);
+    const profileText = [
+        esr.banking_profile_type,
+        esr.customer_profile_type,
+        esr.profile_type,
+        esr.customer_segment,
+        esr.customer_category,
+        esr.profession,
+        esr.professional_type,
+        esr.customer_profession,
+        esr.constitution_type,
+        esr.employment_type
+    ].filter(Boolean).join(' ');
+    const hasProfileDivisorPolicy = lenderPolicy.key === 'ICICI' && profilePolicy;
+    const profileDivisor = hasProfileDivisorPolicy ? getAbbDivisor(profileText) : null;
+    const divisor = profileDivisor || configuredDivisor?.value || bankingPolicy.defaultDivisor || 2;
     return {
         abb,
         monthlyIncome: divisor > 0 ? abb / divisor : 0,
         divisor,
-        basis: 'ABB_DIVISOR',
+        divisorSourceKey: profileDivisor === 2
+            ? `banking_profile_divisor_policy:${profileText || 'UNKNOWN'}`
+            : configuredDivisor?.key || (hasProfileDivisorPolicy ? 'banking_profile_divisor_policy:OTHERS' : null),
+        basis: profileDivisor === 2 ? 'ABB_DIVISOR_BY_PROFILE' : 'ABB_DIVISOR',
         threshold: null,
         loanReference: null
     };
@@ -601,34 +656,26 @@ function resolveHdfcNpmAnnualIncome({ esr, paramMap = {}, depreciationFraction =
 }
 
 function resolveGrpMultiplierForPolicy({ esr, paramMap = {}, lenderPolicy }) {
-    if (lenderPolicy.key === 'HDFC') {
-        const profileText = [
-            esr.profession,
-            esr.professional_type,
-            esr.customer_profession,
-            esr.industry_type,
-            esr.gst_industry_type,
-            esr.business_nature,
-            esr.itr_profession,
-            esr.constitution_type,
-            esr.employment_type
-        ].filter(Boolean).join(' ').toLowerCase();
-        const isDoctor = profileText.includes('doctor') || profileText.includes('mbbs') || profileText.includes('md') || profileText.includes('medical practitioner');
-        const doctorMultiplier = getNumericParam(paramMap, ['grp_doctor_multiplier'], 4);
-        const otherProfessionalMultiplier = getNumericParam(paramMap, ['grp_other_professional_multiplier'], 3);
+    const profession = normalizeProfessionForGrp(esr);
+    const doctorMultiplier = getNumericParam(paramMap, ['grpMultiplierByProfession.DOCTOR', 'grp_doctor_multiplier', 'grp_md_multiplier', 'grp_medical_doctor_multiplier'], 4);
+    const defaultMultiplier = getNumericParam(paramMap, ['grpMultiplierByProfession.DEFAULT', 'grp_other_professional_multiplier', 'grp_default_multiplier'], 3);
+    const rawGrpMult = paramMap['grp_annual_receipts_multiplier'] || paramMap['grp_industry_margin'];
+    const parsedMult = parseFloat(resolveRawParamValue(rawGrpMult));
+
+    if (Number.isFinite(parsedMult) && parsedMult > 0) {
         return {
-            multiplier: isDoctor ? doctorMultiplier : otherProfessionalMultiplier,
-            source: isDoctor ? 'HDFC_DOCTOR_MBBS_MD_MULTIPLIER' : 'HDFC_OTHER_PROFESSIONAL_MULTIPLIER',
-            profileText
+            multiplier: parsedMult,
+            source: 'CONFIGURED_GRP_MULTIPLIER',
+            profileText: profession.profileText,
+            professionBucket: profession.bucket
         };
     }
 
-    const rawGrpMult = paramMap['grp_annual_receipts_multiplier'] || paramMap['grp_industry_margin'];
-    const parsedMult = parseFloat(rawGrpMult);
     return {
-        multiplier: Number.isFinite(parsedMult) ? parsedMult : 4.0,
-        source: rawGrpMult ? 'CONFIGURED_GRP_MULTIPLIER' : 'DEFAULT_GRP_MULTIPLIER',
-        profileText: null
+        multiplier: profession.bucket === 'DOCTOR' ? doctorMultiplier : defaultMultiplier,
+        source: profession.bucket === 'DOCTOR' ? 'GRP_DOCTOR_MD_MULTIPLIER' : 'GRP_DEFAULT_NON_DOCTOR_MULTIPLIER',
+        profileText: profession.profileText,
+        professionBucket: profession.bucket
     };
 }
 
@@ -1367,6 +1414,7 @@ function getSchemePrimaryIncome(esr, scheme, paramMap, warnings, logger, lenderP
             'Selected Policy': banking.basis,
             'Bank Avg Balance / ABB': banking.abb,
             'ABB Divisor': banking.divisor,
+            'ABB Divisor Source Key': banking.divisorSourceKey || 'POLICY_DEFAULT',
             'Loan Reference': banking.loanReference,
             'Threshold': banking.threshold,
             'Formula': 'Monthly Income Used = ABB / divisor',
@@ -1445,16 +1493,9 @@ function getSchemePrimaryIncome(esr, scheme, paramMap, warnings, logger, lenderP
     }
     if (name.includes('GRP') || name.includes('GROSS RECEIPT')) {
         const grossReceipts = Number(esr.itr_gross_receipts) || 0;
-
-        // Add ambiguity warning for GRP
-        warnings.push(`[ESR INCOME] GRP Method multiplier ambiguity: Ensure 'grp_annual_receipts_multiplier' is properly configured.`);
-
-        const rawGrpMult = paramMap['grp_annual_receipts_multiplier'] || paramMap['grp_industry_margin'];
-
-        // User requested: Do not parse as percent. Parse it as a numeric multiplier: 4 means 4x.
-        const parsedMult = parseFloat(rawGrpMult);
-        let grpMultiplier = Number.isFinite(parsedMult) ? parsedMult : 4.0; // fallback to 4x if missing/invalid
-
+        if (grossReceipts <= 0) {
+            warnings.push('GRP gross receipt not available');
+        }
         // Return 0 for primary income to bypass FOIR, we will calculate loan eligibility directly later
         return 0;
     }
@@ -2146,7 +2187,8 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     }
 
     // 2. Resolve Allowed FOIR limit
-    const rawFoir = isNoDoubleFoirSalariedMethod ? 'No DBR' : paramMap[`${pref}_dbr_foir`];
+    const configuredRawFoir = paramMap[`${pref}_dbr_foir`];
+    const rawFoir = configuredRawFoir ?? (isNoDoubleFoirSalariedMethod ? 'No DBR' : null);
     const foirRes = parseDynamicFoir(rawFoir, composedIncome);
     const foir_allowed_percent_value = handleParseResult(foirRes, `${pref}_dbr_foir`);
     logger?.traceParser('parseDynamicFoir', `${pref}_dbr_foir`, rawFoir, foirRes);
@@ -2189,7 +2231,21 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     // GUARD: FOIR must be resolvable (unless No DBR)
     if (!skip_foir_check && foir_allowed_percent === null) {
         isEligible = false;
-        failure_reasons.push(`FOIR/DBR not configured or could not be resolved for this scheme.`);
+        const profileForFoir = esr.employment_type || esr.constitution_type || esr.profession || 'UNKNOWN_PROFILE';
+        const incomeBandForFoir = composedIncome > 0 ? `${Math.floor(composedIncome)}` : 'UNKNOWN_INCOME';
+        const missingFoirReason = lenderPolicy.key === 'ICICI'
+            ? `ICICI FOIR config missing for ${product.product_type}/${scheme.scheme_name}/${profileForFoir}`
+            : `FOIR/DBR not configured or could not be resolved for this scheme.`;
+        failure_reasons.push(missingFoirReason);
+        if (lenderPolicy.key === 'ICICI') {
+            logger?.traceStep('ICICI FOIR CONFIG MISSING', [
+                `lender=ICICI`,
+                `method=${scheme.scheme_name}`,
+                `profile=${profileForFoir}`,
+                `incomeBand=${incomeBandForFoir}`,
+                `sourceConfigKey=${pref}_dbr_foir`
+            ].join('\n'));
+        }
         logger?.traceFailure('CONFIG_MISSING', `FOIR = null and skip_foir_check = false — cannot underwrite`);
     }
 
@@ -2232,12 +2288,14 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
             banking_obligation_added_to_abb: addToAbbAmount,
             banking_adjusted_abb: adjustedBanking.abb,
             banking_divisor: adjustedBanking.divisor,
+            banking_divisor_source_key: adjustedBanking.divisorSourceKey || 'POLICY_DEFAULT',
             breakdown: [{
                 type: 'HDFC Banking Obligation Add-back',
                 raw_abb: originalAbb,
                 obligation_added_to_abb: addToAbbAmount,
                 adjusted_abb: adjustedBanking.abb,
                 divisor: adjustedBanking.divisor,
+                divisor_source_key: adjustedBanking.divisorSourceKey || 'POLICY_DEFAULT',
                 eligible_monthly: adjustedBanking.monthlyIncome,
                 rule: 'HDFC Banking: add eligible EMI to ABB, divide by 3/4, and do not deduct the same EMI again.'
             }]
@@ -2308,7 +2366,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
 
     // 6. Calculate Maximum Eligible EMI
     let maximum_eligible_emi = 0;
-    if (isNoDoubleFoirSalariedMethod && composedIncome > 0) {
+    if (isNoDoubleFoirSalariedMethod && configuredRawFoir == null && composedIncome > 0) {
         // Lender-specific salaried method where income has already been policy-weighted
         // Salary 70%, Agri 50%/100%, Rent 70%. Do NOT apply FOIR again.
         maximum_eligible_emi = Math.max(0, composedIncome - netObligations);
@@ -2368,7 +2426,13 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
 
         const exposure = resolveExposureForLender(esr, lenderPolicy, obligationsList);
 
-        foir_based_eligible_loan_amount = Math.max(0, (grossReceipts * grpMultiplier) - exposure.amount);
+        if (grossReceipts <= 0) {
+            isEligible = false;
+            failure_reasons.push('GRP gross receipt not available');
+        }
+
+        const monthlyGrossReceipts = grossReceipts / 12;
+        foir_based_eligible_loan_amount = Math.max(0, (monthlyGrossReceipts * grpMultiplier) - exposure.amount);
 
         logger?.traceFormula(
             'STEP 8 — GRP DIRECT LOAN ELIGIBILITY',
@@ -2376,9 +2440,18 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
             `(₹${grossReceipts.toLocaleString()} × ${grpMultiplier}) − ₹${exposure.amount.toLocaleString()}${exposure.sourceField ? ' [' + exposure.sourceField + ']' : ''}`,
             `₹${foir_based_eligible_loan_amount.toLocaleString()} | Multiplier Source: ${grpResolution.source}`
         );
-        isEligible = foir_based_eligible_loan_amount > 0;
+        logger?.traceStep('GRP POLICY SOURCE', [
+            `Formula Used: Gross Receipts / 12 * GRP Multiplier - Exposure`,
+            `Gross Receipts: ${grossReceipts.toLocaleString()}`,
+            `Monthly Gross Receipts: ${monthlyGrossReceipts.toLocaleString()}`,
+            `GRP Multiplier Used: ${grpMultiplier}`,
+            `Profession Bucket: ${grpResolution.professionBucket || 'DEFAULT'}`,
+            `Multiplier Source: ${grpResolution.source}`,
+            `Exposure Deducted: ${exposure.amount.toLocaleString()}${exposure.sourceField ? ' [' + exposure.sourceField + ']' : ''}`
+        ].join('\n'));
+        isEligible = isEligible && foir_based_eligible_loan_amount > 0;
         if (!isEligible) {
-            failure_reasons.push("GRP eligibility is 0 (Gross receipts * Multiplier <= Exposure).");
+            failure_reasons.push("GRP eligibility is 0 (Gross receipts / 12 * Multiplier <= Exposure).");
         }
     } else if (isDscrMethod && maximum_eligible_emi > 0 && underwriting_roi_used > 0 && final_tenure_used > 0) {
         foir_based_eligible_loan_amount = calculateMaxLoanAmount(maximum_eligible_emi, underwriting_roi_used, final_tenure_used);
@@ -2657,8 +2730,8 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
             ? `${lenderPolicy.key} DSCR: annual income tested against annual obligations and proposed annual EMI.`
             : isGrpMethod
                 ? 'GRP is direct eligibility method; FOIR monthly income is not used.'
-                : isNoDoubleFoirSalariedMethod
-                    ? `${lenderPolicy.key} Salaried: income already policy-weighted; EMI capacity = considered income - obligations.`
+                : isSalariedMethod && !skip_foir_check
+                    ? `${lenderPolicy.key} Salaried: configured ${pref}_dbr_foir applied to lender-weighted salaried income.`
                     : `${lenderPolicy.key} scheme-specific composed monthly income used for FOIR/eligibility.`,
         dscr_breakdown: isDscrMethod ? dscrBreakdown : null,
         eligible_income_breakdown: incomeComposition.breakdown,
@@ -2735,6 +2808,25 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
 
     const pType = esr.product_type.toUpperCase();
 
+    const liveProperty = await prisma.casePropertyDetails.findUnique({
+        where: { case_id },
+        select: {
+            property_type: true,
+            occupancy_status: true,
+            ownership_type: true,
+            market_value: true,
+            updated_at: true
+        }
+    });
+
+    if (liveProperty) {
+        esr.property_type = liveProperty.property_type || esr.property_type;
+        esr.occupancy_type = liveProperty.occupancy_status || esr.occupancy_type;
+        esr.ownership_type = liveProperty.ownership_type || esr.ownership_type;
+        esr.property_value = toSafeNumber(liveProperty.market_value) || esr.property_value;
+        esr.property_details_updated_at = liveProperty.updated_at;
+    }
+
     // Fetch CaseIncomeEntry and CaseCreditObligation upfront for dynamic composed income and exclusion logic
     const incomeEntries = await prisma.caseIncomeEntry.findMany({
         where: {
@@ -2757,9 +2849,30 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
             outstanding_amount: true,
             loan_start_date: true,
             include_in_foir: true,
-            source: true
+            source: true,
+            updated_at: true
         }
     });
+
+    esr.existing_obligations = (obligationsList || []).reduce((sum, obligation) => {
+        if (obligation.include_in_foir === false) return sum;
+        return sum + (toSafeNumber(obligation.emi_per_month) || 0);
+    }, 0);
+
+    const manualIncomeUpdatedAt = (incomeEntries || []).reduce((latest, entry) => {
+        const updated = entry.updated_at ? new Date(entry.updated_at).getTime() : 0;
+        return updated > latest ? updated : latest;
+    }, 0);
+    const bureauObligationUpdatedAt = (obligationsList || []).reduce((latest, obligation) => {
+        const updated = obligation.updated_at ? new Date(obligation.updated_at).getTime() : 0;
+        return updated > latest ? updated : latest;
+    }, 0);
+
+    esr.source_updated_at = {
+        propertyDetailsUpdatedAt: liveProperty?.updated_at || null,
+        manualIncomeUpdatedAt: manualIncomeUpdatedAt ? new Date(manualIncomeUpdatedAt) : null,
+        bureauObligationUpdatedAt: bureauObligationUpdatedAt ? new Date(bureauObligationUpdatedAt) : null
+    };
 
     // Build normalized audit/print snapshots from the same editable UI rows used for calculation.
     // Earlier logs printed only case_esr_financials, so Manual Income Addition and edited EMIs
@@ -2902,11 +3015,17 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         'Ownership': auditPropertySnapshot.ownership || 'N/A',
         'Product Type': esr.product_type,
         'Income Method': esr.selected_income_method || 'N/A',
+        'Property Details Updated At': esr.source_updated_at?.propertyDetailsUpdatedAt || 'N/A',
+        'Manual Income Updated At': esr.source_updated_at?.manualIncomeUpdatedAt || 'N/A',
+        'Bureau Obligation Updated At': esr.source_updated_at?.bureauObligationUpdatedAt || 'N/A',
+        'Source Property Value Used': esr.property_value || 0,
+        'Source Obligation Total Used': esr.existing_obligations || 0,
         'Primary CIBIL': primary_cibil ?? 'N/A',
         'Lowest CIBIL': lowest_cibil ?? 'N/A',
         'Manual Income Rows': auditManualIncomeEntries.length,
         'Manual Income Annual Total': `₹${auditManualIncomeEntries.reduce((s, o) => s + (o.annual_amount || 0), 0).toLocaleString()}`,
         'Manual Income Monthly Total': `₹${auditManualIncomeEntries.reduce((s, o) => s + (o.monthly_amount || 0), 0).toLocaleString()}`,
+        'Source Manual Income Monthly Total Used': auditManualIncomeEntries.reduce((s, o) => s + (o.monthly_amount || 0), 0),
         'Total Obligations': auditObligations.length,
         'Total EMI': `₹${auditObligations.reduce((s, o) => s + (o.emi_per_month || 0), 0).toLocaleString()}`,
         'Lenders Evaluated': lenders.length,
@@ -3206,6 +3325,7 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         occupancy_type: esr.occupancy_type,
         ownership: auditPropertySnapshot.ownership,
         property_collateral_snapshot: auditPropertySnapshot,
+        source_updated_at: esr.source_updated_at,
 
         // Manual Income Addition rows from UI
         manual_income_entries: auditManualIncomeEntries,
@@ -3410,5 +3530,11 @@ async function advanceCaseToEsrGenerated(case_id, tenant_id, user_id) {
 
 module.exports = {
     generateDynamicESR,
-    evaluateDynamicSchemeEligibility
+    evaluateDynamicSchemeEligibility,
+    __testables: {
+        LENDER_POLICY_REGISTRY,
+        resolveBankingAbbIncome,
+        resolveGrpMultiplierForPolicy,
+        normalizeProfessionForGrp
+    }
 };

@@ -1,5 +1,15 @@
 const prisma = require('../../config/db');
 
+function parseNumericInput(value, fieldName, { nullable = true } = {}) {
+  if (value === undefined || value === null || value === '') {
+    if (nullable) return null;
+    throw new Error(`${fieldName} is required.`);
+  }
+  const parsed = Number(String(value).replace(/[^0-9.-]+/g, ''));
+  if (!Number.isFinite(parsed)) throw new Error(`${fieldName} must be a valid number.`);
+  return parsed;
+}
+
 /**
  * Parses a single bureau raw_response JSON to extract individual loan obligations.
  * Different bureau providers use different field structures — this function handles the
@@ -86,8 +96,13 @@ async function syncObligationsFromBureau(case_id, tenant_id) {
     }
   }
 
-  // Removed background extractEsrFinancials call to prevent wiping out bulk upload manual financials.
-  // The ESR orchestrator already validates freshness on generation, and FOIR is calculated dynamically.
+  if (created > 0 || skipped > 0) {
+    await prisma.caseEsrFinancials.updateMany({
+      where: { case_id },
+      data: { extraction_status: 'PENDING' }
+    });
+  }
+
   return { created, skipped };
 }
 
@@ -151,24 +166,30 @@ async function addObligation(case_id, payload, tenant_id) {
   const { applicant_id, lender_name, loan_type, loan_amount, outstanding_amount, loan_start_date, emi_per_month, remarks } = payload;
   if (!applicant_id) throw new Error('applicant_id is required.');
 
-  const result = await prisma.caseCreditObligation.create({
-    data: {
-      case_id,
-      applicant_id: parseInt(applicant_id, 10),
-      lender_name,
-      loan_type,
-      loan_amount:        loan_amount        ? Number(loan_amount) : null,
-      outstanding_amount: outstanding_amount ? Number(outstanding_amount) : null,
-      loan_start_date:    loan_start_date    ? new Date(loan_start_date) : null,
-      emi_per_month:      Number(emi_per_month) || 0,
-      status:  'ACTIVE',
-      source:  'MANUAL',
-      remarks
-    }
-  });
+  return prisma.$transaction(async (tx) => {
+    const result = await tx.caseCreditObligation.create({
+      data: {
+        case_id,
+        applicant_id: parseInt(applicant_id, 10),
+        lender_name,
+        loan_type,
+        loan_amount:        parseNumericInput(loan_amount, 'loan_amount'),
+        outstanding_amount: parseNumericInput(outstanding_amount, 'outstanding_amount'),
+        loan_start_date:    loan_start_date    ? new Date(loan_start_date) : null,
+        emi_per_month:      parseNumericInput(emi_per_month, 'emi_per_month') || 0,
+        status:  'ACTIVE',
+        source:  'MANUAL',
+        remarks
+      }
+    });
 
-  // Removed background extractEsrFinancials call to prevent wiping out bulk upload manual financials.
-  return result;
+    await tx.caseEsrFinancials.updateMany({
+      where: { case_id },
+      data: { extraction_status: 'PENDING' }
+    });
+
+    return result;
+  });
 }
 
 /**
@@ -183,21 +204,27 @@ async function updateObligation(obligation_id, case_id, payload, tenant_id) {
 
   const { emi_per_month, status, lender_name, loan_type, outstanding_amount, remarks } = payload;
 
-  const result = await prisma.caseCreditObligation.update({
-    where: { id: obligation_id },
-    data: {
-      ...(emi_per_month    !== undefined ? { emi_per_month: Number(emi_per_month), needs_verification: false } : {}),
-      ...(status           !== undefined ? { status } : {}),
-      ...(lender_name      !== undefined ? { lender_name } : {}),
-      ...(loan_type        !== undefined ? { loan_type } : {}),
-      ...(outstanding_amount !== undefined ? { outstanding_amount: Number(outstanding_amount) } : {}),
-      ...(remarks          !== undefined ? { remarks } : {}),
-      updated_at: new Date()
-    }
-  });
+  return prisma.$transaction(async (tx) => {
+    const result = await tx.caseCreditObligation.update({
+      where: { id: obligation_id },
+      data: {
+        ...(emi_per_month    !== undefined ? { emi_per_month: parseNumericInput(emi_per_month, 'emi_per_month', { nullable: false }), needs_verification: false } : {}),
+        ...(status           !== undefined ? { status } : {}),
+        ...(lender_name      !== undefined ? { lender_name } : {}),
+        ...(loan_type        !== undefined ? { loan_type } : {}),
+        ...(outstanding_amount !== undefined ? { outstanding_amount: parseNumericInput(outstanding_amount, 'outstanding_amount') } : {}),
+        ...(remarks          !== undefined ? { remarks } : {}),
+        updated_at: new Date()
+      }
+    });
 
-  // Removed background extractEsrFinancials call to prevent wiping out bulk upload manual financials.
-  return result;
+    await tx.caseEsrFinancials.updateMany({
+      where: { case_id },
+      data: { extraction_status: 'PENDING' }
+    });
+
+    return result;
+  });
 }
 
 module.exports = {

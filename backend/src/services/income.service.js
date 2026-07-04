@@ -1,5 +1,12 @@
 const prisma = require('../../config/db');
 
+function parseNumericInput(value, fieldName) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(String(value).replace(/[^0-9.-]+/g, ''));
+  if (!Number.isFinite(parsed)) throw new Error(`${fieldName} must be a valid number.`);
+  return parsed;
+}
+
 const applicantDisplayName = (app) => {
   if (!app) return '';
   return app.name || (app.type === 'PRIMARY' ? 'Primary Applicant' : 'Co-Applicant');
@@ -111,7 +118,8 @@ async function addIncomeEntry(case_id, payload, tenant_id) {
 
   const { income_type, applicant_id, applicant_label, annual_amount, supporting_doc_type, remarks } = payload;
   if (!income_type)    throw new Error('income_type is required.');
-  if (!annual_amount || Number(annual_amount) < 0) throw new Error('annual_amount must be a positive number.');
+  const annualAmount = parseNumericInput(annual_amount, 'annual_amount');
+  if (!annualAmount || annualAmount < 0) throw new Error('annual_amount must be a positive number.');
   const applicantId = applicant_id ? parseInt(applicant_id, 10) : null;
   let resolvedApplicantLabel = applicant_label;
 
@@ -123,16 +131,25 @@ async function addIncomeEntry(case_id, payload, tenant_id) {
     resolvedApplicantLabel = applicantDisplayName(applicant) || 'Applicant';
   }
 
-  return prisma.caseIncomeEntry.create({
-    data: {
-      case_id,
-      applicant_id: applicantId,
-      income_type,
-      applicant_label: resolvedApplicantLabel,
-      annual_amount:       Number(annual_amount),
-      supporting_doc_type,
-      remarks
-    }
+  return prisma.$transaction(async (tx) => {
+    const entry = await tx.caseIncomeEntry.create({
+      data: {
+        case_id,
+        applicant_id: applicantId,
+        income_type,
+        applicant_label: resolvedApplicantLabel,
+        annual_amount:       annualAmount,
+        supporting_doc_type,
+        remarks
+      }
+    });
+
+    await tx.caseEsrFinancials.updateMany({
+      where: { case_id },
+      data: { extraction_status: 'PENDING' }
+    });
+
+    return entry;
   });
 }
 
@@ -146,7 +163,13 @@ async function deleteIncomeEntry(entry_id, case_id, tenant_id) {
   const entry = await prisma.caseIncomeEntry.findFirst({ where: { id: entry_id, case_id } });
   if (!entry) throw new Error('Income entry not found.');
 
-  await prisma.caseIncomeEntry.delete({ where: { id: entry_id } });
+  await prisma.$transaction(async (tx) => {
+    await tx.caseIncomeEntry.delete({ where: { id: entry_id } });
+    await tx.caseEsrFinancials.updateMany({
+      where: { case_id },
+      data: { extraction_status: 'PENDING' }
+    });
+  });
   return { success: true };
 }
 

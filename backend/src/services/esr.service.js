@@ -1,45 +1,12 @@
-/**
- * esr.service.js
- *
- * PURPOSE:
- *   Orchestrate the ESR generation pipeline:
- *     1. Validate case ownership
- *     2. Ensure CaseEsrFinancials snapshot is FRESH (re-extract if stale/missing/failed)
- *     3. Delegate to generateDynamicESR() which handles its own concurrency
- *        via a case-row level lock inside a single DB transaction
- *
- * CONCURRENCY DESIGN:
- *   Session-level advisory locks (pg_try_advisory_lock) are NOT safe with
- *   Prisma connection pooling — the lock and unlock may land on different
- *   DB connections, leaving the lock permanently stuck.
- *
- *   Instead, concurrency is handled in TWO layers:
- *     Layer 1 (Application): This orchestrator always awaits extraction before
- *                            calling the evaluation engine.
- *     Layer 2 (Database):    generateDynamicESR() uses SELECT ... FOR UPDATE
- *                            on the Case row inside its $transaction, which
- *                            PostgreSQL serializes correctly within a single connection.
- */
-
 'use strict';
 
 const prisma = require('../../config/db');
 const { extractEsrFinancials } = require('./esrFinancials.service');
 const { generateDynamicESR } = require('./esr/dynamicEligibility.service');
 
-// Snapshot freshness threshold — re-extract if older than this many minutes
 const SNAPSHOT_STALE_MINUTES = 30;
 
-/**
- * generateESR — full orchestrated pipeline.
- *
- * @param {number} case_id
- * @param {number} user_id
- * @param {number} tenant_id
- * @returns {Promise<object>} ESR result
- */
 async function generateESR(case_id, user_id, tenant_id) {
-    // ── Step 1: Validate case exists and belongs to tenant ──────────────────
     const caseRecord = await prisma.case.findFirst({
         where: { id: case_id, tenant_id },
         select: { id: true, product_type: true }
@@ -48,24 +15,38 @@ async function generateESR(case_id, user_id, tenant_id) {
         throw new Error('Case not found or unauthorized.');
     }
 
-    // ── Step 2: Snapshot freshness check ────────────────────────────────────
-    // This runs BEFORE attempting ESR generation. If the snapshot is missing,
-    // failed, or stale, we synchronously re-extract and verify success before
-    // calling the evaluation engine.
     const snapshot = await prisma.caseEsrFinancials.findUnique({
         where: { case_id },
-        select: { extraction_status: true, extracted_at: true, selected_income_method: true, selected_monthly_income: true, bank_avg_balance: true, banking_income: true, gst_avg_monthly_sales: true, gst_income: true, itr_pat: true, net_profit_income: true, salaried_income: true, product_type: true }
+        select: {
+            extraction_status: true,
+            extracted_at: true,
+            selected_income_method: true,
+            selected_monthly_income: true,
+            bank_avg_balance: true,
+            banking_income: true,
+            gst_avg_monthly_sales: true,
+            gst_income: true,
+            itr_pat: true,
+            net_profit_income: true,
+            salaried_income: true,
+            product_type: true
+        }
     });
 
-    if (_isBulkUploadSnapshot(snapshot)) {
-        console.log(`[ESR] Case ${case_id} has completed bulk-upload/manual financials. Bypassing vendor extraction refresh.`);
-    } else if (snapshot?.selected_income_method === 'LEGACY_UPLOAD') {
-        console.log(`[ESR] Case ${case_id} is a LEGACY_UPLOAD. Bypassing extraction refresh.`);
-    } else if (_snapshotNeedsRefresh(snapshot, caseRecord)) {
-        console.log(`[ESR] Snapshot for Case ${case_id} is ${snapshot ? snapshot.extraction_status + '/stale' : 'missing'} — re-extracting synchronously...`);
+    const sourceFreshness = await _getEsrSourceFreshness(case_id);
+    const sourceChanged = _sourceChangedAfterSnapshot(snapshot, sourceFreshness);
+
+    if (_isBulkUploadSnapshot(snapshot) && !sourceChanged) {
+        console.log(`[ESR] Case ${case_id} has completed bulk-upload/manual financials and no newer mutable ESR source rows. Bypassing vendor extraction refresh.`);
+    } else if (snapshot?.selected_income_method === 'LEGACY_UPLOAD' && !sourceChanged) {
+        console.log(`[ESR] Case ${case_id} is a LEGACY_UPLOAD and no newer mutable ESR source rows exist. Bypassing extraction refresh.`);
+    } else if (_snapshotNeedsRefresh(snapshot, caseRecord) || sourceChanged) {
+        if (sourceChanged) {
+            console.log(`[ESR] Source data changed after last snapshot for Case ${case_id} - re-extracting before generation. Latest source updated_at: ${sourceFreshness.latestUpdatedAt?.toISOString?.() || 'N/A'}`);
+        }
+        console.log(`[ESR] Snapshot for Case ${case_id} is ${snapshot ? snapshot.extraction_status + '/stale' : 'missing'} - re-extracting synchronously...`);
         await extractEsrFinancials(case_id, tenant_id);
 
-        // Verify extraction succeeded before proceeding
         const freshSnapshot = await prisma.caseEsrFinancials.findUnique({
             where: { case_id },
             select: { extraction_status: true, selected_monthly_income: true, selected_income_method: true }
@@ -86,18 +67,9 @@ async function generateESR(case_id, user_id, tenant_id) {
         }
     }
 
-    // ── Step 3: ESR evaluation ───────────────────────────────────────────────
-    // generateDynamicESR() handles its own concurrency internally using
-    // a case-row level lock (SELECT FOR UPDATE) inside its DB transaction.
     return await generateDynamicESR(case_id, user_id, tenant_id);
 }
 
-/**
- * getESR — fetches the latest ESR for a case.
- * @param {number} case_id
- * @param {number} tenant_id
- * @returns {Promise<object>} EligibilityReport
- */
 async function getESR(case_id, tenant_id) {
     const latestESR = await prisma.eligibilityReport.findFirst({
         where: { case_id, tenant_id, is_latest: true },
@@ -112,38 +84,64 @@ async function getESR(case_id, tenant_id) {
     return latestESR;
 }
 
-/**
- * Determine if a snapshot needs to be re-extracted.
- * @param {{ extraction_status: string, extracted_at: Date|null }|null} snapshot
- * @returns {boolean}
- */
 function _isBulkUploadSnapshot(snapshot) {
     if (!snapshot) return false;
     if (snapshot.extraction_status !== 'COMPLETED') return false;
-
-    // ANY is the bulk upload auto mode; do not refresh from vendor tables.
     return String(snapshot.selected_income_method || '').toUpperCase() === 'ANY';
 }
 
 function _snapshotNeedsRefresh(snapshot, caseRecord) {
-
     if (!snapshot) return true;
     if (snapshot.extraction_status !== 'COMPLETED') return true;
     if (!snapshot.extracted_at) return true;
 
-    // Force refresh if the user changed the product type in the UI!
     if (caseRecord && snapshot.product_type !== caseRecord.product_type) {
-        console.log(`[ESR] Product type changed from ${snapshot.product_type} to ${caseRecord.product_type} — forcing refresh.`);
+        console.log(`[ESR] Product type changed from ${snapshot.product_type} to ${caseRecord.product_type} - forcing refresh.`);
         return true;
     }
 
     const ageMinutes = (Date.now() - new Date(snapshot.extracted_at).getTime()) / 60000;
     if (ageMinutes > SNAPSHOT_STALE_MINUTES) {
-        console.log(`[ESR] Snapshot is ${ageMinutes.toFixed(1)}m old (threshold: ${SNAPSHOT_STALE_MINUTES}m) — will refresh.`);
+        console.log(`[ESR] Snapshot is ${ageMinutes.toFixed(1)}m old (threshold: ${SNAPSHOT_STALE_MINUTES}m) - will refresh.`);
         return true;
     }
 
     return false;
+}
+
+async function _getEsrSourceFreshness(case_id) {
+    const [property, incomeAgg, obligationAgg] = await Promise.all([
+        prisma.casePropertyDetails.findUnique({
+            where: { case_id },
+            select: { updated_at: true }
+        }),
+        prisma.caseIncomeEntry.aggregate({
+            where: { case_id },
+            _max: { updated_at: true }
+        }),
+        prisma.caseCreditObligation.aggregate({
+            where: { case_id },
+            _max: { updated_at: true }
+        })
+    ]);
+
+    const dates = [
+        property?.updated_at,
+        incomeAgg?._max?.updated_at,
+        obligationAgg?._max?.updated_at
+    ].filter(Boolean).map(d => new Date(d));
+
+    return {
+        propertyUpdatedAt: property?.updated_at || null,
+        manualIncomeUpdatedAt: incomeAgg?._max?.updated_at || null,
+        bureauObligationUpdatedAt: obligationAgg?._max?.updated_at || null,
+        latestUpdatedAt: dates.length ? new Date(Math.max(...dates.map(d => d.getTime()))) : null
+    };
+}
+
+function _sourceChangedAfterSnapshot(snapshot, sourceFreshness) {
+    if (!snapshot?.extracted_at || !sourceFreshness?.latestUpdatedAt) return false;
+    return new Date(sourceFreshness.latestUpdatedAt).getTime() > new Date(snapshot.extracted_at).getTime();
 }
 
 module.exports = { generateESR, getESR };
