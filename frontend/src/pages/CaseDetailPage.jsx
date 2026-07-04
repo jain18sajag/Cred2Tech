@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { caseService } from '../api/caseService';
 import { toast } from 'react-hot-toast';
 import { getTenantLenders } from '../api/tenantLenderService';
+import { viewDocument, downloadDocument } from '../api/documentHelper';
 import {
   ArrowLeft,
   ExternalLink,
@@ -81,6 +82,16 @@ export default function CaseDetailPage() {
   const [rollbackReason, setRollbackReason] = useState('');
   const [rollbackConfirmation, setRollbackConfirmation] = useState(false);
 
+  // Property Form State
+  const [showPropertyModal, setShowPropertyModal] = useState(false);
+  const [propertyForm, setPropertyForm] = useState({
+    product_type: '',
+    property_type: '',
+    occupancy_status: '',
+    ownership_type: '',
+    market_value: ''
+  });
+
   // Sanction Form State
   const [sanctionForm, setSanctionForm] = useState({
     loan_account_number: '',
@@ -140,6 +151,15 @@ export default function CaseDetailPage() {
           tenant_lender_id: prev.tenant_lender_id || data.tenant_lender_id || ''
         }));
       }
+      if (data) {
+        setPropertyForm({
+          product_type: data.product_type || '',
+          property_type: data.property?.property_type || '',
+          occupancy_status: data.property?.occupancy_status || '',
+          ownership_type: data.property?.ownership_type || '',
+          market_value: data.property?.market_value || ''
+        });
+      }
     } catch (error) {
       toast.error('Failed to load case details');
       console.error(error);
@@ -171,6 +191,32 @@ export default function CaseDetailPage() {
 
   const handlePullGst = async () => {
     toast.success('GST data pull initiated');
+  };
+
+  const handleSaveProperty = async (e) => {
+    e.preventDefault();
+    if (!propertyForm.product_type) return toast.error('Please select a loan product.');
+    const needsProperty = ['LAP', 'HL'].includes(propertyForm.product_type);
+    if (needsProperty && !propertyForm.property_type) return toast.error('Property type is required for LAP/HL.');
+    if (needsProperty && !propertyForm.market_value) return toast.error('Market value is required for LAP/HL.');
+
+    try {
+      const payload = {
+        product_type: propertyForm.product_type,
+        property: needsProperty ? {
+          property_type: propertyForm.property_type,
+          occupancy_status: propertyForm.occupancy_status,
+          ownership_type: propertyForm.ownership_type,
+          market_value: parseFloat(propertyForm.market_value)
+        } : null
+      };
+      await caseService.updateProductProperty(id, payload);
+      toast.success('Property & product details updated!');
+      setShowPropertyModal(false);
+      fetchCase();
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Failed to update property details.');
+    }
   };
 
   const handleDownloadLoanApplicationSummary = async () => {
@@ -324,9 +370,10 @@ export default function CaseDetailPage() {
 
         {/* 5. ACTION BUTTONS (Top Right) */}
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          <button className="btn btn-outline" style={btnOutlineStyle} onClick={handlePullGst}>🔌 Pull GST Reports</button>
-          <button className="btn btn-outline" style={btnOutlineStyle} onClick={handleFetchBureau}>🔍 Fetch Bureau Score</button>
-          <button className="btn btn-outline" style={btnOutlineStyle} onClick={() => navigate(`/cases/${id}/income-summary`)}>✏️ Manual Income</button>
+          <button className="btn btn-outline" style={{ ...btnOutlineStyle, borderColor: '#D97706', color: '#D97706' }} onClick={() => navigate(isMsme ? `/msme/onboarding?caseId=${id}` : `/customers/add?caseId=${id}`)}>🚀 Open Wizard</button>
+          <button className="btn btn-outline" style={btnOutlineStyle} onClick={() => setShowPropertyModal(true)}>🏠 Edit Property Details</button>
+          <button className="btn btn-outline" style={btnOutlineStyle} onClick={() => navigate(`/cases/${id}/bureau-obligations?mode=edit`)}>🔍 View & Edit Obligations</button>
+          <button className="btn btn-outline" style={btnOutlineStyle} onClick={() => navigate(`/cases/${id}/income-summary?mode=edit`)}>✏️ Income Summary</button>
           <button
             className="btn btn-outline"
             style={{ ...btnOutlineStyle, opacity: summaryDownloading ? 0.65 : 1 }}
@@ -359,48 +406,7 @@ export default function CaseDetailPage() {
         </div>
       )}
 
-      {/* 4. DATA PULL STATUS (Reports pulled card) */}
-      <div style={{
-        background: '#fff', borderRadius: 12, boxShadow: '0 2px 8px rgba(50,50,93,0.1)',
-        marginBottom: 16, borderLeft: '3px solid #635BFF', padding: 20
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: '#0A2540', margin: 0 }}>📎 Reports & Data Pulled</h3>
-          <span style={{
-            background: '#DCFCE7', color: '#166534', padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600
-          }}>
-            {(caseData.data_pull_status?.bureau_fetched ? 1 : 0) +
-              (caseData.data_pull_status?.gst_fetched ? 1 : 0) +
-              (caseData.data_pull_status?.itr_fetched ? 1 : 0)} Available
-          </span>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-          <div style={{ background: '#F0FFF4', border: '1px solid #9AE6B4', borderRadius: 8, padding: 12, cursor: 'pointer' }}>
-            <div style={{ fontSize: 18, marginBottom: 4 }}>📊</div>
-            <div style={{ fontWeight: 700, fontSize: 13, color: '#276749' }}>Bureau Report</div>
-            <div style={{ fontSize: 11, color: '#8898AA', marginTop: 2 }}>
-              {caseData.data_pull_status?.bureau_fetched ? 'Pulled' : 'Pending'}
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--orange)', marginTop: 6, fontWeight: 600 }}>View Details ↗</div>
-          </div>
-          <div style={{ background: '#EBF8FF', border: '1px solid #90CDF4', borderRadius: 8, padding: 12, cursor: 'pointer' }}>
-            <div style={{ fontSize: 18, marginBottom: 4 }}>🔌</div>
-            <div style={{ fontWeight: 700, fontSize: 13, color: '#2A69AC' }}>GST Analysis</div>
-            <div style={{ fontSize: 11, color: '#8898AA', marginTop: 2 }}>
-              {caseData.data_pull_status?.gst_fetched ? 'Fetched' : 'Pending'}
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--orange)', marginTop: 6, fontWeight: 600 }}>View Results ↗</div>
-          </div>
-          <div style={{ background: '#FAF5FF', border: '1px solid #D6BCFA', borderRadius: 8, padding: 12, cursor: 'pointer' }}>
-            <div style={{ fontSize: 18, marginBottom: 4 }}>📄</div>
-            <div style={{ fontWeight: 700, fontSize: 13, color: '#553C9A' }}>ITR Analytics</div>
-            <div style={{ fontSize: 11, color: '#8898AA', marginTop: 2 }}>
-              {caseData.data_pull_status?.itr_fetched ? 'Fetched' : 'Pending'}
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--orange)', marginTop: 6, fontWeight: 600 }}>View Details ↗</div>
-          </div>
-        </div>
-      </div>
+
 
       {/* Case Progress (Timeline Bar) */}
       <div style={{ background: '#fff', borderRadius: 12, boxShadow: '0 2px 8px rgba(50,50,93,0.1)', padding: '20px 24px', marginBottom: 24 }}>
@@ -496,8 +502,9 @@ export default function CaseDetailPage() {
           </div>
 
           <div style={{ background: '#fff', borderRadius: 12, boxShadow: '0 2px 8px rgba(50,50,93,0.1)', border: '1px solid rgba(60,66,87,0.1)' }}>
-            <div style={{ padding: '18px 20px 14px', borderBottom: '1px solid rgba(60,66,87,0.12)' }}>
+            <div style={{ padding: '18px 20px 14px', borderBottom: '1px solid rgba(60,66,87,0.12)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ fontSize: 14, fontWeight: 600, color: '#0A2540', margin: 0 }}>Property & Collateral</h3>
+              <button className="btn-ghost" style={{ color: '#635BFF', fontSize: 12, fontWeight: 600, border: 'none', background: 'none', cursor: 'pointer', padding: 0 }} onClick={() => setShowPropertyModal(true)}>Edit</button>
             </div>
             <div style={{ padding: 20 }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
@@ -559,17 +566,46 @@ export default function CaseDetailPage() {
 
       {activeTab === 'Documents' && (
         <div style={{ background: '#fff', borderRadius: 12, boxShadow: '0 2px 8px rgba(50,50,93,0.1)', border: '1px solid rgba(60,66,87,0.1)', padding: 20 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-            {['PAN Card', 'Aadhaar Card', 'GST Returns (12M)', 'Bank Statements (6M)', 'ITR (3 Years)', 'Udyam Certificate'].map(doc => (
-              <div key={doc} style={{
-                background: '#F6F9FC', border: '1.5px solid rgba(60,66,87,0.12)', borderRadius: 12, padding: 14,
-                display: 'flex', flexDirection: 'column', gap: 6
-              }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#0A2540' }}>{doc}</div>
-                <div style={{ fontSize: 11, fontWeight: 600, color: '#8898AA' }}>Pending Upload</div>
-              </div>
-            ))}
-          </div>
+          {caseData?.documents && caseData.documents.length > 0 ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+              {caseData.documents.map(doc => (
+                <div key={doc.id} style={{
+                  background: '#F6F9FC', border: '1.5px solid rgba(60,66,87,0.12)', borderRadius: 12, padding: 14,
+                  display: 'flex', flexDirection: 'column', gap: 6
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 20 }}>
+                      {doc.extension?.includes('xls') || doc.extension?.includes('csv') ? '📊' : doc.extension?.includes('pdf') ? '📄' : '📎'}
+                    </span>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#0A2540', wordBreak: 'break-all' }}>
+                      {doc.original_file_name || doc.document_type}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: '#8898AA' }}>
+                    Uploaded: {new Date(doc.created_at).toLocaleDateString()}
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
+                    <button 
+                      onClick={() => viewDocument(doc.id)} 
+                      style={{ fontSize: 12, color: '#635BFF', background: 'none', border: 'none', fontWeight: 600, cursor: 'pointer', padding: 0 }}
+                    >
+                      👁️ View
+                    </button>
+                    <button 
+                      onClick={() => downloadDocument(doc.id, doc.original_file_name)} 
+                      style={{ fontSize: 12, color: '#635BFF', background: 'none', border: 'none', fontWeight: 600, cursor: 'pointer', padding: 0 }}
+                    >
+                      ⬇️ Download
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ padding: 40, textAlign: 'center', color: '#8898AA', fontSize: 14 }}>
+              No documents uploaded yet.
+            </div>
+          )}
         </div>
       )}
 
@@ -1037,6 +1073,105 @@ export default function CaseDetailPage() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── EDIT PROPERTY MODAL ── */}
+      {showPropertyModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+          <form onSubmit={handleSaveProperty} style={{ background: '#fff', borderRadius: 20, width: 500, maxHeight: '90vh', boxShadow: '0 24px 60px rgba(0,0,0,0.18)', overflowY: 'auto' }}>
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid rgba(60,66,87,.12)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, background: '#fff', zIndex: 10 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: '#0A2540', margin: 0 }}>Edit Property & Product</h3>
+              <span style={{ cursor: 'pointer', color: '#8898AA', fontSize: 24, lineHeight: 1 }} onClick={() => setShowPropertyModal(false)}>×</span>
+            </div>
+            
+            <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#425466', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 6 }}>Loan Product *</label>
+                <select 
+                  className="form-control" 
+                  value={propertyForm.product_type} 
+                  onChange={(e) => setPropertyForm(prev => ({ ...prev, product_type: e.target.value }))}
+                  required
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1.5px solid rgba(60,66,87,0.12)', fontSize: 14 }}
+                >
+                  <option value="">- Select a loan product -</option>
+                  <option value="HL">HL - Home Loan</option>
+                  <option value="LAP">LAP - Loan Against Property</option>
+                  <option value="PL">PL - Personal Loan</option>
+                  <option value="BL">BL - Business Loan</option>
+                </select>
+              </div>
+
+              {['LAP', 'HL'].includes(propertyForm.product_type) && (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#425466', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 6 }}>Property Type *</label>
+                      <select 
+                        className="form-control" 
+                        value={propertyForm.property_type} 
+                        onChange={(e) => setPropertyForm(prev => ({ ...prev, property_type: e.target.value }))}
+                        required
+                        style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1.5px solid rgba(60,66,87,0.12)', fontSize: 14 }}
+                      >
+                        <option value="">- Select -</option>
+                        <option value="Commercial — Office / Shop">Commercial — Office / Shop</option>
+                        <option value="Residential — House / Flat">Residential — House / Flat</option>
+                        <option value="Industrial — Factory / Warehouse">Industrial — Factory / Warehouse</option>
+                        <option value="Plot / Land">Plot / Land</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#425466', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 6 }}>Occupancy</label>
+                      <select 
+                        className="form-control" 
+                        value={propertyForm.occupancy_status} 
+                        onChange={(e) => setPropertyForm(prev => ({ ...prev, occupancy_status: e.target.value }))}
+                        style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1.5px solid rgba(60,66,87,0.12)', fontSize: 14 }}
+                      >
+                        <option value="Self Occupied">Self Occupied</option>
+                        <option value="Rented Out">Rented Out</option>
+                        <option value="Vacant">Vacant</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#425466', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 6 }}>Ownership</label>
+                      <select 
+                        className="form-control" 
+                        value={propertyForm.ownership_type} 
+                        onChange={(e) => setPropertyForm(prev => ({ ...prev, ownership_type: e.target.value }))}
+                        style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1.5px solid rgba(60,66,87,0.12)', fontSize: 14 }}
+                      >
+                        <option value="Sole Owner">Sole Owner</option>
+                        <option value="Joint Owner">Joint Owner</option>
+                        <option value="Company Owned">Company Owned</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#425466', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 6 }}>Market Value *</label>
+                      <input 
+                        type="number" 
+                        className="form-control" 
+                        value={propertyForm.market_value} 
+                        onChange={(e) => setPropertyForm(prev => ({ ...prev, market_value: e.target.value }))}
+                        required
+                        style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1.5px solid rgba(60,66,87,0.12)', fontSize: 14 }}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            
+            <div style={{ padding: '16px 24px', borderTop: '1px solid rgba(60,66,87,.12)', display: 'flex', justifyContent: 'flex-end', gap: 12, background: '#F6F9FC', position: 'sticky', bottom: 0 }}>
+              <button type="button" className="btn btn-ghost" onClick={() => setShowPropertyModal(false)}>Cancel</button>
+              <button type="submit" className="btn btn-primary">Save Changes</button>
+            </div>
+          </form>
         </div>
       )}
 

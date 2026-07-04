@@ -29,7 +29,7 @@ async function createCase(req, res) {
 async function addApplicant(req, res) {
   try {
     const caseId = parseInt(req.params.id, 10);
-    const { id, type, name, pan_number, mobile, email, employment_type } = req.body;
+    const { id, type, name, pan_number, mobile, email, pincode, employment_type } = req.body;
 
     if (!type || !['PRIMARY', 'CO_APPLICANT'].includes(type)) {
       return res.status(400).json({ error: 'Invalid applicant type.' });
@@ -38,7 +38,7 @@ async function addApplicant(req, res) {
     const tenant_id = req.user.tenant_id;
     const mobileStr = mobile ? mobile.toString().replace(/\D/g, '') : null;
 
-    const applicant = await caseService.addApplicant(caseId, { id, type, name, pan_number, mobile: mobileStr, email, employment_type }, tenant_id);
+    const applicant = await caseService.addApplicant(caseId, { id, type, name, pan_number, mobile: mobileStr, email, pincode, employment_type }, tenant_id);
     res.status(201).json(applicant);
   } catch (error) {
     if (error.message === 'Case not found or unauthorized.') {

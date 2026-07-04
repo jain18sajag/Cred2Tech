@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { caseService } from '../api/caseService';
 import { toast } from 'react-hot-toast';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
@@ -22,6 +22,8 @@ const LOAN_TYPES = [
 export default function BureauObligationsPage() {
   const { id: caseId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const isEditMode = searchParams.get('mode') === 'edit';
 
   const [loading, setLoading]     = useState(true);
   const [syncing, setSyncing]     = useState(false);
@@ -31,13 +33,18 @@ export default function BureauObligationsPage() {
   const [editEmi, setEditEmi]     = useState({});         // { [oblId]: value }
   const [addingFor, setAddingFor] = useState(null);        // applicant_id
   const [newObl, setNewObl]       = useState({ lender_name: '', loan_type: '', loan_amount: '', outstanding_amount: '', emi_per_month: '', remarks: '' });
+  const [caseData, setCaseData]   = useState(null);
 
   const load = useCallback(async () => {
     try {
       setLoading(true);
       await caseService.syncObligations(caseId);
-      const result = await caseService.getObligations(caseId);
+      const [result, caseDataResp] = await Promise.all([
+        caseService.getObligations(caseId),
+        caseService.getCaseById(caseId)
+      ]);
       setData(result);
+      setCaseData(caseDataResp);
     } catch (e) {
       toast.error(e.response?.data?.error || 'Failed to load bureau obligations');
     } finally {
@@ -100,9 +107,15 @@ export default function BureauObligationsPage() {
           <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)' }}>Bureau & Credit Obligations</h1>
           <p style={{ color: 'var(--text-tertiary)', marginTop: 4 }}>Review all applicant obligations before generating ESR</p>
         </div>
-        <button className="btn btn-ghost" onClick={() => navigate(`/cases/${caseId}/income-summary`)}>
-          <ChevronLeft size={16} /> Back to Income
-        </button>
+        {!isEditMode ? (
+          <button className="btn btn-ghost" onClick={() => navigate(`/cases/${caseId}/income-summary`)}>
+            <ChevronLeft size={16} /> Back to Income
+          </button>
+        ) : (
+          <button className="btn btn-ghost" onClick={() => navigate(`/cases/${caseId}`)}>
+            <ChevronLeft size={16} /> Back to Case Details
+          </button>
+        )}
       </div>
 
       {/* Info box */}
@@ -257,13 +270,22 @@ export default function BureauObligationsPage() {
       </div>
 
       {/* Bottom nav */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-        <button className="btn btn-ghost" onClick={() => navigate(`/cases/${caseId}/income-summary`)}>← Back</button>
-        <button className="btn btn-primary btn-lg" onClick={handleGenerateESR} disabled={generating} style={{ padding: '14px 36px', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Zap size={18} />
-          {generating ? 'Generating ESR...' : 'Generate Eligibility Summary Report →'}
-        </button>
-      </div>
+      {!isEditMode ? (
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+          <button className="btn btn-ghost" onClick={() => navigate(`/cases/${caseId}/income-summary`)}>← Back</button>
+          <button className="btn btn-primary btn-lg" onClick={handleGenerateESR} disabled={generating} style={{ padding: '14px 36px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Zap size={18} />
+            {generating ? 'Generating ESR...' : 'Generate Eligibility Summary Report →'}
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+          <button className="btn btn-primary btn-lg" onClick={handleGenerateESR} disabled={generating} style={{ padding: '14px 36px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Zap size={18} />
+            {generating ? 'Generating ESR...' : 'Generate Eligibility Summary Report →'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

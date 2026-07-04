@@ -79,6 +79,10 @@ function EMICalculator({ loanAmount, roi, monthlyIncome, onChange }) {
     if (loanAmount) setAmount((loanAmount / 100000).toFixed(2));
   }, [loanAmount]);
 
+  useEffect(() => {
+    if (onChange) onChange({ amount, tenor, rate });
+  }, [amount, tenor, rate]);
+
   const { emi, totalInterest, totalRepayment, emiFoirPct, schedule } = useMemo(() => {
     const P = parseFloat(amount) * 100000 || 0;
     const r = parseFloat(rate) / 12 / 100 || 0;
@@ -113,12 +117,11 @@ function EMICalculator({ loanAmount, roi, monthlyIncome, onChange }) {
         </div>
         <div>
           <label style={labelStyle}>TENOR (YEARS) *</label>
-          <select value={tenor} onChange={e => setTenor(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
-            {TENOR_OPTIONS.map(t => <option key={t} value={t}>{t} Years</option>)}
-          </select>
+          <input value={tenor} onChange={e => setTenor(e.target.value)} type="number" placeholder="e.g. 15"
+            style={inputStyle} />
         </div>
         <div>
-          <label style={labelStyle}>INDICATIVE RATE (% P.A.)</label>
+          <label style={labelStyle}>INDICATIVE RATE (% P.A.) *</label>
           <input value={rate} onChange={e => setRate(e.target.value)} type="number" step="0.01" placeholder="e.g. 10.50"
             style={inputStyle} />
         </div>
@@ -669,6 +672,7 @@ export default function ProposalPage() {
   const [submitting, setSubmitting] = useState(false);
   const [data, setData] = useState(null);
   const [showOtherLenderModal, setShowOtherLenderModal] = useState(false);
+  const [loanDetails, setLoanDetails] = useState({ amount: '', tenor: '', rate: '' });
   const [sendConfirmResult, setSendConfirmResult] = useState(null);
   const [form, setForm] = useState({
     loan_purpose: '', remarks: '', preferred_banking_program: ''
@@ -742,7 +746,23 @@ export default function ProposalPage() {
     }
   };
 
+  const validateProposal = () => {
+    const { amount, tenor, rate } = loanDetails;
+    if (!amount || Number(amount) <= 0) { toast.error('Loan amount is required and must be greater than 0'); return false; }
+    if (!tenor || Number(tenor) <= 0) { toast.error('Tenor is required and must be greater than 0'); return false; }
+    if (!rate || Number(rate) <= 0) { toast.error('Rate of interest is required'); return false; }
+    
+    if (references.length < 2) { toast.error('Please add at least 2 references'); return false; }
+    for (let i = 0; i < 2; i++) {
+       if (!references[i] || !references[i].name || !references[i].mobile || references[i].mobile.length !== 10) {
+           toast.error(`Reference ${i + 1} is incomplete or invalid (Phone must be 10 digits)`); return false;
+       }
+    }
+    return true;
+  };
+
   const handleSubmit = async () => {
+    if (!validateProposal()) return;
     if (!window.confirm(`Submit this proposal (${data?.proposal?.proposal_number}) to ${data?.lender?.name || 'Lender'}?\n\nThis will send a professional proposal email with all attached documents.`)) return;
     try {
       setSubmitting(true);
@@ -850,7 +870,7 @@ export default function ProposalPage() {
           loanAmount={proposal.eligible_amount || proposal.requested_amount}
           roi={proposal.roi_min}
           monthlyIncome={prefill?.monthly_income}
-          onChange={() => { }}
+          onChange={setLoanDetails}
         />
       </Section>
 
@@ -1054,7 +1074,11 @@ export default function ProposalPage() {
                 }}>
                 <Save size={13} /> {saving ? 'Saving…' : 'Save Draft'}
               </button>
-              <button onClick={() => setShowOtherLenderModal(true)}
+              <button onClick={() => {
+                if (validateProposal()) {
+                  handleSave(true).then(() => setShowOtherLenderModal(true));
+                }
+              }}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 6, padding: '10px 18px',
                   background: 'transparent', color: '#A78BFA',

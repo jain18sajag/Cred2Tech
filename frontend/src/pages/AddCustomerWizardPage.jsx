@@ -39,6 +39,7 @@ const AddCustomerWizardPage = ({ mode = 'DSA' }) => {
     business_name: '',
     business_mobile: '',
     business_email: '',
+    pincode: '',
     dob: '',
     mobile_verified: false,
     applicants: [],
@@ -126,11 +127,11 @@ const restoreSession = async () => {
 
     const caseData = await caseService.getCaseById(urlCaseId);
 
-    if (caseData.stage === 'LEAD_CREATED') {
-      toast.success("This case is already active.");
-      navigate(mode === 'MSME_SELF_SERVICE' ? '/msme/dashboard' : '/customers', { replace: true });
-      return;
-    }
+    // if (caseData.stage !== 'DRAFT') {
+    //   toast.success("This case is already active.");
+    //   navigate(mode === 'MSME_SELF_SERVICE' ? '/msme/dashboard' : '/customers', { replace: true });
+    //   return;
+    // }
 
     setCaseId(caseData.id);
     setSuggestedCoApplicants(caseData.suggested_co_applicants || []);
@@ -144,6 +145,7 @@ const restoreSession = async () => {
       business_name: caseData.customer?.business_name || '',
       business_mobile: (caseData.customer?.business_mobile || '').replace(/\D/g, ''),
       business_email: caseData.customer?.business_email || '',
+      pincode: primaryApp?.pincode || caseData.customer?.pan_profiles?.[0]?.principal_pincode || '',
       dob: caseData.customer?.dob || '',
       mobile_verified: mode === 'MSME_SELF_SERVICE' ? true : (caseData.customer?.mobile_verified || false),
       is_professional: caseData.customer?.is_professional || false,
@@ -707,7 +709,7 @@ const handleStep3Submit = async (e) => {
     await caseService.updateProductProperty(caseId, payload);
     localStorage.removeItem('draftCaseId');
     toast.success('Product & property saved!');
-    navigate(`/cases/${caseId}/income-summary`);
+    navigate(`/cases/${caseId}/income-summary`, { replace: true });
   } catch (error) {
     toast.error(error.response?.data?.error || 'Failed to save product details.');
   } finally {
@@ -864,7 +866,7 @@ const handleStep3Submit = async (e) => {
                 </FormField>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 24 }}>
                 <FormField label="EMAIL ADDRESS" name="business_email" required>
                   <input
                     type="email"
@@ -872,6 +874,17 @@ const handleStep3Submit = async (e) => {
                     onChange={e => setFormData({ ...formData, business_email: e.target.value })}
                     className="form-control"
                     placeholder="admin@company.in"
+                  />
+                </FormField>
+
+                <FormField label="PINCODE" name="pincode" required>
+                  <input
+                    type="text"
+                    value={formData.pincode || ''}
+                    onChange={e => setFormData({ ...formData, pincode: e.target.value })}
+                    className="form-control"
+                    placeholder="e.g. 560026"
+                    maxLength={6}
                   />
                 </FormField>
 
@@ -1039,12 +1052,22 @@ const handleStep3Submit = async (e) => {
                           </FormField>
                         </div>
 
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr 1fr', gap: 16, alignItems: 'end' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.2fr 1fr', gap: 16, alignItems: 'end' }}>
                           <FormField label="EMPLOYMENT TYPE" name={`coemp_${realIdx}`}>
                             <select className="form-control" value={app.employment_type || 'SELF_EMPLOYED'} onChange={e => updateApplicantRow(realIdx, 'employment_type', e.target.value)}>
                               <option value="SELF_EMPLOYED">Self Employed</option>
                               <option value="SALARIED">Salaried</option>
                             </select>
+                          </FormField>
+                          <FormField label="PINCODE" name={`copincode_${realIdx}`} required>
+                            <input
+                              type="text"
+                              value={app.pincode || ''}
+                              onChange={e => updateApplicantRow(realIdx, 'pincode', e.target.value)}
+                              className="form-control"
+                              placeholder="560026"
+                              maxLength={6}
+                            />
                           </FormField>
                           <FormField label="MOBILE NUMBER" name={`comob_${realIdx}`}>
                             <div style={{ display: 'flex', gap: 8 }}>

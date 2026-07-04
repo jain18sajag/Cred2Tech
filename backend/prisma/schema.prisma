@@ -347,7 +347,7 @@ model Case {
   pdd_tasks                 PDDTask[]
   salary_ocr_results        SalarySlipOcrResult[]
   commission_ledgers        CommissionLedger[]
-  SubDsaPayoutLedger        SubDsaPayoutLedger[]
+  SubDsaPayoutLedger        SubDsaPayoutLedger[] 
   SalesIncentiveLedger      SalesIncentiveLedger[]
   data_pull_background_jobs DataPullBackgroundJob[]
   system_notifications      SystemNotification[]
@@ -379,6 +379,7 @@ model Applicant {
   dob                 String?
   mobile              String?
   email               String?
+  pincode             String?
   cibil_score         Int?
   emi                 Float? // DEPRECATED: use sum of CaseCreditObligation.emi_per_month
   is_primary          Boolean        @default(false)

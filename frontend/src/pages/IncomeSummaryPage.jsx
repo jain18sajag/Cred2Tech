@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { caseService } from '../api/caseService';
 import { toast } from 'react-hot-toast';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
@@ -24,6 +24,8 @@ export default function IncomeSummaryPage() {
   const navigate = useNavigate();
   const { hasRole } = useAuth();
   const isMsme = hasRole('MSME_CUSTOMER');
+  const [searchParams] = useSearchParams();
+  const isEditMode = searchParams.get('mode') === 'edit';
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -34,6 +36,7 @@ export default function IncomeSummaryPage() {
     annual_amount: '', supporting_doc_type: 'CA Certificate', remarks: ''
   });
   const [adding, setAdding] = useState(false);
+  const [caseData, setCaseData] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -43,6 +46,7 @@ export default function IncomeSummaryPage() {
         caseService.getCaseById(caseId)
       ]);
       setData(summary);
+      setCaseData(caseData);
       setApplicants(caseData.applicants || []);
     } catch (e) {
       toast.error(e.response?.data?.error || 'Failed to load income summary');
@@ -116,12 +120,18 @@ export default function IncomeSummaryPage() {
           <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)' }}>Income Summary</h1>
           <p style={{ color: 'var(--text-tertiary)', marginTop: 4 }}>Review API-pulled income and add any manual entries</p>
         </div>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button className="btn btn-ghost" onClick={() => navigate(isMsme ? `/msme/onboarding?caseId=${caseId}` : `/customers/add?caseId=${caseId}`)}><ChevronLeft size={16} /> Back</button>
-          <button className="btn btn-primary" onClick={handleNext} disabled={saving} style={{ padding: '10px 24px' }}>
-            {saving ? 'Saving...' : <>Next: Bureau Details <ChevronRight size={16} /></>}
-          </button>
-        </div>
+        {!isEditMode ? (
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn btn-ghost" onClick={() => navigate(isMsme ? `/msme/onboarding?caseId=${caseId}` : `/customers/add?caseId=${caseId}`)}><ChevronLeft size={16} /> Back</button>
+            <button className="btn btn-primary" onClick={handleNext} disabled={saving} style={{ padding: '10px 24px' }}>
+              {saving ? 'Saving...' : <>Next: Bureau Details <ChevronRight size={16} /></>}
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn btn-ghost" onClick={() => navigate(`/cases/${caseId}`)}><ChevronLeft size={16} /> Back to Case Details</button>
+          </div>
+        )}
       </div>
 
       {/* API-Pulled Income Table */}

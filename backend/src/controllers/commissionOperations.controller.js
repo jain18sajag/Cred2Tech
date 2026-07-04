@@ -1,4 +1,5 @@
 const prisma = require('../../config/db');
+const subDsaPayoutService = require('../services/subDsaPayout.service');
 
 /**
  * Helper to get Month Year string from Date (e.g., "March 2026")
@@ -527,9 +528,37 @@ exports.updateLedgerStatus = async (req, res) => {
         const ledger = await prisma.commissionLedger.findFirst({ where: { id: parseInt(ledgerId), tenant_id } });
         if (!ledger) return res.status(404).json({ error: 'Ledger entry not found' });
 
-        const updated = await prisma.commissionLedger.update({
-            where: { id: ledger.id },
-            data: { status, remarks }
+        const updated = await prisma.$transaction(async (tx) => {
+            const up = await tx.commissionLedger.update({
+                where: { id: ledger.id },
+                data: { status, remarks }
+            });
+
+            // Automatically trigger SubDSA Payout if configured for ON_DSA_RECEIPT
+            if (status === 'PAID') {
+                const caseRecord = await tx.case.findUnique({
+                    where: { id: ledger.case_id },
+                    include: { created_by: { include: { role: true } } }
+                });
+
+                if (caseRecord && caseRecord.created_by?.role?.name === 'SUB_DSA') {
+                    const payoutRule = await tx.subDsaPayoutRule.findUnique({
+                        where: { sub_dsa_user_id: caseRecord.created_by.id },
+                        select: { payout_trigger: true }
+                    });
+
+                    if (payoutRule?.payout_trigger === 'ON_DSA_RECEIPT') {
+                        try {
+                            await subDsaPayoutService.createPayoutEntry(tenant_id, caseRecord.created_by.id, ledger.id, tx, { mode: 'AUTO' });
+                            console.log(`[COMMISSION] SubDSA Payout Ledger created for Case ${ledger.case_id} on DSA Receipt`);
+                        } catch (err) {
+                            console.error(`[COMMISSION] Failed to create SubDSA payout on receipt for Case ${ledger.case_id}:`, err.message);
+                            // Do not throw to prevent rolling back the main commission payment update if SubDSA config fails
+                        }
+                    }
+                }
+            }
+            return up;
         });
 
         res.status(200).json({ success: true, data: updated });

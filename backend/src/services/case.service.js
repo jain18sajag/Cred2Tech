@@ -59,6 +59,7 @@ async function createCase(customer_id, product_type, tenant_id, user_id) {
           mobile: customer.business_mobile,
           email: customer.business_email,
           pan_number: customer.business_pan,
+          pincode: customer.pan_profiles?.[0]?.principal_pincode || null,
           otp_verified: customer.mobile_verified || false // Security Fix: Remove || true bypass
         }
       }
@@ -211,6 +212,7 @@ async function addApplicant(case_id, applicantData, tenant_id) {
         pan_number: applicantData.pan_number,
         mobile: applicantData.mobile,
         email: applicantData.email,
+        pincode: applicantData.pincode,
         employment_type: applicantData.employment_type || undefined
       }
     });
@@ -232,6 +234,7 @@ async function addApplicant(case_id, applicantData, tenant_id) {
           data: {
             mobile: applicantData.mobile || existingCoApp.mobile,
             email: applicantData.email || existingCoApp.email,
+            pincode: applicantData.pincode || existingCoApp.pincode,
             employment_type: applicantData.employment_type || existingCoApp.employment_type
           }
         });
@@ -242,6 +245,7 @@ async function addApplicant(case_id, applicantData, tenant_id) {
           name: applicantData.name || existingCoApp.name,
           mobile: applicantData.mobile || existingCoApp.mobile,
           email: applicantData.email || existingCoApp.email,
+          pincode: applicantData.pincode || existingCoApp.pincode,
           employment_type: applicantData.employment_type || existingCoApp.employment_type
         }
       });
@@ -260,6 +264,7 @@ async function addApplicant(case_id, applicantData, tenant_id) {
           data: {
             mobile: applicantData.mobile,
             email: applicantData.email,
+            pincode: applicantData.pincode,
             employment_type: applicantData.employment_type || undefined
           }
         });
@@ -272,6 +277,7 @@ async function addApplicant(case_id, applicantData, tenant_id) {
           pan_number: applicantData.pan_number,
           mobile: applicantData.mobile,
           email: applicantData.email,
+          pincode: applicantData.pincode,
           employment_type: applicantData.employment_type || undefined
         }
       });
@@ -288,6 +294,7 @@ async function addApplicant(case_id, applicantData, tenant_id) {
       pan_number: applicantData.pan_number,
       mobile: applicantData.mobile,
       email: applicantData.email,
+      pincode: applicantData.pincode,
       employment_type: applicantData.employment_type || 'SELF_EMPLOYED'
     }
   });
