@@ -3296,7 +3296,14 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
     });
 
     // 5. Fetch Full Obligations List for Snapshot — already fetched upfront
-    const combinedAnnualIncome = (esr.selected_monthly_income || 0) * 12;
+    const selectedMonthlyIncomeBase = toSafeNumber(esr.selected_monthly_income);
+    const manualIncomeAnnualTotal = auditManualIncomeEntries.reduce((sum, row) => {
+        return sum + (toSafeNumber(row.annual_amount) || 0);
+    }, 0);
+    const manualIncomeMonthlyTotal = auditManualIncomeEntries.reduce((sum, row) => {
+        return sum + (toSafeNumber(row.monthly_amount) || 0);
+    }, 0);
+    const combinedAnnualIncome = (selectedMonthlyIncomeBase * 12) + manualIncomeAnnualTotal;
 
     // 6. Versioning — resolved inside the transaction for concurrency safety.
     // nextVersion is computed here as a baseline, but the authoritative version
@@ -3336,6 +3343,10 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         // Income summary
         selected_income_method: esr.selected_income_method,
         selected_monthly_income: esr.selected_monthly_income,
+        selected_monthly_income_base: selectedMonthlyIncomeBase,
+        manual_income_annual_total: manualIncomeAnnualTotal,
+        manual_income_monthly_total: manualIncomeMonthlyTotal,
+        combined_monthly_income: combinedAnnualIncome / 12,
         combined_annual_income: combinedAnnualIncome,
 
         // Income methods (all four computed)
