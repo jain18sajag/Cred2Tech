@@ -14,7 +14,23 @@ const toNum = (v) => {
  * Extracts Average Bank Balance (ABB) and FY snapshot from raw JSON.
  * Priority: raw_retrieve_response > raw_download_response
  */
-function extractBankFySnapshot(rawPayload) {
+function normalizeSamplingDays(sampleDays) {
+    const days = Array.isArray(sampleDays)
+        ? sampleDays
+        : String(sampleDays || '')
+            .split(',')
+            .map(x => x.trim())
+            .filter(Boolean);
+
+    const normalized = days
+        .map(day => String(day).replace(/[^0-9]/g, ''))
+        .filter(Boolean);
+
+    return normalized.length > 0 ? normalized : ['5', '10', '15', '25'];
+}
+
+function extractBankFySnapshot(rawPayload, options = {}) {
+    const targetDays = normalizeSamplingDays(options.sampleDays);
     const result = {
         latest: null,
         previous: null,
@@ -29,7 +45,7 @@ function extractBankFySnapshot(rawPayload) {
             monthly_abb_table: {}, // { 'Apr 2025': { '5th': 100, '10th': 200, ..., 'Monthly ABB': 150 } }
             final_abb_sum: 0,
             final_abb_months: 0,
-            sampling_days: '5, 10, 15, 25'
+            sampling_days: targetDays.join(', ')
         }
     };
     if (!rawPayload) return result;
@@ -156,7 +172,7 @@ function extractBankFySnapshot(rawPayload) {
         }
     }
 
-    // Task 1: 5th, 10th, 15th, 25th Sampling for ABB
+    // Strict sampled ABB. ICICI uses 5/10/15/25, while HDFC policy uses 5/15/25.
     // ------------------------------------------------
     // If we have the dailyBalance object, use it.
     let sampledLatestAbb = null;
@@ -166,9 +182,8 @@ function extractBankFySnapshot(rawPayload) {
     // Some vendor responses wrap the days inside a 'day' object: { day: { '1': [...], '5': [...] }, month: [...] }
     const daysObj = dailyBal?.day || dailyBal;
 
-    if (daysObj && daysObj['5'] && daysObj['10'] && daysObj['15'] && daysObj['25']) {
+    if (daysObj && targetDays.every(day => daysObj[day])) {
         const monthsData = {}; // { 'Apr 2025': { samples: { '5th': 0, ... }, count: 0 } }
-        const targetDays = ['5', '10', '15', '25'];
 
         for (const day of targetDays) {
             const dayArr = daysObj[day];
@@ -192,10 +207,11 @@ function extractBankFySnapshot(rawPayload) {
 
         const fyTotals = {};
         const fyCounts = {};
+        const requiredSampleCount = targetDays.length;
 
         for (const [monthStr, data] of Object.entries(monthsData)) {
-            if (data.count === 4) {
-                const monthlyAbb = data.sum / 4;
+            if (data.count === requiredSampleCount) {
+                const monthlyAbb = data.sum / requiredSampleCount;
                 result._trace.monthly_abb_table[monthStr] = { ...data.samples, 'Monthly ABB': monthlyAbb };
 
                 let fyKey = 'FY (aggregated)';

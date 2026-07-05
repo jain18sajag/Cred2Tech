@@ -72,48 +72,233 @@ const handleOcrError = (error) => {
 /**
  * Normalizes Cred2Tech parsed data.
  */
-const normalizeSalarySlipResponse = (parsedData) => {
-    if (!parsedData || typeof parsedData !== 'object') {
-        return { gross_salary: null, net_salary: null, deductions: null, employer_name: null, employee_name: null };
-    }
+const VALID_PAN_REGEX = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+const MATCH_STATUS = {
+    MATCHED: 'MATCHED',
+    MISMATCHED: 'MISMATCHED',
+    NOT_AVAILABLE: 'NOT_AVAILABLE',
+    MANUAL_REVIEW: 'MANUAL_REVIEW'
+};
 
-    const extractValue = (obj) => {
-        if (obj && typeof obj === 'object' && obj.value !== undefined) {
-            const val = obj.value;
-            if (typeof val === 'string') {
-                const parsedNum = parseFloat(val.replace(/[^0-9.-]/g, ''));
-                return !isNaN(parsedNum) ? parsedNum : val;
-            }
-            return val;
-        }
-        return null;
+const toNumberOrNull = (value) => {
+    if (value === undefined || value === null || value === '') return null;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    const parsedNum = Number(String(value).replace(/[^0-9.-]/g, ''));
+    return Number.isFinite(parsedNum) ? parsedNum : null;
+};
+
+const extractValue = (obj) => {
+    if (obj && typeof obj === 'object' && obj.value !== undefined) return obj.value;
+    return obj ?? null;
+};
+
+const extractNumericValue = (obj) => toNumberOrNull(extractValue(obj));
+
+const parseSalaryPeriod = (salaryDate) => {
+    const rawValue = salaryDate && typeof salaryDate === 'object' ? salaryDate.value : salaryDate;
+    if (typeof rawValue !== 'string') return { salary_period: null, month: null, year: null };
+    const match = rawValue.trim().match(/^(\d{4})-(\d{2})$/);
+    if (!match) return { salary_period: null, month: null, year: null };
+    return { salary_period: rawValue.trim(), month: match[2], year: match[1] };
+};
+
+const normalizeCallerMonth = (month) => {
+    if (month === null || month === undefined) return null;
+    const raw = String(month).trim();
+    if (!raw) return null;
+
+    const monthNameMap = {
+        january: '01',
+        february: '02',
+        march: '03',
+        april: '04',
+        may: '05',
+        june: '06',
+        july: '07',
+        august: '08',
+        september: '09',
+        october: '10',
+        november: '11',
+        december: '12'
     };
+    const lower = raw.toLowerCase();
+    if (monthNameMap[lower]) return monthNameMap[lower];
 
-    const gross_salary = extractValue(parsedData.gross_salary);
-    const net_salary = extractValue(parsedData.net_salary);
-    
-    // Deductions usually aren't returned explicitly by this endpoint, so we derive it if both gross and net are present
-    let deductions = extractValue(parsedData.deductions);
-    if (deductions === null && gross_salary !== null && net_salary !== null) {
-        deductions = gross_salary - net_salary;
+    const numericMatch = raw.match(/^0?([1-9])$|^(1[0-2])$/);
+    if (!numericMatch) return null;
+
+    return String(Number(raw)).padStart(2, '0');
+};
+
+const findValidPan = (...sources) => {
+    for (const source of sources) {
+        if (!source) continue;
+        const candidates = String(source).toUpperCase().match(/[A-Z]{5}[0-9]{4}[A-Z]/g) || [];
+        const valid = candidates.find(candidate => VALID_PAN_REGEX.test(candidate));
+        if (valid) return valid;
+    }
+    return null;
+};
+
+const normalizeNameForMatch = (name) => String(name || '').toLowerCase().replace(/[^a-z]/g, '');
+
+const resolveNameMatchStatus = (employeeName, applicant = {}) => {
+    if (!employeeName || !applicant?.name) return MATCH_STATUS.NOT_AVAILABLE;
+    return normalizeNameForMatch(employeeName) === normalizeNameForMatch(applicant.name)
+        ? MATCH_STATUS.MATCHED
+        : MATCH_STATUS.MISMATCHED;
+};
+
+const resolvePanMatchStatus = (employeePan, applicant = {}) => {
+    if (!employeePan || !applicant?.pan_number) return MATCH_STATUS.NOT_AVAILABLE;
+    return String(employeePan).toUpperCase() === String(applicant.pan_number).toUpperCase()
+        ? MATCH_STATUS.MATCHED
+        : MATCH_STATUS.MISMATCHED;
+};
+
+const normalizeSalarySlipResponse = (parsedData, options = {}) => {
+    const callerMonth = normalizeCallerMonth(options.month);
+    const callerYear = options.year ? String(options.year) : null;
+    const applicant = options.applicant || null;
+
+    if (!parsedData || typeof parsedData !== 'object') {
+        return {
+            gross_salary: null,
+            net_salary: null,
+            deductions: null,
+            deductions_is_derived: false,
+            employer_name: null,
+            employee_name: null,
+            employee_pan: null,
+            salary_period: null,
+            month: callerMonth,
+            year: callerYear,
+            validation: {
+                period_match_status: MATCH_STATUS.NOT_AVAILABLE,
+                manual_review_required: true,
+                warnings: ['OCR response is empty or invalid.']
+            },
+            name_match_status: MATCH_STATUS.NOT_AVAILABLE,
+            pan_match_status: MATCH_STATUS.NOT_AVAILABLE
+        };
     }
 
-    const employer_name = extractValue(parsedData.employer_name) || null; // Left null as it's not in the example payload
-    const employee_name = extractValue(parsedData.name);
+    const gross_salary = extractNumericValue(parsedData.gross_salary);
+    const net_salary = extractNumericValue(parsedData.net_salary);
+    const explicitDeductions = extractNumericValue(parsedData.deductions);
+    
+    let deductions = explicitDeductions;
+    let deductions_is_derived = false;
+    const warnings = Array.isArray(parsedData.warnings) ? [...parsedData.warnings] : [];
+
+    if (deductions === null && gross_salary !== null && net_salary !== null && gross_salary >= net_salary) {
+        deductions = gross_salary - net_salary;
+        deductions_is_derived = true;
+    } else if (deductions === null && gross_salary !== null && net_salary !== null && gross_salary < net_salary) {
+        warnings.push('Gross salary is lower than net salary; deductions were not derived.');
+    }
+
+    const employer_name = extractValue(parsedData.employer_name) || null;
+    const employee_name = extractValue(parsedData.name) || null;
+    const employee_pan = findValidPan(
+        extractValue(parsedData.employee_pan),
+        parsedData.name?.raw_line,
+        parsedData.pan?.raw_line,
+        parsedData.raw_line
+    );
+    const period = parseSalaryPeriod(parsedData.salary_date);
+
+    let period_match_status = MATCH_STATUS.NOT_AVAILABLE;
+    let manual_review_required = false;
+
+    if (!period.salary_period) {
+        warnings.push('Salary period is missing or not in YYYY-MM format.');
+        manual_review_required = true;
+    } else if (callerMonth && callerYear) {
+        period_match_status = period.month === callerMonth && period.year === callerYear
+            ? MATCH_STATUS.MATCHED
+            : MATCH_STATUS.MISMATCHED;
+        if (period_match_status === MATCH_STATUS.MISMATCHED) {
+            warnings.push(`Caller period ${callerYear}-${callerMonth} differs from OCR period ${period.salary_period}.`);
+            manual_review_required = true;
+        }
+    }
+
+    const name_match_status = resolveNameMatchStatus(employee_name, applicant);
+    const pan_match_status = resolvePanMatchStatus(employee_pan, applicant);
+    if (name_match_status === MATCH_STATUS.MISMATCHED || pan_match_status === MATCH_STATUS.MISMATCHED) {
+        manual_review_required = true;
+    }
 
     return {
         gross_salary,
         net_salary,
         deductions,
+        deductions_is_derived,
         employer_name,
-        employee_name
+        employee_name,
+        employee_pan,
+        salary_period: period.salary_period,
+        month: period.month || callerMonth,
+        year: period.year || callerYear,
+        net_salary_words_match: parsedData.net_salary?.words_match ?? null,
+        pages_processed: Number.isInteger(parsedData.meta?.pages_processed) ? parsedData.meta.pages_processed : null,
+        extraction_source: parsedData.meta?.source || null,
+        ocr_confidence: parsedData.meta?.ocr_confidence ?? null,
+        extraction_checks: Array.isArray(parsedData.checks) ? parsedData.checks : [],
+        extraction_warnings: warnings,
+        name_match_status,
+        pan_match_status,
+        validation: {
+            period_match_status,
+            caller_period: callerMonth && callerYear ? `${callerYear}-${callerMonth}` : null,
+            ocr_period: period.salary_period,
+            manual_review_required,
+            warnings
+        }
     };
+};
+
+const buildSalarySlipOcrDbData = (ocrResultData) => ({
+    ocr_status: ocrResultData.status,
+    vendor_job_id: ocrResultData.vendor_job_id,
+    raw_ocr_response: ocrResultData.raw_ocr_response,
+    extracted_json: ocrResultData.extracted_json,
+    gross_salary: ocrResultData.gross_salary,
+    net_salary: ocrResultData.net_salary,
+    deductions: ocrResultData.deductions,
+    deductions_is_derived: ocrResultData.deductions_is_derived || false,
+    employer_name: ocrResultData.employer_name,
+    employee_name: ocrResultData.employee_name,
+    employee_pan: ocrResultData.employee_pan,
+    salary_period: ocrResultData.salary_period,
+    month: ocrResultData.month,
+    year: ocrResultData.year,
+    net_salary_words_match: ocrResultData.net_salary_words_match,
+    pages_processed: ocrResultData.pages_processed,
+    extraction_source: ocrResultData.extraction_source,
+    ocr_confidence: ocrResultData.ocr_confidence,
+    extraction_checks: ocrResultData.extraction_checks,
+    extraction_warnings: ocrResultData.extraction_warnings,
+    name_match_status: ocrResultData.name_match_status,
+    pan_match_status: ocrResultData.pan_match_status
+});
+
+const hasDuplicateSalaryPeriod = (records = [], candidate = {}) => {
+    return records.some(record =>
+        record &&
+        record.id !== candidate.id &&
+        record.case_id === candidate.case_id &&
+        record.applicant_id === candidate.applicant_id &&
+        String(record.month) === String(candidate.month) &&
+        String(record.year) === String(candidate.year)
+    );
 };
 
 /**
  * Synchronous Upload to Cred2Tech
  */
-async function processSalarySlipSync({ filePath, mimeType, originalName, document_id, case_id, applicant_id, month, year, tenant_id }) {
+async function processSalarySlipSync({ filePath, mimeType, originalName, document_id, case_id, applicant_id, month, year, tenant_id, applicant = null }) {
     if (process.env.FRACTO_OCR_MODE === 'mock') {
         console.log('[fractoSalaryOcr.service] Running in MOCK mode.');
         return mockProcessSalarySlipOcr({ tenant_id, case_id, applicant_id, document_id, month, year });
@@ -135,13 +320,14 @@ async function processSalarySlipSync({ filePath, mimeType, originalName, documen
         });
 
         const data = response.data;
-        const normalized = normalizeSalarySlipResponse(data);
+        const normalized = normalizeSalarySlipResponse(data, { month, year, applicant });
 
         return {
             status: 'COMPLETED',
             vendor_job_id: `C2T-SYNC-${Date.now()}`,
             raw_ocr_response: data,
-            extracted_json: normalized,
+            extracted_json: data,
+            validation: normalized.validation,
             ...normalized
         };
     } catch (error) {
@@ -178,7 +364,7 @@ async function startSalarySlipAsync(params) {
  * Synchronous Batch Upload
  */
 async function processSalarySlipBatchSync(params) {
-    const { files, case_id, applicant_id, tenant_id } = params;
+    const { files, case_id, applicant_id, tenant_id, applicant = null } = params;
 
     if (process.env.FRACTO_OCR_MODE === 'mock') {
         return {
@@ -199,7 +385,8 @@ async function processSalarySlipBatchSync(params) {
                     ...file,
                     case_id,
                     applicant_id,
-                    tenant_id
+                    tenant_id,
+                    applicant
                 });
             } catch (err) {
                 console.error(`[fractoSalaryOcr.service] Single file OCR failed during batch:`, err.message);
@@ -215,10 +402,10 @@ async function processSalarySlipBatchSync(params) {
         return {
             status: 'COMPLETED',
             batchResults: results,
+            ...successful[0],
             vendor_job_id: successful[0].vendor_job_id,
             raw_ocr_response: successful[0].raw_ocr_response,
-            extracted_json: successful[0].extracted_json,
-            ...successful[0].extracted_json
+            extracted_json: successful[0].extracted_json
         };
     } catch (error) {
         throw handleOcrError(error);
@@ -251,7 +438,7 @@ async function startSalarySlipBatchAsync(params) {
 /**
  * Check Async Job Status
  */
-async function getJobStatus(jobId) {
+async function getJobStatus(jobId, options = {}) {
     if (!jobId) throw new Error('Job ID is required to check status.');
 
     // We fetch the record from the DB to see our shimmed completed result
@@ -277,11 +464,12 @@ async function getJobStatus(jobId) {
             };
         }
 
-        const normalized = normalizeSalarySlipResponse(data);
+        const normalized = normalizeSalarySlipResponse(data, options);
         return {
             status: 'COMPLETED',
             raw_ocr_response: data,
-            extracted_json: normalized,
+            extracted_json: data,
+            validation: normalized.validation,
             ...normalized
         };
     }
@@ -295,5 +483,7 @@ module.exports = {
     startSalarySlipAsync,
     startSalarySlipBatchAsync,
     getJobStatus,
-    normalizeSalarySlipResponse
+    normalizeSalarySlipResponse,
+    buildSalarySlipOcrDbData,
+    hasDuplicateSalaryPeriod
 };

@@ -356,7 +356,17 @@ function buildSalariedLog(esr) {
         {
             salariedIncome: esr.salaried_income || null,
             salariedIncomeSource: esr.salaried_income_source || null,
-            salariedSlipCount: esr.salaried_slip_count || null
+            salariedSlipCount: esr.salaried_slip_count || null,
+            salariedGrossMonthly: esr.salaried_gross_monthly || null,
+            salariedNetMonthly: esr.salaried_net_monthly || null,
+            salariedDeductionsMonthly: esr.salaried_deductions_monthly || null,
+            salariedMonthsAvailable: esr.salaried_months_available || null,
+            salariedMonthsRequired: esr.salaried_months_required || null,
+            salariedPeriodFrom: esr.salaried_period_from || null,
+            salariedPeriodTo: esr.salaried_period_to || null,
+            salariedDataComplete: esr.salaried_data_complete ?? null,
+            bankNetSalaryMonthly: esr.bank_net_salary_monthly || null,
+            bankSalaryMonthsAvailable: esr.bank_salary_months_available || null
         }
     );
     const finalIncome = baseSalary + incentives + otherIncome;
@@ -371,6 +381,12 @@ function buildSalariedLog(esr) {
         warnings.push('Base salaried income is missing; only incentives or other eligible income were found.');
         manualReviewRequired = true;
     }
+    const monthsAvailable = toNumber(esr.salaried_months_available) || 0;
+    const monthsRequired = toNumber(esr.salaried_months_required) || 0;
+    if (monthsRequired > 0 && monthsAvailable > 0 && monthsAvailable < monthsRequired) {
+        warnings.push(`Only ${monthsAvailable} unique salary month(s) available; ${monthsRequired} required for complete salaried assessment.`);
+        manualReviewRequired = true;
+    }
 
     return buildLogEntry({
         methodName: 'Salaried',
@@ -380,6 +396,17 @@ function buildSalariedLog(esr) {
             salariedIncome: esr.salaried_income || null,
             salariedIncomeSource: esr.salaried_income_source || null,
             salariedSlipCount: esr.salaried_slip_count || null,
+            salariedGrossMonthly: esr.salaried_gross_monthly || null,
+            salariedNetMonthly: esr.salaried_net_monthly || null,
+            salariedDeductionsMonthly: esr.salaried_deductions_monthly || null,
+            salariedMonthsAvailable: esr.salaried_months_available || null,
+            salariedMonthsRequired: esr.salaried_months_required || null,
+            salariedPeriodFrom: esr.salaried_period_from || null,
+            salariedPeriodTo: esr.salaried_period_to || null,
+            salariedDataComplete: esr.salaried_data_complete ?? null,
+            salariedSource: esr.salaried_source || null,
+            bankNetSalaryMonthly: esr.bank_net_salary_monthly || null,
+            bankSalaryMonthsAvailable: esr.bank_salary_months_available || null,
             salariedIncentiveIncome: esr.salaried_incentive_income || null,
             salariedOtherIncome: esr.salaried_other_income || null
         },
@@ -391,7 +418,7 @@ function buildSalariedLog(esr) {
         },
         finalMonthlyIncome: finalIncome > 0 ? finalIncome : 0,
         warnings,
-        manualReviewRequired: baseSalary <= 0 && (incentives > 0 || otherIncome > 0),
+        manualReviewRequired,
         ignored
     });
 }

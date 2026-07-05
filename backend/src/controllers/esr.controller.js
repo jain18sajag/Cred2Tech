@@ -59,6 +59,73 @@ async function get(req, res) {
   }
 }
 
+async function recalculate(req, res) {
+  try {
+    _setNoStoreHeaders(res);
+    const caseId = parseInt(req.params.id, 10);
+    const userId = req.user.id;
+    const result = await esrService.recalculateESR(caseId, userId, req.user.tenant_id);
+    const scrubbedResult = _scrubESRResult(result, req.user.role);
+    res.json(scrubbedResult);
+  } catch (err) {
+    if (err.message === 'Case not found or unauthorized.') return res.status(403).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Failed to recalculate ESR.' });
+  }
+}
+
+async function listLogs(req, res) {
+  try {
+    _setNoStoreHeaders(res);
+    const caseId = parseInt(req.params.id, 10);
+    const result = await esrService.listESRLogs(caseId, req.user.tenant_id);
+    res.json(result);
+  } catch (err) {
+    if (err.message === 'Case not found or unauthorized.') return res.status(403).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch ESR logs.' });
+  }
+}
+
+async function getLog(req, res) {
+  try {
+    _setNoStoreHeaders(res);
+    const caseId = parseInt(req.params.id, 10);
+    const result = await esrService.getESRLog(caseId, req.user.tenant_id, req.params.calculationRunId);
+    res.json(result);
+  } catch (err) {
+    if (err.message === 'Case not found or unauthorized.') return res.status(403).json({ error: err.message });
+    if (err.message.includes('not found')) return res.status(404).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch ESR log.' });
+  }
+}
+
+async function downloadLog(req, res) {
+  try {
+    _setNoStoreHeaders(res);
+    const caseId = parseInt(req.params.id, 10);
+    const file = await esrService.downloadESRLog(
+      caseId,
+      req.user.tenant_id,
+      req.params.calculationRunId,
+      req.query.format || 'json'
+    );
+    res.setHeader('Content-Type', file.contentType);
+    if (file.stream) {
+      res.setHeader('Content-Disposition', `attachment; filename="${file.fileName}"`);
+      return file.stream.pipe(res);
+    }
+    res.download(file.filePath, file.fileName);
+  } catch (err) {
+    if (err.message === 'Case not found or unauthorized.') return res.status(403).json({ error: err.message });
+    if (err.message.includes('not found')) return res.status(404).json({ error: err.message });
+    if (err.message.includes('Unsupported')) return res.status(400).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Failed to download ESR log.' });
+  }
+}
+
 function _setNoStoreHeaders(res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
@@ -66,4 +133,11 @@ function _setNoStoreHeaders(res) {
   res.setHeader('Surrogate-Control', 'no-store');
 }
 
-module.exports = { generate, get };
+module.exports = {
+  generate,
+  get,
+  recalculate,
+  listLogs,
+  getLog,
+  downloadLog
+};

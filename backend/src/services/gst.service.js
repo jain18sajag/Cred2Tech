@@ -1,5 +1,5 @@
 const prisma = require('../../config/db');
-const { extractAllGstSummaries } = require('./financial.extractor');
+const { extractGstDetails, extractAllGstSummaries } = require('./financial.extractor');
 
 /**
  * Idempotent service to finalize a GST Analytics Request.
@@ -26,6 +26,9 @@ async function finalizeGstAnalyticsRequest(requestId, tenantId) {
 
     try {
         const summaries = extractAllGstSummaries(request.raw_fetch_data, request.raw_report_data);
+        const reportSnapshot = request.raw_report_data
+            ? extractGstDetails(request.raw_report_data)
+            : extractGstDetails(request.raw_fetch_data);
 
         // Perform the updates in a transaction
         await prisma.$transaction(async (tx) => {
@@ -60,7 +63,16 @@ async function finalizeGstAnalyticsRequest(requestId, tenantId) {
                     processing_version: newVersion,
                     metrics_status: 'COMPLETED',
                     status: 'COMPLETED',
-                    metrics_extracted_at: new Date()
+                    metrics_extracted_at: new Date(),
+                    turnover_latest_year: reportSnapshot.turnover_latest_year,
+                    financial_year_latest: reportSnapshot.financial_year_latest,
+                    avg_monthly_turnover: reportSnapshot.avg_monthly_turnover,
+                    months_filed_12m: reportSnapshot.months_filed_12m,
+                    nil_return_months: reportSnapshot.nil_return_months,
+                    rolling_12_month_turnover: reportSnapshot.turnover_latest_year,
+                    rolling_12_month_end_period: reportSnapshot.financial_year_latest,
+                    selected_turnover_latest_fy: reportSnapshot.turnover_latest_year,
+                    selected_turnover_source: 'GSTR1_GROSS_SALES_ROLLING_12M'
                 }
             });
         });

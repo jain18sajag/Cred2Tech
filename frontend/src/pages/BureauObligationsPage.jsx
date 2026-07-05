@@ -83,8 +83,16 @@ export default function BureauObligationsPage() {
   const handleGenerateESR = async () => {
     try {
       setGenerating(true);
-      await caseService.generateESR(caseId);
-      toast.success('Eligibility Report generated!');
+      let hasExistingESR = false;
+      try {
+        await caseService.getESR(caseId);
+        hasExistingESR = true;
+      } catch (e) {
+        if (e.response?.status !== 404) throw e;
+      }
+
+      await (hasExistingESR ? caseService.recalculateESR(caseId) : caseService.generateESR(caseId));
+      toast.success(`Eligibility Report ${hasExistingESR ? 'regenerated' : 'generated'}!`);
       navigate(`/cases/${caseId}/esr`);
     } catch (e) {
       toast.error(e.response?.data?.error || 'Failed to generate ESR');

@@ -194,6 +194,7 @@ class DataPullWorker {
         let finalStatusMsg = null;
         let httpStatus = null;
         let resultState = 'SUCCESS';
+        let gstFetchPayload = null;
 
         try {
             // 2. Network Call based on Pull Type
@@ -225,7 +226,8 @@ class DataPullWorker {
                 const res = await gstService.fetchData(job.provider_request_id);
                 httpStatus = 200;
                 
-                if (res && res.gstr1 && res.gstr3b) {
+                if (hasUsableGstFetchPayload(res)) {
+                    gstFetchPayload = res;
                     isCompleted = true;
                 }
             } else if (job.pull_type === 'BANK') {
@@ -323,7 +325,10 @@ class DataPullWorker {
                     } else if (job.pull_type === 'GST') {
                         await tx.gstrAnalyticsRequest.update({
                             where: { id: job.module_request_id },
-                            data: { status: termStatus }
+                            data: {
+                                status: termStatus,
+                                raw_fetch_data: gstFetchPayload || undefined
+                            }
                         });
                     } else if (job.pull_type === 'BANK') {
                         await tx.bankStatementAnalysisRequest.update({
@@ -415,3 +420,11 @@ class DataPullWorker {
 
 const worker = new DataPullWorker();
 module.exports = worker;
+
+function hasUsableGstFetchPayload(dataRes) {
+    if (!dataRes || typeof dataRes !== 'object') return false;
+    if (dataRes.gstin || dataRes.gstr1 || dataRes.gstr3b) return true;
+    if (dataRes.data?.gstin || dataRes.data?.gstr1 || dataRes.data?.gstr3b) return true;
+    if (dataRes.result?.gstin || dataRes.result?.gstr1 || dataRes.result?.gstr3b) return true;
+    return false;
+}

@@ -960,11 +960,14 @@ export default function EsrPage() {
   const handleGenerate = async () => {
     try {
       setGenerating(true);
-      const result = await caseService.generateESR(caseId);
+      const result = esr
+        ? await caseService.recalculateESR(caseId)
+        : await caseService.generateESR(caseId);
       await load();
-      toast.success(`ESR generated! ${result.eligible_count} lender(s) eligible.`);
+      const eligibleCount = result.eligible_count ?? result.eligible_lenders_count ?? (result.lenders || []).filter(l => l.is_eligible).length;
+      toast.success(`ESR ${esr ? 'regenerated' : 'generated'}! ${eligibleCount} lender(s) eligible.`);
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Failed to generate ESR');
+      toast.error(e.response?.data?.error || `Failed to ${esr ? 'regenerate' : 'generate'} ESR`);
     } finally {
       setGenerating(false);
     }
