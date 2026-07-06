@@ -529,6 +529,10 @@ function _buildLenderMethodCalculationRows(lenderResults, inputSnapshot) {
                 pos_deduction: _money(posDeduction),
                 final_eligibility_formula: finalFormula,
                 final_eligible_amount: _money(finalEligible),
+                dynamic_npm_foir_percent: _percent(evaluation.dynamic_npm_foir_percent),
+                actual_final_ltv_percent: _percent(evaluation.actual_final_ltv_percent),
+                double_whammy_total_percent: _percent(evaluation.double_whammy_total_percent),
+                combined_household_foir_percent: _percent(actualFoir),
                 co_applicant_salary_addon: coApp ? _money(coApp.eligibleLoanAmount) : null,
                 income_breakdown: evaluation.eligible_income_breakdown || null
             });
@@ -639,6 +643,10 @@ function _tenureFormulaForEvaluation(inputSnapshot, lenderMaxTenure, ageBasedTen
 
 function _loanFormulaForEvaluation(methodName, evaluation, incomeBasedLoan, proposedEmi, tenure, roi, coApp) {
     const method = String(methodName || '').toUpperCase();
+    if (evaluation.combined_double_whammy_breakdown) {
+        const dw = evaluation.combined_double_whammy_breakdown;
+        return `Combined Double Whammy: K ${Number(dw.emiMultiplier || 0).toFixed(4)} x (Primary income ${_money(dw.primaryMonthlyIncome ?? dw.netProfitMonthly)} x DW ${_percent(dw.doubleWhammyPercent)} + Other EMI ${_money(dw.otherEmiCapacity)}) / (1 + K x Primary income / Property ${_money(dw.propertyValue)}) = ${_money(dw.doubleWhammyEligibleLoan)}; FOIR cap <= ${_percent(dw.maxFoirPercent)} gives ${_money(dw.foirCapEligibleLoan)}; Income eligible = ${_money(dw.incomeEligibleLoan)}`;
+    }
     if (method.includes('GRP') || method.includes('GROSS RECEIPT')) {
         return `Gross Receipts x lender multiplier - exposure = ${_money(incomeBasedLoan)}`;
     }

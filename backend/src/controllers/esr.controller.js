@@ -11,7 +11,7 @@ async function generate(req, res) {
   } catch (err) {
     if (err.message === 'Case not found or unauthorized.') return res.status(403).json({ error: err.message });
     console.error(err);
-    res.status(500).json({ error: 'Failed to generate ESR.' });
+    _sendEsrError(res, 'Failed to generate ESR.', err);
   }
 }
 
@@ -70,7 +70,7 @@ async function recalculate(req, res) {
   } catch (err) {
     if (err.message === 'Case not found or unauthorized.') return res.status(403).json({ error: err.message });
     console.error(err);
-    res.status(500).json({ error: 'Failed to recalculate ESR.' });
+    _sendEsrError(res, 'Failed to recalculate ESR.', err);
   }
 }
 
@@ -131,6 +131,14 @@ function _setNoStoreHeaders(res) {
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Surrogate-Control', 'no-store');
+}
+
+function _sendEsrError(res, fallbackMessage, err) {
+  const message = err?.message || fallbackMessage;
+  res.status(500).json({
+    error: message,
+    fallback_error: fallbackMessage
+  });
 }
 
 module.exports = {

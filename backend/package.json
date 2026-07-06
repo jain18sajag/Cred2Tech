@@ -41,5 +41,10 @@
   },
   "prisma": {
     "seed": "node prisma/seed.js"
+  },
+  "nodemonConfig": {
+    "ignore": [
+      "logs/**"
+    ]
   }
 }

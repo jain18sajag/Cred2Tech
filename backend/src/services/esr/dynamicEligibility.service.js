@@ -114,6 +114,13 @@ function normalizeIncomeMethod(method) {
     return method;
 }
 
+function findSalariedSchemeParamMap(product) {
+    const salariedScheme = (product?.schemes || []).find(scheme =>
+        String(normalizeIncomeMethod(scheme?.scheme_name) || '').toUpperCase() === 'SALARIED'
+    );
+    return salariedScheme ? getParamMap(salariedScheme.parameter_values) : null;
+}
+
 
 // ------ LENDER POLICY REGISTRY ------
 // Keep lender/bank/NBFC rules isolated here. Do NOT hardcode one bank's logic
@@ -1923,17 +1930,7 @@ function resolveAgeMaturityParam(raw, defaultVal, monthlyIncome = 0) {
 }
 
 function calculateAgeFromDob(dob) {
-    if (!dob) return null;
-    const raw = String(dob).trim();
-    let parsed = null;
-
-    const dmy = raw.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
-    if (dmy) {
-        parsed = new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]));
-    } else {
-        parsed = new Date(raw);
-    }
-
+    const parsed = parseDobDate(dob);
     if (!parsed || Number.isNaN(parsed.getTime())) return null;
     const today = new Date();
     let age = today.getFullYear() - parsed.getFullYear();
@@ -1944,50 +1941,164 @@ function calculateAgeFromDob(dob) {
     return age > 0 && age < 120 ? age : null;
 }
 
-function calculateAgeBasedTenureLimit(applicants, paramMap, warnings, policyWarnings, esr = {}) {
-    const getIntParam = (key, defaultVal = null) => {
-        const raw = paramMap[key];
+function parseDobDate(dob) {
+    if (!dob) return null;
+    const raw = String(dob).trim();
+    if (!raw) return null;
+    let parsed = null;
+
+    const dmy = raw.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+    if (dmy) {
+        parsed = new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]));
+    } else {
+        parsed = new Date(raw);
+    }
+
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getApplicantDob(app) {
+    return app?.dob || app?.pan_verified_dob || app?.date_of_birth || app?.birth_date || null;
+}
+
+function calculateAgeBasedTenureMonthsFromDob(dob, maturityAge) {
+    const parsed = parseDobDate(dob);
+    const maturity = Number(maturityAge);
+    if (!parsed || !Number.isFinite(maturity) || maturity <= 0) return null;
+
+    const today = new Date();
+    const maturityDate = new Date(parsed);
+    maturityDate.setFullYear(parsed.getFullYear() + maturity);
+    const baseMonths = (maturityDate.getFullYear() - today.getFullYear()) * 12
+        + (maturityDate.getMonth() - today.getMonth());
+    const dayAdjustment = maturityDate.getDate() < today.getDate() ? 1 : 0;
+    const months = maturityDate <= today ? 0 : Math.max(0, baseMonths - dayAdjustment);
+
+    return {
+        months,
+        dob: parsed.toISOString().slice(0, 10),
+        calculationDate: today.toISOString().slice(0, 10),
+        maturityDate: maturityDate.toISOString().slice(0, 10),
+        baseMonths,
+        dayAdjustment,
+        calculation: `${baseMonths} - ${dayAdjustment} = ${months}`
+    };
+}
+
+function getApplicantAge(app) {
+    let appAge = Number(app?.age);
+    if (!Number.isFinite(appAge) || appAge <= 0) {
+        const dobAge = calculateAgeFromDob(getApplicantDob(app));
+        if (dobAge) appAge = dobAge;
+    }
+    if (!Number.isFinite(appAge) || appAge <= 0) {
+        if (app?.bureau_checks && app.bureau_checks.length > 0) {
+            const check = app.bureau_checks[0];
+            if (check.raw_response) {
+                try {
+                    const rawBureau = typeof check.raw_response === 'string' ? JSON.parse(check.raw_response) : check.raw_response;
+                    const ageVal = rawBureau?.verifiedData?.ResponseData?.data?.age;
+                    if (ageVal) appAge = Number(ageVal);
+                } catch { }
+            }
+        }
+    }
+    return Number.isFinite(appAge) && appAge > 0 ? appAge : null;
+}
+
+function isPrimaryApplicant(app, index = 0) {
+    const type = String(app?.type || app?.applicant_type || '').toUpperCase();
+    return app?.is_primary === true
+        || type.includes('PRIMARY')
+        || (!app?.is_primary && !type.includes('CO') && index === 0);
+}
+
+function calculateAgeBasedTenureResolution(applicants, paramMap, warnings, policyWarnings, esr = {}, options = {}) {
+    const getIntParam = (sourceMap, key, defaultVal = null) => {
+        const raw = sourceMap?.[key];
         return resolveAgeMaturityParam(raw, defaultVal, Number(esr.selected_monthly_income) || Number(esr.salaried_income) || 0);
     };
 
-    const ageMaturityIncome = getIntParam('age_maturity_income', 60);
-    const ageMaturityNonIncome = getIntParam('age_maturity_non_income', 75);
+    const ageMaturityIncome = getIntParam(paramMap, 'age_maturity_income', 60);
+    const ageMaturityNonIncome = getIntParam(paramMap, 'age_maturity_non_income', 75);
+    const salariedParamMap = options.salariedParamMap || null;
+    const salariedAgeMaturityIncome = salariedParamMap
+        ? getIntParam(salariedParamMap, 'age_maturity_income', ageMaturityIncome)
+        : ageMaturityIncome;
+    const includeCoApplicants = options.includeCoApplicants === true;
 
     let lowestLimitMonths = Infinity;
+    let restrictionSource = null;
+    const rows = [];
 
     if (Array.isArray(applicants)) {
-        for (const app of applicants) {
-            let appAge = Number(app.age);
-            if (isNaN(appAge) || appAge <= 0) {
-                const dobAge = calculateAgeFromDob(app.dob);
-                if (dobAge) appAge = dobAge;
+        for (const [index, app] of applicants.entries()) {
+            const isPrimary = isPrimaryApplicant(app, index);
+            const role = isPrimary ? 'Applicant' : 'Co-applicant';
+            if (!isPrimary && !includeCoApplicants) {
+                rows.push({
+                    role,
+                    name: app?.name || null,
+                    dob: getApplicantDob(app),
+                    incomeConsideredForTenure: false,
+                    ignoredReason: 'Co-applicant income not considered'
+                });
+                continue;
             }
-            if (isNaN(appAge) || appAge <= 0) {
-                if (app.bureau_checks && app.bureau_checks.length > 0) {
-                    const check = app.bureau_checks[0];
-                    if (check.raw_response) {
-                        try {
-                            const rawBureau = typeof check.raw_response === 'string' ? JSON.parse(check.raw_response) : check.raw_response;
-                            const ageVal = rawBureau?.verifiedData?.ResponseData?.data?.age;
-                            if (ageVal) appAge = Number(ageVal);
-                        } catch { }
-                    }
-                }
+
+            const appAge = getApplicantAge(app);
+            if (!appAge) {
+                rows.push({
+                    role,
+                    name: app?.name || null,
+                    dob: getApplicantDob(app),
+                    incomeConsideredForTenure: isPrimary || includeCoApplicants,
+                    ignoredReason: 'Age/DOB not available'
+                });
+                continue;
             }
-            if (isNaN(appAge) || appAge <= 0) continue;
 
             // Primary applicants and employed applicants with standard employment types are income considered.
             // Non-working co-applicants / guarantors (NA employment type) are non-income considered.
-            const isIncomeConsidered = app.is_primary || (app.employment_type && app.employment_type !== 'NA');
-            const limitAge = isIncomeConsidered ? ageMaturityIncome : ageMaturityNonIncome;
+            const isIncomeConsidered = isPrimary || includeCoApplicants;
+            const useSalariedMaturityForCoApplicant = !isPrimary && includeCoApplicants && salariedParamMap;
+            const limitAge = useSalariedMaturityForCoApplicant
+                ? salariedAgeMaturityIncome
+                : (isIncomeConsidered ? ageMaturityIncome : ageMaturityNonIncome);
+            const maturitySource = useSalariedMaturityForCoApplicant
+                ? 'Salaried scheme age_maturity_income'
+                : (isIncomeConsidered ? 'Current scheme age_maturity_income' : 'Current scheme age_maturity_non_income');
 
             if (limitAge) {
-                const allowedMonths = Math.max(0, (limitAge - appAge) * 12);
+                const dob = getApplicantDob(app);
+                const dobTenure = calculateAgeBasedTenureMonthsFromDob(dob, limitAge);
+                const allowedMonths = dobTenure !== null
+                    ? dobTenure.months
+                    : Math.max(0, (limitAge - appAge) * 12);
+                rows.push({
+                    role,
+                    name: app?.name || null,
+                    dob,
+                    currentAge: appAge,
+                    maturityAge: limitAge,
+                    maturitySource,
+                    incomeConsideredForTenure: true,
+                    tenureMonths: allowedMonths,
+                    maturityDate: dobTenure?.maturityDate || null,
+                    calculationDate: dobTenure?.calculationDate || null,
+                    baseMonths: dobTenure?.baseMonths ?? null,
+                    dayAdjustment: dobTenure?.dayAdjustment ?? null,
+                    monthCalculation: dobTenure?.calculation || null,
+                    formula: dobTenure !== null
+                        ? `DOB maturity date (${dob} + ${limitAge} years) minus today`
+                        : `(${limitAge} - ${appAge}) * 12`
+                });
                 if (allowedMonths < lowestLimitMonths) {
                     lowestLimitMonths = allowedMonths;
+                    restrictionSource = role;
                 }
                 if (allowedMonths <= 0) {
-                    const warn = `Applicant age ${appAge} exceeds maturity age limit of ${limitAge} for ${app.is_primary ? 'Primary' : 'Co-applicant'}.`;
+                    const warn = `Applicant age ${appAge} exceeds maturity age limit of ${limitAge} for ${isPrimary ? 'Primary' : 'Co-applicant'}.`;
                     warnings.push(warn);
                     policyWarnings.push(warn);
                 }
@@ -1995,7 +2106,16 @@ function calculateAgeBasedTenureLimit(applicants, paramMap, warnings, policyWarn
         }
     }
 
-    return lowestLimitMonths === Infinity ? null : lowestLimitMonths;
+    return {
+        limitMonths: lowestLimitMonths === Infinity ? null : lowestLimitMonths,
+        restrictionSource,
+        rows,
+        includeCoApplicants
+    };
+}
+
+function calculateAgeBasedTenureLimit(applicants, paramMap, warnings, policyWarnings, esr = {}, options = {}) {
+    return calculateAgeBasedTenureResolution(applicants, paramMap, warnings, policyWarnings, esr, options).limitMonths;
 }
 
 // ------ FINANCIAL MATH HELPERS ------
@@ -2018,6 +2138,16 @@ function calculateMaxLoanAmount(eligibleEmi, annualRoi, tenureMonths) {
     return Number.isFinite(P) ? Math.round(P) : 0;
 }
 
+function calculateEmiMultiplier(annualRoi, tenureMonths) {
+    const normRoi = normalizeRoi(annualRoi);
+    if (!normRoi || tenureMonths <= 0) return 0;
+    const R = normRoi / 12;
+    const N = tenureMonths;
+    if (R === 0) return N;
+    const multiplier = (Math.pow(1 + R, N) - 1) / (R * Math.pow(1 + R, N));
+    return Number.isFinite(multiplier) ? multiplier : 0;
+}
+
 function calculateDoubleWhammyFoirFromLtv(conditionalFlags, applicableLtvPercent) {
     if (!conditionalFlags || conditionalFlags.type !== 'conditional_foir') return null;
     if (conditionalFlags.special_program !== 'double_wammy') return null;
@@ -2027,6 +2157,57 @@ function calculateDoubleWhammyFoirFromLtv(conditionalFlags, applicableLtvPercent
     if (!Number.isFinite(specialLimit) || specialLimit <= 0) return null;
 
     return Math.max(0, (specialLimit / 100) - Number(applicableLtvPercent));
+}
+
+function calculateCombinedDoubleWhammyEligibility({ primaryMonthlyIncome, otherEmiCapacity = 0, propertyValue, roi, tenureMonths, conditionalFlags }) {
+    const primaryIncome = Number(primaryMonthlyIncome) || 0;
+    const o = Number(otherEmiCapacity) || 0;
+    const value = Number(propertyValue) || 0;
+    const tenure = Number(tenureMonths) || 0;
+    const specialLimit = Number(conditionalFlags?.special_limit) || 140;
+    const maxFoirLimit = Number(conditionalFlags?.base_limit) || 100;
+    const doubleWhammyPercent = specialLimit / 100;
+    const maxFoirPercent = maxFoirLimit / 100;
+    const emiMultiplier = calculateEmiMultiplier(roi, tenure);
+
+    if (primaryIncome <= 0 || value <= 0 || emiMultiplier <= 0) {
+        return null;
+    }
+
+    const doubleWhammyEligibleLoan = Math.max(0, Math.round(
+        (emiMultiplier * ((primaryIncome * doubleWhammyPercent) + o)) /
+        (1 + ((emiMultiplier * primaryIncome) / value))
+    ));
+    const foirCapEligibleLoan = Math.max(0, Math.round(
+        emiMultiplier * ((primaryIncome * maxFoirPercent) + o)
+    ));
+
+    const incomeEligibleLoan = Math.max(0, Math.min(doubleWhammyEligibleLoan, foirCapEligibleLoan));
+    const proposedEmiAtIncomeLoan = incomeEligibleLoan > 0 ? calculateEMI(incomeEligibleLoan, roi, tenure) : 0;
+    const primaryIncomeEmi = Math.max(0, proposedEmiAtIncomeLoan - o);
+    const primaryIncomeFoirPercent = primaryIncome > 0 ? primaryIncomeEmi / primaryIncome : null;
+    const actualLtvPercent = value > 0 ? incomeEligibleLoan / value : null;
+    const doubleWhammyActualPercent = primaryIncomeFoirPercent !== null && actualLtvPercent !== null
+        ? primaryIncomeFoirPercent + actualLtvPercent
+        : null;
+
+    return {
+        primaryMonthlyIncome: primaryIncome,
+        netProfitMonthly: primaryIncome,
+        otherEmiCapacity: o,
+        propertyValue: value,
+        emiMultiplier,
+        doubleWhammyPercent,
+        maxFoirPercent,
+        doubleWhammyEligibleLoan,
+        foirCapEligibleLoan,
+        incomeEligibleLoan,
+        proposedEmiAtIncomeLoan,
+        primaryIncomeEmi,
+        primaryIncomeFoirPercent,
+        actualLtvPercent,
+        doubleWhammyActualPercent
+    };
 }
 
 
@@ -2419,6 +2600,22 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         && isBankingMethod
         && `${rawObligationRule || ''} ${paramMap['banking_obligation_treatment'] || ''}`.toUpperCase().includes('ADD_EMI_TO_ABB');
 
+    const methodAllowsCoApplicantSalaryAddon =
+        !isSalariedMethod
+        && !isGrpMethod
+        && (
+            isDscrMethod
+            || (lenderPolicy.key === 'HDFC' && isBankingMethod)
+            || String(scheme.scheme_name || '').toUpperCase().includes('GST')
+            || String(scheme.scheme_name || '').toUpperCase().includes('NET PROFIT')
+            || String(scheme.scheme_name || '').toUpperCase().includes('NPM')
+        );
+    const coApplicantSalaryForTenure = methodAllowsCoApplicantSalaryAddon
+        ? getCoApplicantSalaryMonthly({ esr, incomeEntries, applicants })
+        : { monthlySalary: 0, source: 'NOT_ALLOWED_FOR_METHOD' };
+    const includeCoApplicantAgeForTenure = coApplicantSalaryForTenure.monthlySalary > 0;
+    const salariedSchemeParamMap = includeCoApplicantAgeForTenure ? findSalariedSchemeParamMap(product) : null;
+
     if (addEmiToAbb) {
         const addToAbbAmount = (netObligationsResult.active || []).reduce((sum, obl) => sum + (Number(obl.emi_per_month) || 0), 0);
         const originalAbb = toSafeNumber(esr.bank_avg_balance);
@@ -2459,23 +2656,34 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const maxTenureRes = getParamTenure(paramMap, `${pref}_max_tenure`);
     let maxTenureMonths = handleParseResult(maxTenureRes, `${pref}_max_tenure`);
     logger?.traceParser('parseTenureSafe', `${pref}_max_tenure`, maxTenureRes.raw, maxTenureRes);
-    if (lenderPolicy.key === 'HDFC' && isBankingMethod) {
-        const hdfcBankingTenure = lenderPolicy.banking?.defaultTenureMonths || 180;
-        if (!maxTenureMonths || maxTenureMonths < hdfcBankingTenure) {
-            warnings.push(`HDFC Banking tenure corrected to ${hdfcBankingTenure} months as per HDFC LAP Banking policy.`);
-            maxTenureMonths = hdfcBankingTenure;
-        }
-    }
-    const ageBasedLimit = calculateAgeBasedTenureLimit(applicants, paramMap, warnings, policyWarnings, esr);
+    const ageTenureResolution = calculateAgeBasedTenureResolution(applicants, paramMap, warnings, policyWarnings, esr, {
+        includeCoApplicants: includeCoApplicantAgeForTenure,
+        salariedParamMap: salariedSchemeParamMap
+    });
+    const ageBasedLimit = ageTenureResolution.limitMonths;
 
     let final_tenure_used = maxTenureMonths || 0;
     if (ageBasedLimit !== null && ageBasedLimit !== Infinity) {
         final_tenure_used = Math.min(final_tenure_used, ageBasedLimit);
     }
 
+    const ageTenureTraceLines = (ageTenureResolution.rows || []).map((row, idx) => {
+        if (row.ignoredReason) {
+            return `Age Calc ${idx + 1} (${row.role}): DOB=${row.dob || 'N/A'} | ${row.ignoredReason}`;
+        }
+        const monthCalc = row.monthCalculation
+            ? ` | Maturity Date=${row.maturityDate} | Calculation Date=${row.calculationDate} | Month Calc=${row.monthCalculation}`
+            : '';
+        return `Age Calc ${idx + 1} (${row.role}): DOB=${row.dob || 'N/A'} | Current Age=${row.currentAge ?? 'N/A'} | Maturity Age=${row.maturityAge ?? 'N/A'} | Maturity Source=${row.maturitySource || 'N/A'} | Formula=${row.formula}${monthCalc} | Age Tenure=${row.tenureMonths} months`;
+    });
+
     logger?.traceStep('STEP 5 — TENURE RESOLUTION', [
         `Lender Max Tenure:    ${maxTenureMonths ?? 'N/A'} months`,
+        ...ageTenureTraceLines,
         `Age-Based Limit:      ${ageBasedLimit !== null && ageBasedLimit !== Infinity ? ageBasedLimit + ' months' : 'No restriction'}`,
+        `Age Restriction Source: ${ageTenureResolution.restrictionSource || 'N/A'}`,
+        `Co-applicant Income Considered For Tenure: ${includeCoApplicantAgeForTenure ? 'Yes' : 'No'}`,
+        `Final Tenure Formula: MIN(${maxTenureMonths ?? 'N/A'}, ${ageBasedLimit !== null && ageBasedLimit !== Infinity ? ageBasedLimit : 'No age cap'})`,
         `Final Tenure Used:    ${final_tenure_used} months`,
     ].join('\n'));
 
@@ -2615,21 +2823,9 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
 
     let coApplicantSalaryAddon = null;
     let coApplicantSalaryAddonApplied = false;
-    const methodAllowsCoApplicantSalaryAddon =
-        !isSalariedMethod
-        && (
-            isGrpMethod
-            || isDscrMethod
-            || (lenderPolicy.key === 'HDFC' && isBankingMethod)
-            || String(scheme.scheme_name || '').toUpperCase().includes('GST')
-            || String(scheme.scheme_name || '').toUpperCase().includes('NET PROFIT')
-            || String(scheme.scheme_name || '').toUpperCase().includes('NPM')
-        );
 
     if (methodAllowsCoApplicantSalaryAddon && underwriting_roi_used > 0 && final_tenure_used > 0) {
-        const coApplicantAddonTenure = lenderPolicy.key === 'HDFC' && isBankingMethod
-            ? 120
-            : final_tenure_used;
+        const coApplicantAddonTenure = final_tenure_used;
         const coApplicantAddonRoi = lenderPolicy.key === 'HDFC' && isBankingMethod
             ? (roi_max || underwriting_roi_used)
             : underwriting_roi_used;
@@ -2738,14 +2934,14 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         logger?.traceWarning('STEP 8 — FOIR-BASED LOAN: Could not calculate (zero EMI capacity, ROI or tenure)');
     }
 
-    if ((isGrpMethod || (lenderPolicy.key === 'HDFC' && isBankingMethod)) && coApplicantSalaryAddon?.eligibleLoanAmount > 0) {
+    if ((lenderPolicy.key === 'HDFC' && isBankingMethod) && coApplicantSalaryAddon?.eligibleLoanAmount > 0) {
         foir_based_eligible_loan_amount += coApplicantSalaryAddon.eligibleLoanAmount;
         coApplicantSalaryAddonApplied = true;
-        warnings.push(`Co-applicant salary eligibility added to ${isBankingMethod ? 'HDFC Banking' : 'GRP'} direct method: loan add-on ${coApplicantSalaryAddon.eligibleLoanAmount.toLocaleString()}.`);
+        warnings.push(`Co-applicant salary eligibility added to HDFC Banking direct method: loan add-on ${coApplicantSalaryAddon.eligibleLoanAmount.toLocaleString()}.`);
         logger?.traceFormula(
-            isBankingMethod ? 'STEP 8A - CO-APPLICANT SALARY ADD-ON FOR HDFC BANKING' : 'STEP 8A - CO-APPLICANT SALARY ADD-ON FOR GRP',
+            'STEP 8A - CO-APPLICANT SALARY ADD-ON FOR HDFC BANKING',
             coApplicantSalaryAddon.rule,
-            `${isBankingMethod ? 'HDFC Banking' : 'GRP'} direct amount + co-app salary eligibility ${coApplicantSalaryAddon.eligibleLoanAmount.toLocaleString()}`,
+            `HDFC Banking direct amount + co-app salary eligibility ${coApplicantSalaryAddon.eligibleLoanAmount.toLocaleString()}`,
             `Combined before caps ${foir_based_eligible_loan_amount.toLocaleString()}`
         );
     }
@@ -2800,6 +2996,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const ltvDrivenDoubleWhammyFoir = isDoubleWhammyPolicy
         ? calculateDoubleWhammyFoirFromLtv(conditionalFlags, applicable_ltv_percent)
         : null;
+    let combinedDoubleWhammyBreakdown = null;
     if (
         ltvDrivenDoubleWhammyFoir !== null
         && !isGrpMethod
@@ -2808,22 +3005,54 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         && !skip_foir_check
         && composedIncome > 0
     ) {
-        foir_allowed_percent = ltvDrivenDoubleWhammyFoir;
-        maximum_eligible_emi = Math.max(0, (composedIncome * foir_allowed_percent) - netObligations);
-        if (coApplicantSalaryAddonApplied && coApplicantSalaryAddon?.eligibleEmi > 0) {
-            maximum_eligible_emi += coApplicantSalaryAddon.eligibleEmi;
-        }
-        foir_based_eligible_loan_amount = (maximum_eligible_emi > 0 && underwriting_roi_used > 0 && final_tenure_used > 0)
-            ? calculateMaxLoanAmount(maximum_eligible_emi, underwriting_roi_used, final_tenure_used)
-            : 0;
+        const coApplicantOtherEmiCapacity = coApplicantSalaryAddon?.eligibleEmi > 0 ? coApplicantSalaryAddon.eligibleEmi : 0;
+        const combinedDoubleWhammy = calculateCombinedDoubleWhammyEligibility({
+            primaryMonthlyIncome: composedIncome,
+            otherEmiCapacity: coApplicantOtherEmiCapacity,
+            propertyValue: esr.property_value,
+            roi: underwriting_roi_used,
+            tenureMonths: final_tenure_used,
+            conditionalFlags
+        });
 
-        warnings.push(`Double Whammy FOIR recalculated from LTV: ${(conditionalFlags.special_limit || 140).toFixed(0)}% - ${(applicable_ltv_percent * 100).toFixed(0)}% = ${(foir_allowed_percent * 100).toFixed(2)}%.`);
-        logger?.traceFormula(
-            'STEP 9A - DOUBLE WHAMMY LTV-BASED FOIR',
-            'FOIR = Double Whammy Limit - Property LTV',
-            `${(conditionalFlags.special_limit || 140).toFixed(0)}% - ${(applicable_ltv_percent * 100).toFixed(0)}%`,
-            `${(foir_allowed_percent * 100).toFixed(2)}% | EMI ${maximum_eligible_emi.toLocaleString()} | Loan ${foir_based_eligible_loan_amount.toLocaleString()}`
-        );
+        if (combinedDoubleWhammy) {
+            combinedDoubleWhammyBreakdown = combinedDoubleWhammy;
+            foir_allowed_percent = combinedDoubleWhammy.maxFoirPercent;
+            maximum_eligible_emi = Math.max(0, (composedIncome * foir_allowed_percent) + coApplicantOtherEmiCapacity - netObligations);
+            foir_based_eligible_loan_amount = combinedDoubleWhammy.incomeEligibleLoan;
+
+            warnings.push(`Double Whammy combined eligibility used: primary income FOIR is capped at ${(combinedDoubleWhammy.maxFoirPercent * 100).toFixed(0)}% and primary FOIR + actual LTV is capped at ${(combinedDoubleWhammy.doubleWhammyPercent * 100).toFixed(0)}%.`);
+            logger?.traceFormula(
+                'STEP 9A - COMBINED DOUBLE WHAMMY ELIGIBILITY',
+                'Income Eligible Loan = MIN(K*(PrimaryIncome*DW+OtherEMI)/(1+K*PrimaryIncome/PropertyValue), K*(PrimaryIncome*MaxFOIR+OtherEMI))',
+                [
+                    `K=${combinedDoubleWhammy.emiMultiplier.toFixed(4)}`,
+                    `PrimaryIncome=₹${combinedDoubleWhammy.primaryMonthlyIncome.toLocaleString()}`,
+                    `O=₹${combinedDoubleWhammy.otherEmiCapacity.toLocaleString()}`,
+                    `DW=${(combinedDoubleWhammy.doubleWhammyPercent * 100).toFixed(2)}%`,
+                    `MaxFOIR=${(combinedDoubleWhammy.maxFoirPercent * 100).toFixed(2)}%`,
+                    `Property=₹${combinedDoubleWhammy.propertyValue.toLocaleString()}`
+                ].join(' | '),
+                `DW Loan ₹${combinedDoubleWhammy.doubleWhammyEligibleLoan.toLocaleString()} | FOIR Cap Loan ₹${combinedDoubleWhammy.foirCapEligibleLoan.toLocaleString()} | Income Eligible ₹${foir_based_eligible_loan_amount.toLocaleString()}`
+            );
+        } else {
+            foir_allowed_percent = ltvDrivenDoubleWhammyFoir;
+            maximum_eligible_emi = Math.max(0, (composedIncome * foir_allowed_percent) - netObligations);
+            if (coApplicantSalaryAddonApplied && coApplicantSalaryAddon?.eligibleEmi > 0) {
+                maximum_eligible_emi += coApplicantSalaryAddon.eligibleEmi;
+            }
+            foir_based_eligible_loan_amount = (maximum_eligible_emi > 0 && underwriting_roi_used > 0 && final_tenure_used > 0)
+                ? calculateMaxLoanAmount(maximum_eligible_emi, underwriting_roi_used, final_tenure_used)
+                : 0;
+
+            warnings.push(`Double Whammy FOIR recalculated from LTV: ${(conditionalFlags.special_limit || 140).toFixed(0)}% - ${(applicable_ltv_percent * 100).toFixed(0)}% = ${(foir_allowed_percent * 100).toFixed(2)}%.`);
+            logger?.traceFormula(
+                'STEP 9A - DOUBLE WHAMMY LTV-BASED FOIR',
+                'FOIR = Double Whammy Limit - Property LTV',
+                `${(conditionalFlags.special_limit || 140).toFixed(0)}% - ${(applicable_ltv_percent * 100).toFixed(0)}%`,
+                `${(foir_allowed_percent * 100).toFixed(2)}% | EMI ${maximum_eligible_emi.toLocaleString()} | Loan ${foir_based_eligible_loan_amount.toLocaleString()}`
+            );
+        }
     } else if (isDoubleWhammyPolicy && applicable_ltv_percent === null) {
         const warn = 'Double Whammy policy is configured but property-type LTV could not be resolved; FOIR was not silently converted to LTV-based FOIR.';
         warnings.push(warn);
@@ -2956,18 +3185,42 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     let foir_actual_percent = combinedMonthlyIncomeUsed > 0 ? ((netObligations + proposed_emi) / combinedMonthlyIncomeUsed) : 0;
 
     let foir_display_string = `${(foir_actual_percent * 100).toFixed(2)}%`;
+    let foirTraceTitle = 'FOIR ACTUAL';
+    let foirTraceFormula = '(Existing Obligations + Proposed EMI) / Eligible Monthly Income';
+    let foirTraceCalculation = `(₹${netObligations.toLocaleString()} + ₹${proposed_emi.toLocaleString()}) / ₹${combinedMonthlyIncomeUsed.toLocaleString()}`;
     if (isDscrMethod) {
         foir_display_string = 'N/A — DSCR method uses DSCR ratio';
     } else if ((scheme.scheme_name || '').toUpperCase().includes('GRP') || (scheme.scheme_name || '').toUpperCase().includes('GROSS RECEIPT')) {
         foir_display_string = 'N/A — GRP direct method / No DBR';
+    } else if (coApplicantMonthlyIncomeForFoir > 0) {
+        foirTraceTitle = 'FOIR ACTUAL — COMBINED HOUSEHOLD FOIR';
+        foirTraceFormula = '(Existing Obligations + Proposed EMI) / (Primary Monthly Income + Co-applicant Net Salary)';
+        foirTraceCalculation = `(₹${netObligations.toLocaleString()} + ₹${proposed_emi.toLocaleString()}) / (₹${composedIncome.toLocaleString()} + ₹${coApplicantMonthlyIncomeForFoir.toLocaleString()})`;
     }
 
     logger?.traceFormula(
-        'FOIR ACTUAL',
-        '(Existing Obligations + Proposed EMI) / Eligible Monthly Income',
-        `(₹${netObligations.toLocaleString()} + ₹${proposed_emi.toLocaleString()}) / ₹${composedIncome.toLocaleString()}`,
+        foirTraceTitle,
+        foirTraceFormula,
+        foirTraceCalculation,
         foir_display_string
     );
+
+    let dynamicNpmFoirPercent = null;
+    let actualFinalLtvPercent = null;
+    let doubleWhammyTotalPercent = null;
+    if (combinedDoubleWhammyBreakdown && composedIncome > 0 && esr.property_value > 0) {
+        dynamicNpmFoirPercent = combinedDoubleWhammyBreakdown.primaryIncomeFoirPercent;
+        actualFinalLtvPercent = combinedDoubleWhammyBreakdown.actualLtvPercent;
+        doubleWhammyTotalPercent = combinedDoubleWhammyBreakdown.doubleWhammyActualPercent;
+        logger?.traceStep('DOUBLE WHAMMY POLICY LIMIT CHECK', [
+            `Primary Income FOIR:   ${(dynamicNpmFoirPercent * 100).toFixed(2)}%`,
+            `Actual Final LTV:      ${(actualFinalLtvPercent * 100).toFixed(2)}%`,
+            `Double Whammy Total:   ${(doubleWhammyTotalPercent * 100).toFixed(2)}%`,
+            `Max FOIR Cap:          ${(combinedDoubleWhammyBreakdown.maxFoirPercent * 100).toFixed(2)}%`,
+            `Double Whammy Cap:     ${(combinedDoubleWhammyBreakdown.doubleWhammyPercent * 100).toFixed(2)}%`,
+            `Combined Household FOIR: ${(foir_actual_percent * 100).toFixed(2)}%`
+        ].join('\n'));
+    }
 
     // --- MANUAL OVERRIDE (LIP / LOW LTV / MANUAL SCHEMES) ---
     const manual_eligible_loan_amount = Number(esr.manual_eligible_loan_amount) || null;
@@ -3030,6 +3283,9 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         max_tenure_months: final_tenure_used,
         foir_allowed_percent,
         foir_actual_percent,
+        dynamic_npm_foir_percent: dynamicNpmFoirPercent,
+        actual_final_ltv_percent: actualFinalLtvPercent,
+        double_whammy_total_percent: doubleWhammyTotalPercent,
         max_eligible_emi: maximum_eligible_emi,
         monthly_income_used: combinedMonthlyIncomeUsed,
         primary_monthly_income_used: incomeComposition.primary_income,
@@ -3057,6 +3313,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
             dscr_breakdown: isDscrMethod ? dscrBreakdown : null
         },
         conditional_underwriting_flags: conditionalFlags,
+        combined_double_whammy_breakdown: combinedDoubleWhammyBreakdown,
         manual_review_required: !!conditionalFlags || policyWarnings.length > 0,
         surrogate_program_notes: `Underwriting via surrogate method: ${schemeIncomeMethod || 'Selected Candidate'}`,
         obligation_exclusion_notes: obligationExclusionNotes
@@ -3878,17 +4135,17 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         };
     }
 
-    // ISSUE 3 FIX: Call updateStage OUTSIDE the transaction.
-    // updateStage uses the global prisma client internally (not a tx-client).
-    // Calling it inside $transaction would deadlock the connection pool.
-    // It handles: tenant validation + CaseStageHistory + ActivityLog + stage lock rules.
-    await advanceCaseToEsrGenerated(case_id, tenant_id, user_id);
-
-    // Set esr_generated flag tenant-safely (ISSUE 5: WHERE includes tenant_id)
-    await prisma.case.updateMany({
-        where: { id: case_id, tenant_id },
-        data: { esr_generated: true }
-    });
+    try {
+        // Stage/flag updates are post-calculation metadata. Regeneration must not fail
+        // after ESR and logs are already persisted just because a case is in a later stage.
+        await advanceCaseToEsrGenerated(case_id, tenant_id, user_id);
+        await prisma.case.updateMany({
+            where: { id: case_id, tenant_id },
+            data: { esr_generated: true }
+        });
+    } catch (err) {
+        console.warn(`[ESR STAGE WARNING] ESR generated for Case ${case_id}, but stage/flag update failed:`, err.message);
+    }
 
     // Provide generic response back mirroring legacy system response wrapper
     return {
@@ -3914,17 +4171,31 @@ async function advanceCaseToEsrGenerated(case_id, tenant_id, user_id) {
         throw new Error('Case not found or unauthorized.');
     }
 
+    const stagesAtOrAfterEsr = [
+        'ESR_GENERATED',
+        'IN_REVIEW',
+        'APPROVED',
+        'PARTLY_DISBURSED',
+        'DISBURSED',
+        'CLOSED',
+        'REJECTED'
+    ];
+    if (stagesAtOrAfterEsr.includes(currentCase.stage)) {
+        return currentCase;
+    }
+
     const transitionSteps = {
+        DRAFT: ['LEAD_CREATED', 'LEAD_SENT_TO_LENDER', 'ESR_GENERATED'],
         LEAD_CREATED: ['LEAD_SENT_TO_LENDER', 'ESR_GENERATED'],
         DATA_COLLECTION: ['LEAD_SENT_TO_LENDER', 'ESR_GENERATED'],
         INCOME_REVIEWED: ['LEAD_SENT_TO_LENDER', 'ESR_GENERATED'],
-        LEAD_SENT_TO_LENDER: ['ESR_GENERATED'],
-        ESR_GENERATED: []
+        LEAD_SENT_TO_LENDER: ['ESR_GENERATED']
     };
 
     const steps = transitionSteps[currentCase.stage];
     if (!steps) {
-        return await updateStage(case_id, tenant_id, 'ESR_GENERATED', user_id);
+        console.warn(`[ESR] Case ${case_id} is in unsupported stage "${currentCase.stage}". ESR generated, but stage was not advanced.`);
+        return currentCase;
     }
 
     let updatedCase = currentCase;
