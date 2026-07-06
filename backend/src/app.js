@@ -2,10 +2,22 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const { logger } = require('./logger');
+const pinoHttp = require('pino-http');
 const prisma = require('../config/db');
 
 const app = express();
 app.set('trust proxy', 1); // Trust the reverse proxy for accurate client IPs
+
+// ── Request logging ──────────────────────────────────────────────────────────
+app.use(pinoHttp({
+  logger,
+  customLogLevel: (_req, res, err) => {
+    if (err || res.statusCode >= 500) return 'error';
+    if (res.statusCode >= 400) return 'warn';
+    return 'info';
+  },
+}));
 
 // Secure backend HTTP headers using Helmet (with CSP disabled for API-frontend routing compatibility)
 // TODO: Review and enable CSP policies in production if client hosts scripts directly
@@ -32,7 +44,7 @@ app.use(cors({
     if (isCorsOriginAllowed(origin)) {
       callback(null, true);
     } else {
-      console.warn(`[CORS] Blocked origin: ${origin} | Allowed: ${allowedOrigins.join(', ')}`);
+      logger.warn({ origin, allowedOrigins }, 'CORS blocked origin');
       callback(null, false);
     }
   },
@@ -194,7 +206,7 @@ app.use((req, res, next) => { if (req.url.includes('clone')) require('fs').appen
 app.use('/api', apiRouter);
 
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  logger.error({ err }, 'request handler error');
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
