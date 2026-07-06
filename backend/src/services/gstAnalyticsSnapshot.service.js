@@ -113,6 +113,27 @@ async function getBestUsableGstSnapshot({ tenantId, caseId, applicantId, gstin }
 function _buildRollingSnapshotFromRequest(request) {
     if (!request) return null;
 
+    if (request.raw_report_data) {
+        try {
+            const extracted = extractGstDetails(request.raw_report_data);
+            if (extracted?.turnover_latest_year) {
+                return {
+                    turnover_latest_year: extracted.turnover_latest_year,
+                    turnover_previous_year: request.turnover_previous_year,
+                    financial_year_latest: extracted.financial_year_latest,
+                    financial_year_previous: request.financial_year_previous,
+                    avg_monthly_turnover: extracted.avg_monthly_turnover,
+                    months_filed_12m: extracted.months_filed_12m,
+                    nil_return_months: extracted.nil_return_months,
+                    selected_turnover_source: 'GSTR1_GROSS_SALES_ROLLING_12M_RAW_REPORT',
+                    _best_request_id: request.id
+                };
+            }
+        } catch (err) {
+            console.warn(`[GST Snapshot] Raw report rolling turnover parse failed for request ${request.id}: ${err.message}`);
+        }
+    }
+
     if (request.rolling_12_month_turnover || request.avg_monthly_turnover) {
         const turnover = request.rolling_12_month_turnover || request.turnover_latest_year || null;
         return {
@@ -128,26 +149,7 @@ function _buildRollingSnapshotFromRequest(request) {
         };
     }
 
-    if (!request.raw_report_data) return null;
-
-    try {
-        const extracted = extractGstDetails(request.raw_report_data);
-        if (!extracted?.turnover_latest_year) return null;
-        return {
-            turnover_latest_year: extracted.turnover_latest_year,
-            turnover_previous_year: request.turnover_previous_year,
-            financial_year_latest: extracted.financial_year_latest,
-            financial_year_previous: request.financial_year_previous,
-            avg_monthly_turnover: extracted.avg_monthly_turnover,
-            months_filed_12m: extracted.months_filed_12m,
-            nil_return_months: extracted.nil_return_months,
-            selected_turnover_source: 'GSTR1_GROSS_SALES_ROLLING_12M_RAW_REPORT',
-            _best_request_id: request.id
-        };
-    } catch (err) {
-        console.warn(`[GST Snapshot] Raw report rolling turnover parse failed for request ${request.id}: ${err.message}`);
-        return null;
-    }
+    return null;
 }
 
 module.exports = {
