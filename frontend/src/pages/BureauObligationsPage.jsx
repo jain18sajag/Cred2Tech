@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { caseService } from '../api/caseService';
 import { toast } from 'react-hot-toast';
@@ -29,6 +29,7 @@ export default function BureauObligationsPage() {
   const [syncing, setSyncing]     = useState(false);
   const [saving, setSaving]       = useState(false);
   const [generating, setGenerating] = useState(false);
+  const generatingRef = useRef(false);
   const [data, setData]           = useState(null);
   const [editEmi, setEditEmi]     = useState({});         // { [oblId]: value }
   const [addingFor, setAddingFor] = useState(null);        // applicant_id
@@ -81,6 +82,8 @@ export default function BureauObligationsPage() {
   };
 
   const handleGenerateESR = async () => {
+    if (generatingRef.current) return;
+    generatingRef.current = true;
     try {
       setGenerating(true);
       let hasExistingESR = false;
@@ -97,6 +100,7 @@ export default function BureauObligationsPage() {
     } catch (e) {
       toast.error(e.response?.data?.error || 'Failed to generate ESR');
     } finally {
+      generatingRef.current = false;
       setGenerating(false);
     }
   };

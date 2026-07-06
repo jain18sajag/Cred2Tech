@@ -10,8 +10,15 @@ const {
 } = require('./esr/esrCalculationLog.service');
 
 const SNAPSHOT_STALE_MINUTES = 30;
+const inFlightGenerations = new Map();
 
 async function generateESR(case_id, user_id, tenant_id) {
+    return _runSingleEsrGeneration('generate', case_id, tenant_id, async () => {
+        return _generateESR(case_id, user_id, tenant_id);
+    });
+}
+
+async function _generateESR(case_id, user_id, tenant_id) {
     const caseRecord = await prisma.case.findFirst({
         where: { id: case_id, tenant_id },
         select: { id: true, product_type: true }
@@ -90,6 +97,12 @@ async function getESR(case_id, tenant_id) {
 }
 
 async function recalculateESR(case_id, user_id, tenant_id) {
+    return _runSingleEsrGeneration('recalculate', case_id, tenant_id, async () => {
+        return _recalculateESR(case_id, user_id, tenant_id);
+    });
+}
+
+async function _recalculateESR(case_id, user_id, tenant_id) {
     const caseRecord = await prisma.case.findFirst({
         where: { id: case_id, tenant_id },
         select: { id: true, product_type: true }
@@ -118,7 +131,7 @@ async function recalculateESR(case_id, user_id, tenant_id) {
         return await generateDynamicESR(case_id, user_id, tenant_id);
     }
 
-    return await generateESR(case_id, user_id, tenant_id);
+    return await _generateESR(case_id, user_id, tenant_id);
 }
 
 async function listESRLogs(case_id, tenant_id) {
@@ -134,6 +147,26 @@ async function getESRLog(case_id, tenant_id, calculationRunId) {
 async function downloadESRLog(case_id, tenant_id, calculationRunId, format) {
     await _assertCaseAccess(case_id, tenant_id);
     return await getCalculationLogDownload(case_id, tenant_id, calculationRunId, format);
+}
+
+function _runSingleEsrGeneration(action, case_id, tenant_id, fn) {
+    const key = `${tenant_id || 'tenant'}:${case_id}`;
+    const existing = inFlightGenerations.get(key);
+    if (existing) {
+        console.log(`[ESR] ${action} request for Case ${case_id} joined existing in-flight ESR generation.`);
+        return existing;
+    }
+
+    const promise = Promise.resolve()
+        .then(fn)
+        .finally(() => {
+            if (inFlightGenerations.get(key) === promise) {
+                inFlightGenerations.delete(key);
+            }
+        });
+
+    inFlightGenerations.set(key, promise);
+    return promise;
 }
 
 async function _assertCaseAccess(case_id, tenant_id) {

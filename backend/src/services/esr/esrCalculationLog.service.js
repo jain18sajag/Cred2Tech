@@ -49,6 +49,7 @@ async function persistEsrCalculationLog({
         },
         income_calculation_log: incomeCalculationLog || null,
         formula_steps: _buildFormulaStepRows(lenderResults),
+        lender_method_calculations: _buildLenderMethodCalculationRows(lenderResults, inputSnapshot),
         lender_results: _buildLenderExportRows(lenderResults, inputSnapshot),
         warnings_and_exclusions: warningBundle,
         source_paths: sourcePaths,
@@ -328,8 +329,7 @@ function _buildWorkbook(payload) {
     _appendSheet(wb, 'ITR Inputs', [_flatten(payload.source_inputs?.itr_trace || {})]);
     _appendSheet(wb, 'Bank Inputs', [_flatten(payload.source_inputs?.bank_trace || {})]);
     _appendSheet(wb, 'Bureau Obligations', (payload.source_inputs?.bureau_obligations || []).map(_flatten));
-    _appendSheet(wb, 'Formula Steps', payload.formula_steps || []);
-    _appendSheet(wb, 'Warnings and Exclusions', payload.warnings_and_exclusions || []);
+    _appendSheet(wb, 'Lender Method Calculations', payload.lender_method_calculations || []);
     _appendSheet(wb, 'Source Paths', (payload.source_paths || []).map(_flatten));
     return wb;
 }
@@ -445,6 +445,222 @@ function _buildFormulaStepRows(lenderResults) {
             warnings: evaluation.warnings || evaluation.policy_warnings || null
         }));
     });
+}
+
+function _buildLenderMethodCalculationRows(lenderResults, inputSnapshot) {
+    return (lenderResults || []).flatMap(lender => {
+        const evaluations = Array.isArray(lender.scheme_evaluations) && lender.scheme_evaluations.length
+            ? lender.scheme_evaluations
+            : [lender];
+
+        return evaluations.map((evaluation, index) => {
+            const methodName = evaluation.scheme_name || lender.best_scheme_name || evaluation.method || inputSnapshot?.selected_income_method || null;
+            const foir = evaluation.foir_breakdown || {};
+            const dscr = evaluation.dscr_breakdown || foir.dscr_breakdown || null;
+            const coApp = evaluation.co_applicant_salary_addon || null;
+            const monthlyIncome = _numberOrNull(evaluation.monthly_income_used ?? foir.composed_income ?? inputSnapshot?.selected_monthly_income);
+            const primaryIncome = _numberOrNull(evaluation.primary_monthly_income_used ?? foir.primary_composed_income);
+            const coApplicantIncome = _numberOrNull(foir.co_applicant_salary_income);
+            const obligations = _numberOrNull(foir.net_obligations ?? inputSnapshot?.existing_obligations);
+            const maxEmi = _numberOrNull(evaluation.maximum_eligible_emi ?? evaluation.max_eligible_emi ?? foir.maximum_eligible_emi ?? lender.max_eligible_emi);
+            const incomeBasedLoan = _numberOrNull(evaluation.foir_based_eligible_loan_amount ?? evaluation.dscr_eligible_loan_amount);
+            const ltvPercent = _numberOrNull(evaluation.applicable_ltv_percent);
+            const propertyValue = _numberOrNull(inputSnapshot?.property_value ?? inputSnapshot?.market_value);
+            const ltvLoan = _numberOrNull(evaluation.ltv_based_eligible_loan_amount ?? evaluation.max_loan_by_ltv);
+            const productCap = _numberOrNull(evaluation.product_cap ?? evaluation.max_loan_amount);
+            const requestedCap = _numberOrNull(inputSnapshot?.requested_loan_amount);
+            const businessCreditCap = _numberOrNull(evaluation.banking_business_credit_cap);
+            const posDeduction = _numberOrNull(evaluation.hdfc_unsecured_pos_deduction ?? evaluation.pos_deduction);
+            const finalEligible = _numberOrNull(evaluation.final_eligible_loan_amount ?? lender.final_eligible_loan_amount);
+            const proposedEmi = _numberOrNull(evaluation.proposed_emi ?? foir.proposed_emi);
+            const roi = _numberOrNull(evaluation.underwriting_roi_used ?? evaluation.roi ?? lender.roi_min);
+            const tenure = _intOrNull(evaluation.final_tenure_used ?? evaluation.max_tenure_months ?? lender.max_tenure_months);
+            const lenderMaxTenure = _intOrNull(evaluation.lender_max_tenure_months ?? evaluation.max_tenure_months ?? lender.max_tenure_months);
+            const ageBasedTenure = _intOrNull(evaluation.age_based_tenure_limit_months);
+            const foirPercent = _numberOrNull(evaluation.foir_allowed_percent ?? foir.foir_allowed_percent);
+            const actualFoir = _numberOrNull(evaluation.foir_actual_percent ?? foir.foir_actual_percent);
+
+            const incomeFormula = _incomeFormulaForEvaluation(methodName, evaluation, inputSnapshot, monthlyIncome, primaryIncome, coApplicantIncome, dscr);
+            const emiCapacityFormula = _emiCapacityFormulaForEvaluation(methodName, foir, dscr, monthlyIncome, foirPercent, obligations, maxEmi);
+            const foirFormula = _foirAllowedFormulaForEvaluation(evaluation, foirPercent);
+            const actualFoirFormula = _actualFoirFormulaForEvaluation(methodName, obligations, proposedEmi, monthlyIncome, actualFoir);
+            const tenureFormula = _tenureFormulaForEvaluation(inputSnapshot, lenderMaxTenure, ageBasedTenure, tenure);
+            const ltvFormula = ltvPercent !== null && propertyValue !== null
+                ? `${_money(propertyValue)} x ${_percent(ltvPercent)} = ${_money(ltvLoan)}`
+                : 'No LTV value available';
+            const loanFormula = _loanFormulaForEvaluation(methodName, evaluation, incomeBasedLoan, proposedEmi, tenure, roi, coApp);
+            const finalFormula = _finalEligibilityFormula({
+                incomeBasedLoan,
+                ltvLoan,
+                productCap,
+                requestedCap,
+                businessCreditCap,
+                posDeduction,
+                finalEligible
+            });
+
+            return _flatten({
+                lender_name: lender.lender_name || evaluation.lender_name || null,
+                scheme_name: methodName,
+                scheme_index: index + 1,
+                status: _calculationStatus(evaluation, lender),
+                data_taken: _dataTakenForEvaluation(methodName, evaluation, inputSnapshot),
+                income_formula: incomeFormula,
+                income_used: _money(monthlyIncome),
+                foir_allowed_formula: foirFormula,
+                foir_allowed_percent: _percent(foirPercent),
+                foir_or_dscr_formula: emiCapacityFormula,
+                eligible_emi_capacity: _money(maxEmi),
+                actual_foir_formula: actualFoirFormula,
+                actual_foir_percent: _percent(actualFoir),
+                age_tenure_formula: tenureFormula,
+                applicant_age: inputSnapshot?.applicant_age ?? null,
+                lender_max_tenure_months: lenderMaxTenure,
+                age_based_tenure_limit_months: ageBasedTenure,
+                tenure_months: tenure,
+                roi_percent: roi,
+                income_based_loan_formula: loanFormula,
+                income_based_loan: _money(incomeBasedLoan),
+                property_ltv_formula: ltvFormula,
+                ltv_based_loan: _money(ltvLoan),
+                product_cap: _money(productCap),
+                requested_loan_cap: _money(requestedCap),
+                business_credit_cap: _money(businessCreditCap),
+                pos_deduction: _money(posDeduction),
+                final_eligibility_formula: finalFormula,
+                final_eligible_amount: _money(finalEligible),
+                co_applicant_salary_addon: coApp ? _money(coApp.eligibleLoanAmount) : null,
+                income_breakdown: evaluation.eligible_income_breakdown || null
+            });
+        });
+    });
+}
+
+function _dataTakenForEvaluation(methodName, evaluation, inputSnapshot) {
+    const method = String(methodName || '').toUpperCase();
+    const parts = [
+        `Property ${_money(inputSnapshot?.property_value ?? inputSnapshot?.market_value)}`,
+        `Obligations ${_money(evaluation.foir_breakdown?.net_obligations ?? inputSnapshot?.existing_obligations)}`,
+        `LTV ${_percent(evaluation.applicable_ltv_percent)}`
+    ];
+
+    if (method.includes('SALAR')) {
+        parts.push(`Salary gross ${_money(inputSnapshot?.salaried_gross_monthly)}`);
+        parts.push(`Salary net ${_money(inputSnapshot?.salaried_net_monthly ?? inputSnapshot?.salaried_income)}`);
+    } else if (method.includes('GST')) {
+        parts.push(`GST avg monthly sales ${_money(inputSnapshot?.gst_avg_monthly_sales)}`);
+        parts.push(`GST margin ${_percent(inputSnapshot?.gst_industry_margin)}`);
+    } else if (method.includes('BANK')) {
+        parts.push(`ABB ${_money(inputSnapshot?.bank_avg_balance)}`);
+        parts.push(`Banking income ${_money(inputSnapshot?.banking_income ?? inputSnapshot?.bank_monthly_income)}`);
+    } else if (method.includes('GRP') || method.includes('GROSS RECEIPT')) {
+        parts.push(`Gross receipts ${_money(inputSnapshot?.itr_gross_receipts)}`);
+    } else if (method.includes('DSCR')) {
+        parts.push(`Annual income ${_money(evaluation.dscr_breakdown?.annualIncome)}`);
+        parts.push(`DSCR min ${evaluation.dscr_breakdown?.minRatio ?? null}`);
+    } else {
+        parts.push(`PAT ${_money(inputSnapshot?.itr_pat)}`);
+        parts.push(`Depreciation ${_money(inputSnapshot?.itr_depreciation)}`);
+        parts.push(`Finance cost ${_money(inputSnapshot?.itr_finance_cost)}`);
+    }
+
+    return parts.filter(part => !part.endsWith('N/A') && !part.endsWith('null')).join('; ');
+}
+
+function _incomeFormulaForEvaluation(methodName, evaluation, inputSnapshot, monthlyIncome, primaryIncome, coApplicantIncome, dscr) {
+    const method = String(methodName || '').toUpperCase();
+    if (method.includes('GST')) {
+        return `GST Avg Monthly Sales ${_money(inputSnapshot?.gst_avg_monthly_sales)} x Margin ${_percent(inputSnapshot?.gst_industry_margin)} = ${_money(primaryIncome ?? monthlyIncome)}`;
+    }
+    if (method.includes('BANK')) {
+        return `ABB/Banking policy income = ${_money(inputSnapshot?.bank_avg_balance)} based income ${_money(primaryIncome ?? monthlyIncome)}`;
+    }
+    if (method.includes('GRP') || method.includes('GROSS RECEIPT')) {
+        const grossReceipts = _numberOrNull(inputSnapshot?.itr_gross_receipts);
+        return `Gross Receipts based method uses ${_money(grossReceipts)} and lender multiplier/exposure rules; monthly FOIR income is not used`;
+    }
+    if (method.includes('DSCR') && dscr) {
+        return `Annual income ${_money(dscr.annualIncome)} tested against debt service; monthly equivalent ${_money(monthlyIncome)}`;
+    }
+    if (method.includes('SALAR')) {
+        return `Verified salary income ${_money(inputSnapshot?.salaried_net_monthly ?? inputSnapshot?.salaried_income)} with lender salary policy = ${_money(primaryIncome ?? monthlyIncome)}`;
+    }
+
+    const pat = _numberOrNull(inputSnapshot?.itr_pat);
+    const dep = _numberOrNull(inputSnapshot?.itr_depreciation);
+    const fin = _numberOrNull(inputSnapshot?.itr_finance_cost);
+    const total = [pat, dep, fin].filter(v => v !== null).reduce((sum, value) => sum + value, 0);
+    const baseFormula = `PAT ${_money(pat)} + depreciation ${_money(dep)} + finance cost ${_money(fin)} = ${_money(total)} / 12 = ${_money(primaryIncome ?? monthlyIncome)}`;
+    if (coApplicantIncome && coApplicantIncome > 0) {
+        return `${baseFormula}; co-applicant monthly salary considered ${_money(coApplicantIncome)}; total ${_money(monthlyIncome)}`;
+    }
+    return baseFormula;
+}
+
+function _emiCapacityFormulaForEvaluation(methodName, foir, dscr, monthlyIncome, foirPercent, obligations, maxEmi) {
+    const method = String(methodName || '').toUpperCase();
+    if (method.includes('DSCR') && dscr) {
+        return `DSCR capacity from annual income ${_money(dscr.annualIncome)} and min DSCR ${dscr.minRatio ?? 'N/A'} = ${_money(maxEmi)}`;
+    }
+    if (foir?.skip_foir_check) {
+        return `No DBR/FOIR deduction; eligible EMI from method = ${_money(maxEmi)}`;
+    }
+    return `(${_money(monthlyIncome)} x ${_percent(foirPercent)}) - obligations ${_money(obligations)} = ${_money(maxEmi)}`;
+}
+
+function _foirAllowedFormulaForEvaluation(evaluation, foirPercent) {
+    const flags = evaluation.conditional_underwriting_flags || {};
+    if (flags.special_program === 'double_wammy') {
+        const specialLimit = _numberOrNull(flags.special_limit) || 140;
+        const ltv = _numberOrNull(evaluation.applicable_ltv_percent);
+        return `Double Whammy FOIR = ${specialLimit.toFixed(2)}% - LTV ${_percent(ltv)} = ${_percent(foirPercent)}`;
+    }
+    if (evaluation.foir_breakdown?.skip_foir_check) {
+        return 'No DBR/FOIR check for this method';
+    }
+    return `FOIR allowed from lender policy = ${_percent(foirPercent)}`;
+}
+
+function _actualFoirFormulaForEvaluation(methodName, obligations, proposedEmi, monthlyIncome, actualFoir) {
+    const method = String(methodName || '').toUpperCase();
+    if (method.includes('DSCR')) return 'N/A - DSCR method uses DSCR ratio';
+    if (method.includes('GRP') || method.includes('GROSS RECEIPT')) return 'N/A - GRP direct method / No DBR';
+    return `(obligations ${_money(obligations)} + proposed EMI ${_money(proposedEmi)}) / income ${_money(monthlyIncome)} = ${_percent(actualFoir)}`;
+}
+
+function _tenureFormulaForEvaluation(inputSnapshot, lenderMaxTenure, ageBasedTenure, finalTenure) {
+    const age = _numberOrNull(inputSnapshot?.applicant_age);
+    const ageText = age !== null ? `Applicant age ${age}` : 'Applicant age N/A';
+    const ageLimitText = ageBasedTenure !== null
+        ? `age based tenure ${ageBasedTenure} months`
+        : 'no age based restriction available';
+    return `${ageText}; final tenure = MIN(lender max ${lenderMaxTenure ?? 'N/A'} months, ${ageLimitText}) = ${finalTenure ?? 'N/A'} months`;
+}
+
+function _loanFormulaForEvaluation(methodName, evaluation, incomeBasedLoan, proposedEmi, tenure, roi, coApp) {
+    const method = String(methodName || '').toUpperCase();
+    if (method.includes('GRP') || method.includes('GROSS RECEIPT')) {
+        return `Gross Receipts x lender multiplier - exposure = ${_money(incomeBasedLoan)}`;
+    }
+    if (method.includes('DSCR')) {
+        return `DSCR eligible debt service converted to loan at ROI ${roi ?? 'N/A'}% and tenure ${tenure ?? 'N/A'} months = ${_money(incomeBasedLoan)}`;
+    }
+    const addon = coApp?.eligibleLoanAmount ? ` + co-app salary add-on ${_money(coApp.eligibleLoanAmount)}` : '';
+    return `Eligible EMI ${_money(evaluation.maximum_eligible_emi ?? evaluation.max_eligible_emi)} converted at ROI ${roi ?? 'N/A'}% and tenure ${tenure ?? 'N/A'} months = ${_money(incomeBasedLoan)}${addon}`;
+}
+
+function _finalEligibilityFormula({ incomeBasedLoan, ltvLoan, productCap, requestedCap, businessCreditCap, posDeduction, finalEligible }) {
+    const candidates = [
+        ['income eligibility', incomeBasedLoan],
+        ['LTV eligibility', ltvLoan],
+        ['product cap', productCap],
+        ['requested cap', requestedCap],
+        ['business credit cap', businessCreditCap]
+    ].filter(([, value]) => value !== null && value !== undefined && Number(value) > 0);
+
+    const candidateText = candidates.map(([label, value]) => `${label} ${_money(value)}`).join(', ');
+    const posText = posDeduction && posDeduction > 0 ? `; POS deduction ${_money(posDeduction)}` : '';
+    return `MIN(${candidateText || 'no valid candidates'})${posText} = ${_money(finalEligible)}`;
 }
 
 function _buildSourcePaths(inputSnapshot, sourceBundle) {
@@ -607,6 +823,19 @@ function _stringOrNull(value) {
 function _emiPerLakh(emi, loanAmount) {
     if (!emi || !loanAmount || loanAmount <= 0) return null;
     return Number((emi / (loanAmount / 100000)).toFixed(2));
+}
+
+function _money(value) {
+    const num = _numberOrNull(value);
+    if (num === null) return null;
+    return `INR ${Math.round(num).toLocaleString('en-IN')}`;
+}
+
+function _percent(value) {
+    const num = _numberOrNull(value);
+    if (num === null) return null;
+    const normalized = Math.abs(num) <= 1 ? num * 100 : num;
+    return `${normalized.toFixed(2)}%`;
 }
 
 function _sha256(buffer) {

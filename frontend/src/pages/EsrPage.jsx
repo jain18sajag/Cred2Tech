@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { caseService } from '../api/caseService';
 import { toast } from 'react-hot-toast';
@@ -937,6 +937,7 @@ export default function EsrPage() {
 
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const generatingRef = useRef(false);
   const [esr, setEsr] = useState(null);
   const [proposals, setProposals] = useState([]);
 
@@ -958,6 +959,8 @@ export default function EsrPage() {
   useEffect(() => { load(); }, [load]);
 
   const handleGenerate = async () => {
+    if (generatingRef.current) return;
+    generatingRef.current = true;
     try {
       setGenerating(true);
       const result = esr
@@ -969,6 +972,7 @@ export default function EsrPage() {
     } catch (e) {
       toast.error(e.response?.data?.error || `Failed to ${esr ? 'regenerate' : 'generate'} ESR`);
     } finally {
+      generatingRef.current = false;
       setGenerating(false);
     }
   };

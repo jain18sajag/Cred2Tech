@@ -3020,6 +3020,8 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         proposed_emi,
         maximum_eligible_emi: maximum_eligible_emi === Infinity ? null : maximum_eligible_emi,
         final_tenure_used,
+        lender_max_tenure_months: maxTenureMonths || null,
+        age_based_tenure_limit_months: ageBasedLimit !== null && ageBasedLimit !== Infinity ? ageBasedLimit : null,
         underwriting_roi_used: toDisplayRoi(underwriting_roi_used),
         roi_min: toDisplayRoi(roi_min),
         roi_max: toDisplayRoi(roi_max),
