@@ -60,6 +60,113 @@ const latestByYear = (arr) => {
         .sort((a, b) => Number(b.year) - Number(a.year))[0] || null;
 };
 
+const normalizeSalaryPeriod = (slip = {}) => {
+    const direct = typeof slip.salary_period === 'string' ? slip.salary_period.trim() : '';
+    if (/^\d{4}-\d{2}$/.test(direct)) return direct;
+
+    const year = typeof slip.year === 'string' || typeof slip.year === 'number' ? String(slip.year).trim() : '';
+    const rawMonth = typeof slip.month === 'string' || typeof slip.month === 'number' ? String(slip.month).trim() : '';
+    const monthNum = Number(rawMonth);
+    if (/^\d{4}$/.test(year) && Number.isInteger(monthNum) && monthNum >= 1 && monthNum <= 12) {
+        return `${year}-${String(monthNum).padStart(2, '0')}`;
+    }
+
+    return null;
+};
+
+const sortPeriodAsc = (a, b) => String(a || '').localeCompare(String(b || ''));
+
+function buildSalaryOcrAuditSummary(applicants = [], requiredMonths = 3) {
+    const uniqueByApplicantPeriod = new Map();
+    const exclusions = [];
+
+    for (const applicant of applicants || []) {
+        for (const slip of applicant.salary_ocr_results || []) {
+            const applicantId = slip.applicant_id || applicant.id || null;
+            const period = normalizeSalaryPeriod(slip);
+            const gross = toNum(slip.gross_salary);
+            const net = toNum(slip.net_salary);
+            const explicitDeductions = toNum(slip.deductions);
+            const deductions = explicitDeductions !== null
+                ? explicitDeductions
+                : (gross !== null && net !== null && gross >= net ? gross - net : null);
+
+            const auditRow = {
+                slip_id: slip.id || null,
+                applicant_id: applicantId,
+                applicant_name: applicant.name || null,
+                period,
+                gross_salary: gross,
+                net_salary: net,
+                deductions,
+                deductions_is_derived: !!slip.deductions_is_derived,
+                employee_name: slip.employee_name || null,
+                employee_pan: slip.employee_pan || null,
+                name_match_status: slip.name_match_status || null,
+                pan_match_status: slip.pan_match_status || null,
+                words_match: slip.net_salary_words_match ?? null,
+                extraction_source: slip.extraction_source || null
+            };
+
+            const exclusionReason = !period
+                ? 'missing salary_period'
+                : gross === null || gross <= 0
+                    ? 'missing or non-positive gross_salary'
+                    : net === null || net <= 0
+                        ? 'missing or non-positive net_salary'
+                        : gross < net
+                            ? 'gross_salary lower than net_salary'
+                            : null;
+
+            if (exclusionReason) {
+                exclusions.push({ ...auditRow, reason: exclusionReason });
+                continue;
+            }
+
+            const key = `${applicantId || 'unknown'}:${period}`;
+            if (uniqueByApplicantPeriod.has(key)) {
+                exclusions.push({ ...auditRow, reason: 'duplicate applicant salary period' });
+                continue;
+            }
+
+            uniqueByApplicantPeriod.set(key, auditRow);
+        }
+    }
+
+    const slips = Array.from(uniqueByApplicantPeriod.values());
+    const periods = Array.from(new Set(slips.map(s => s.period))).sort(sortPeriodAsc);
+    const monthsAvailable = periods.length;
+    const warnings = [];
+
+    if (monthsAvailable > 0 && monthsAvailable < requiredMonths) {
+        warnings.push(`Only ${monthsAvailable} unique salary month(s) available; ${requiredMonths} required for complete salaried assessment.`);
+    }
+    if (exclusions.length > 0) {
+        warnings.push(`${exclusions.length} salary OCR slip(s) excluded from ESR salary aggregation.`);
+    }
+
+    const grossAvg = avg(slips.map(s => s.gross_salary));
+    const netAvg = avg(slips.map(s => s.net_salary));
+    const deductionsAvg = avg(slips.map(s => s.deductions));
+
+    return {
+        slips,
+        exclusions,
+        periods,
+        grossMonthly: grossAvg,
+        netMonthly: netAvg,
+        deductionsMonthly: deductionsAvg,
+        slipCount: slips.length,
+        monthsAvailable,
+        monthsRequired: requiredMonths,
+        periodFrom: periods[0] || null,
+        periodTo: periods[periods.length - 1] || null,
+        dataComplete: monthsAvailable >= requiredMonths,
+        source: slips.length > 0 ? 'OCR' : null,
+        warnings
+    };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN EXTRACTION FUNCTION
 // ─────────────────────────────────────────────────────────────────────────────
@@ -272,6 +379,12 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
             margin_source = gst_industry_margin !== null ? 'Manual DSA/MSME customer industry' : 'manual review required';
         }
 
+        if (gst_industry_margin === null && (caseRecord.customer?.is_professional || caseRecord.customer?.profession_type)) {
+            gst_industry_type = `Supplier of Service (${caseRecord.customer.profession_type || 'Professional'})`;
+            gst_industry_margin = resolveGstIndustryMargin(gst_industry_type, isHdfcPolicy ? 'HDFC' : 'ICICI');
+            margin_source = gst_industry_margin !== null ? 'Customer professional profile fallback' : 'manual review required';
+        }
+
         caseRecord.__policy.gst_margin_source = margin_source;
         caseRecord.__policy.final_gst_margin = gst_industry_margin;
 
@@ -373,6 +486,7 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
         let bank_salary_avg_monthly = null;
         let bank_salary_credit_count = 0;
         let bank_salary_source = null;
+        let verified_bank_net_salary_monthly = null;
 
         const bankReq = pickBestRecord(caseRecord.bank_statements);
 
@@ -383,7 +497,8 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
             let salarySnapshot = null;
 
             if (rawData) {
-                fySnapshot = extractBankFySnapshot(rawData);
+                const bankSampleDays = isHdfcPolicy ? [5, 15, 25] : [5, 10, 15, 25];
+                fySnapshot = extractBankFySnapshot(rawData, { sampleDays: bankSampleDays });
                 salarySnapshot = extractBankSalary(rawData);
                 bank_avg_balance = fySnapshot.latest;
                 bank_avg_monthly_credit = fySnapshot.avg_monthly_credit;
@@ -400,7 +515,8 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
             }
 
             if (bank_avg_balance === null && rawData) {
-                fySnapshot = fySnapshot || extractBankFySnapshot(rawData);
+                const bankSampleDays = isHdfcPolicy ? [5, 15, 25] : [5, 10, 15, 25];
+                fySnapshot = fySnapshot || extractBankFySnapshot(rawData, { sampleDays: bankSampleDays });
                 bank_avg_monthly_credit = bank_avg_monthly_credit ?? fySnapshot.avg_monthly_credit;
                 bank_total_credits = bank_total_credits ?? fySnapshot.total_credits;
             }
@@ -408,7 +524,7 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
             if (fySnapshot && fySnapshot._trace) {
                 logger.traceExtraction('BANKING ABB', {
                     'Policy Details': {
-                        'Sample Days': fySnapshot._trace.sampling_days || '5, 10, 15, 25',
+                        'Sample Days': fySnapshot._trace.sampling_days || (isHdfcPolicy ? '5, 15, 25' : '5, 10, 15, 25'),
                         'Balance Rule': 'Latest closing balance on or before sample date'
                     },
                     'Monthly ABB Table': fySnapshot._trace.monthly_abb_table || {},
@@ -506,25 +622,65 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
         let hasOcrSalary = false;
         let hasManualSalary = false;
         let usedBankSalary = false;
+        const salaryAuditSummary = buildSalaryOcrAuditSummary(caseRecord.applicants, 3);
+
+        if (salaryAuditSummary.slipCount > 0) {
+            totalSalariedMonthly += salaryAuditSummary.netMonthly || 0;
+            totalOcrSlipCount = salaryAuditSummary.slipCount;
+            hasOcrSalary = true;
+            salaryFormulaLines.push(
+                `OCR salary: gross avg ₹${Math.round(salaryAuditSummary.grossMonthly || 0).toLocaleString('en-IN')}/mo, net avg ₹${Math.round(salaryAuditSummary.netMonthly || 0).toLocaleString('en-IN')}/mo, deductions avg ₹${Math.round(salaryAuditSummary.deductionsMonthly || 0).toLocaleString('en-IN')}/mo from ${salaryAuditSummary.slipCount} unique slip(s), periods ${salaryAuditSummary.periods.join(', ')}`
+            );
+
+            logger.traceExtraction('SALARY OCR PERIOD AUDIT', {
+                'Source': 'SalarySlipOcrResult completed records',
+                'Unique Slips Used': salaryAuditSummary.slipCount,
+                'Unique Months Available': salaryAuditSummary.monthsAvailable,
+                'Months Required': salaryAuditSummary.monthsRequired,
+                'Data Complete': salaryAuditSummary.dataComplete ? 'Yes' : 'No',
+                'Period From': salaryAuditSummary.periodFrom || 'N/A',
+                'Period To': salaryAuditSummary.periodTo || 'N/A',
+                'Average Gross Salary': salaryAuditSummary.grossMonthly !== null ? `₹${Math.round(salaryAuditSummary.grossMonthly).toLocaleString('en-IN')}/mo` : 'N/A',
+                'Average Net Salary': salaryAuditSummary.netMonthly !== null ? `₹${Math.round(salaryAuditSummary.netMonthly).toLocaleString('en-IN')}/mo` : 'N/A',
+                'Average Deductions': salaryAuditSummary.deductionsMonthly !== null ? `₹${Math.round(salaryAuditSummary.deductionsMonthly).toLocaleString('en-IN')}/mo` : 'N/A',
+                'Warnings': salaryAuditSummary.warnings
+            });
+            logger.traceTable(
+                'SALARY OCR SLIPS USED',
+                ['Slip ID', 'Applicant', 'Period', 'Gross', 'Net', 'Deductions', 'Derived', 'Words Match', 'Name Match', 'PAN Match'],
+                salaryAuditSummary.slips.map(row => [
+                    row.slip_id || '',
+                    row.applicant_id || '',
+                    row.period || '',
+                    row.gross_salary || '',
+                    row.net_salary || '',
+                    row.deductions || '',
+                    row.deductions_is_derived ? 'Yes' : 'No',
+                    row.words_match === null ? '' : (row.words_match ? 'Yes' : 'No'),
+                    row.name_match_status || '',
+                    row.pan_match_status || ''
+                ])
+            );
+            if (salaryAuditSummary.exclusions.length > 0) {
+                logger.traceTable(
+                    'SALARY OCR SLIPS EXCLUDED',
+                    ['Slip ID', 'Applicant', 'Period', 'Gross', 'Net', 'Reason'],
+                    salaryAuditSummary.exclusions.map(row => [
+                        row.slip_id || '',
+                        row.applicant_id || '',
+                        row.period || '',
+                        row.gross_salary || '',
+                        row.net_salary || '',
+                        row.reason
+                    ])
+                );
+            }
+            salaryAuditSummary.warnings.forEach(warning => warnings.push(`[ESR SALARY] ${warning}`));
+        }
 
         for (const applicant of caseRecord.applicants) {
             const completedSlips = applicant.salary_ocr_results || [];
-            const slipNets = completedSlips
-                .map(s => toNum(s.net_salary))
-                .filter(v => v !== null && v > 0);
-
-            if (slipNets.length > 0) {
-                const avgNetForApplicant = slipNets.reduce((a, b) => a + b, 0) / slipNets.length;
-                totalSalariedMonthly += avgNetForApplicant;
-                totalOcrSlipCount += slipNets.length;
-                hasOcrSalary = true;
-                salaryFormulaLines.push(`Applicant ${applicant.id} OCR avg salary ₹${Math.round(avgNetForApplicant).toLocaleString('en-IN')}/mo from ${slipNets.length} slip(s)`);
-
-                logger.traceExtraction('SALARIED INCOME', {
-                    'Source': `OCR Payslips (Applicant ${applicant.id})`,
-                    'Slips Used': slipNets.length,
-                    'Avg Monthly Salary': `₹${Math.round(avgNetForApplicant).toLocaleString('en-IN')}/mo`
-                });
+            if (completedSlips.length > 0) {
                 continue; // prioritize OCR over manual for this applicant
             }
 
@@ -601,11 +757,16 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
                 logger.traceExtraction('SALARIED INCOME REVIEW', {
                     'OCR Avg Monthly Salary': `₹${Math.round(ocrMonthly).toLocaleString('en-IN')}`,
                     'Bank Salary Avg Monthly': `₹${Math.round(bankMonthly).toLocaleString('en-IN')}`,
-                    'Relative Difference': `${(relativeDiff * 100).toFixed(1)}%`
+                    'Relative Difference': `${(relativeDiff * 100).toFixed(1)}%`,
+                    'Bank Salary Cap Usage': 'Not used as verified net salary cap'
                 });
                 salaryFormulaLines.push(`OCR and bank salary differ by ${(relativeDiff * 100).toFixed(1)}%. Manual review recommended.`);
                 warnings.push(`[ESR INCOME] OCR salary and bank salary credit differ by ${(relativeDiff * 100).toFixed(1)}%. Manual review recommended.`);
+            } else {
+                verified_bank_net_salary_monthly = bankMonthly;
             }
+        } else if (!hasOcrSalary && bank_salary_avg_monthly !== null && bank_salary_avg_monthly > 0) {
+            verified_bank_net_salary_monthly = bank_salary_avg_monthly;
         }
 
         if (hasOcrSalary && hasManualSalary) {
@@ -740,9 +901,15 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
 
         logger.traceExtraction('FINAL DERIVED INCOMES', {
             'SALARIED': {
-                'Formula': 'Sum of applicant monthly salary values from OCR/manual sources',
+                'Formula': 'Net salary from unique OCR salary periods; manual/bank salary only when OCR is unavailable for that applicant',
                 'Calculation': salaryFormulaLines.length > 0 ? salaryFormulaLines.join(' ; ') : 'No salary formula details available',
-                'Income': `₹${(normalized_salaried || 0).toLocaleString()}/month`
+                'Income': `₹${(normalized_salaried || 0).toLocaleString()}/month`,
+                'Gross Monthly': salaryAuditSummary.grossMonthly !== null ? `₹${salaryAuditSummary.grossMonthly.toLocaleString()}/month` : 'N/A',
+                'Net Monthly': salaryAuditSummary.netMonthly !== null ? `₹${salaryAuditSummary.netMonthly.toLocaleString()}/month` : 'N/A',
+                'Deductions Monthly': salaryAuditSummary.deductionsMonthly !== null ? `₹${salaryAuditSummary.deductionsMonthly.toLocaleString()}/month` : 'N/A',
+                'Unique Months Available': salaryAuditSummary.monthsAvailable,
+                'Months Required': salaryAuditSummary.monthsRequired,
+                'Salary Data Complete': salaryAuditSummary.dataComplete ? 'Yes' : 'No'
             },
             'GST': {
                 'Formula': gst_formula_str,
@@ -821,6 +988,17 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
             salaried_income: normalized_salaried || null,
             salaried_income_source,
             salaried_slip_count,
+            salaried_gross_monthly: salaryAuditSummary.grossMonthly,
+            salaried_net_monthly: salaryAuditSummary.netMonthly,
+            salaried_deductions_monthly: salaryAuditSummary.deductionsMonthly,
+            salaried_months_available: salaryAuditSummary.monthsAvailable || null,
+            salaried_months_required: salaryAuditSummary.monthsRequired,
+            salaried_period_from: salaryAuditSummary.periodFrom,
+            salaried_period_to: salaryAuditSummary.periodTo,
+            salaried_data_complete: salaryAuditSummary.slipCount > 0 ? salaryAuditSummary.dataComplete : null,
+            salaried_source: salaryAuditSummary.source || salaried_income_source,
+            bank_net_salary_monthly: verified_bank_net_salary_monthly,
+            bank_salary_months_available: bank_salary_credit_count || null,
             salaried_incentive_income: totalIncentiveMonthly > 0 ? totalIncentiveMonthly : null,
             salaried_other_income: totalOtherEligibleMonthly > 0 ? totalOtherEligibleMonthly : null,
 
@@ -895,6 +1073,7 @@ function resolveGstIndustryMargin(industryType, lenderPolicyKey = 'ICICI') {
     if (text.includes('retail')) return 0.05;
     if (text.includes('wholesale')) return 0.04;
     if (text.includes('special')) return 0.03;
+    if (text.includes('service') || text.includes('supplier of service')) return 0.15;
 
     return null; // ICICI policy: no silent fallback margin. Manual review/manual industry required.
 }

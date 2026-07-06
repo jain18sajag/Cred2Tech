@@ -27,6 +27,10 @@ router.put('/bureau-obligations/:oblId',     obligationsCtrl.update);
 
 // ── Eligibility Summary Report  (/api/cases/:id/esr) ─────────────────────────
 router.post('/esr/generate', esrCtrl.generate);
+router.post('/esr/recalculate', esrCtrl.recalculate);
+router.get('/esr/logs', esrCtrl.listLogs);
+router.get('/esr/logs/:calculationRunId', esrCtrl.getLog);
+router.get('/esr/logs/:calculationRunId/download', esrCtrl.downloadLog);
 router.get('/esr',           esrCtrl.get);
 
 // ── Proposals  (/api/cases/:id/proposals/...) ────────────────────────────────

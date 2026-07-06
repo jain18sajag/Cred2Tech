@@ -222,6 +222,23 @@ function extractItrDetails(analyticsData) {
         return { pat, receipts, depreciation, finance_cost, remuneration, pat_path, receipts_path, depreciation_path, finance_cost_path, remuneration_path };
     };
 
+    const parseDepreciationFromBalanceSheet = (year) => {
+        const assets = itrKey?.balanceSheet?.assets;
+        if (!Array.isArray(assets)) return { value: null, path: null };
+
+        const row = assets.find(item => String(item?.year || '') === String(year));
+        const value = toRowNumber(
+            row?.depreciationAndAmortization
+            ?? row?.depreciation
+            ?? row?.depreciationAmortization
+        );
+
+        return {
+            value,
+            path: value !== null ? `iTR.balanceSheet.assets[year=${year}].depreciationAndAmortization` : null
+        };
+    };
+
     const getFilingStatus = (itrRoot, year) => {
         const returnSummary = itrRoot?.returnFilingSummary?.returnFilingSummary || [];
         if (!Array.isArray(returnSummary)) return 'Filed';
@@ -257,10 +274,11 @@ function extractItrDetails(analyticsData) {
     if (sorted.length > 0) {
         const rawNode = findRawYearNode(sorted[0].year);
         const parsedSummary = parseSummaryRow(sorted[0], rawNode);
+        const parsedBalanceSheetDep = parseDepreciationFromBalanceSheet(sorted[0].year);
 
         result.net_profit_latest_year = result.net_profit_latest_year ?? parsedSummary.pat;
         result.gross_receipts_latest_year = result.gross_receipts_latest_year ?? parsedSummary.receipts;
-        result.depreciation_latest_year = result.depreciation_latest_year ?? parsedSummary.depreciation;
+        result.depreciation_latest_year = result.depreciation_latest_year ?? parsedSummary.depreciation ?? parsedBalanceSheetDep.value;
         result.finance_cost_latest_year = result.finance_cost_latest_year ?? parsedSummary.finance_cost;
         result.itr_remuneration_latest_year = result.itr_remuneration_latest_year ?? parsedSummary.remuneration;
         result.financial_year_latest = fyLabel(sorted[0].year);
@@ -268,7 +286,7 @@ function extractItrDetails(analyticsData) {
 
         result._trace.pat_path = result._trace.pat_path || parsedSummary.pat_path;
         result._trace.rec_path = result._trace.rec_path || parsedSummary.receipts_path;
-        result._trace.dep_path = result._trace.dep_path || parsedSummary.depreciation_path;
+        result._trace.dep_path = result._trace.dep_path || parsedSummary.depreciation_path || parsedBalanceSheetDep.path;
         result._trace.fin_path = result._trace.fin_path || parsedSummary.finance_cost_path;
         result._trace.rem_path = result._trace.rem_path || parsedSummary.remuneration_path;
     }

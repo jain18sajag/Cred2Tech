@@ -71,7 +71,9 @@ const findAllMonthlySaleSummaryRows = (node, out = []) => {
         }
     }
 
-    // Support for Overview of GST Returns (ICICI/Signzy)
+    // Support for Overview of GST Returns (ICICI/Signzy).
+    // Lender calculators use GSTR 1 Gross Sales (E=A+B-C+D), not raw Sales (A),
+    // so credit/debit note amendments are respected.
     if (node['Overview of GST Returns'] !== undefined) {
         const overview = node['Overview of GST Returns'];
         const overviewItems = Array.isArray(overview) ? overview : [overview];
@@ -79,7 +81,7 @@ const findAllMonthlySaleSummaryRows = (node, out = []) => {
             // Remap for common interface
             out.push({
                 'Month': row['Month Year'],
-                'Taxable Value': row['Total Value of Sales (A)']
+                'Taxable Value': row['GSTR 1 Gross Sales (E=A+B-C+D)'] ?? row['Total Value of Sales (A)']
             });
         }
     }

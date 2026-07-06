@@ -28,6 +28,7 @@ const AddSalariedCustomerWizardPage = () => {
     business_name: '',
     business_mobile: '',
     business_email: '',
+    pincode: '',
     dob: '',
     mobile_verified: false,
     applicants: [],
@@ -121,11 +122,11 @@ const AddSalariedCustomerWizardPage = () => {
 
       const caseData = await caseService.getCaseById(targetCaseId);
       
-      if (caseData.stage === 'LEAD_CREATED') {
-        toast.success("This case is already active.");
-        navigate('/customers', { replace: true });
-        return;
-      }
+      // if (caseData.stage !== 'DRAFT') {
+      //   toast.success("This case is already active.");
+      //   navigate('/customers', { replace: true });
+      //   return;
+      // }
 
       setCaseId(caseData.id);
 
@@ -147,6 +148,7 @@ const AddSalariedCustomerWizardPage = () => {
         business_name: caseData.customer?.business_name || '',
         business_mobile: (caseData.customer?.business_mobile || '').replace(/\D/g, ''),
         business_email: caseData.customer?.business_email || '',
+        pincode: primaryApp?.pincode || caseData.customer?.pan_profiles?.[0]?.principal_pincode || '',
         dob: caseData.customer?.dob || '',
         mobile_verified: caseData.customer?.mobile_verified || false,
         applicants: restoredApplicants.map(app => ({
@@ -486,7 +488,7 @@ const AddSalariedCustomerWizardPage = () => {
       };
       await caseService.updateProductProperty(caseId, payload);
       toast.success('Product & property saved!');
-      navigate(`/cases/${caseId}/income-summary`);
+      navigate(`/cases/${caseId}/income-summary`, { replace: true });
     } catch (error) {
       toast.error(error.response?.data?.error || 'Failed to save product details.');
     } finally {
@@ -627,6 +629,17 @@ const AddSalariedCustomerWizardPage = () => {
                       placeholder="arjun@example.com" 
                     />
                   </FormField>
+                  
+                  <FormField label="PINCODE" name="pincode" required>
+                    <input
+                      type="text"
+                      value={formData.pincode || ''}
+                      onChange={e => setFormData({ ...formData, pincode: e.target.value })}
+                      className="form-control"
+                      placeholder="e.g. 560026"
+                      maxLength={6}
+                    />
+                  </FormField>
                 </div>
               </div>
             </div>
@@ -659,7 +672,7 @@ const AddSalariedCustomerWizardPage = () => {
                              <button type="button" onClick={() => removeApplicant(realIdx)} style={{ color: 'var(--error)', fontSize: 13, fontWeight: 600, border: 'none', background: 'none' }}>Remove ×</button>
                           </div>
                           <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: 'var(--text-secondary)' }}>Applicant #{coApplicantDisplayIdx + 1}</h4>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, alignItems: 'end', marginBottom: 16 }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 16, alignItems: 'end', marginBottom: 16 }}>
                             <FormField label="EMPLOYMENT TYPE" name={`coemp_${realIdx}`}>
                               <select className="form-control" value={app.employment_type || 'SALARIED'} onChange={e => updateApplicantRow(realIdx, 'employment_type', e.target.value)}>
                                  <option value="SALARIED">Salaried</option>
@@ -671,6 +684,16 @@ const AddSalariedCustomerWizardPage = () => {
                             </FormField>
                             <FormField label="DATE OF BIRTH" name={`codob_${realIdx}`}>
                               <input type="date" value={app.dob || ''} onChange={e => updateApplicantRow(realIdx, 'dob', e.target.value)} className="form-control" />
+                            </FormField>
+                            <FormField label="PINCODE" name={`copincode_${realIdx}`} required>
+                              <input
+                                type="text"
+                                value={app.pincode || ''}
+                                onChange={e => updateApplicantRow(realIdx, 'pincode', e.target.value)}
+                                className="form-control"
+                                placeholder="560026"
+                                maxLength={6}
+                              />
                             </FormField>
                           </div>
                           <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1.2fr', gap: 16, alignItems: 'end' }}>

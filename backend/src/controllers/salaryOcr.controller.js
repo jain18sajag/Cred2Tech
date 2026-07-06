@@ -1,6 +1,70 @@
 const prisma = require('../../config/db');
 const path = require('path');
-const { processSalarySlipSync, processSalarySlipBatchSync, startSalarySlipAsync, startSalarySlipBatchAsync, getJobStatus } = require('../services/externalApis/fractoSalaryOcr.service');
+const {
+    processSalarySlipSync,
+    processSalarySlipBatchSync,
+    startSalarySlipAsync,
+    startSalarySlipBatchAsync,
+    getJobStatus,
+    buildSalarySlipOcrDbData
+} = require('../services/externalApis/fractoSalaryOcr.service');
+
+async function getApplicantForSalaryValidation(applicantId, caseId, tenantId) {
+    return prisma.applicant.findFirst({
+        where: {
+            id: parseInt(applicantId),
+            case_id: parseInt(caseId),
+            case: { tenant_id: tenantId }
+        },
+        select: { id: true, name: true, pan_number: true }
+    });
+}
+
+async function applySalaryOcrResult(record, ocrResultData) {
+    const dbData = buildSalarySlipOcrDbData(ocrResultData);
+    const targetMonth = dbData.month || record.month;
+    const targetYear = dbData.year || record.year;
+
+    const duplicate = await prisma.salarySlipOcrResult.findFirst({
+        where: {
+            case_id: record.case_id,
+            applicant_id: record.applicant_id,
+            month: targetMonth,
+            year: targetYear,
+            NOT: { id: record.id }
+        },
+        select: { id: true }
+    });
+
+    if (duplicate) {
+        const errorMessage = `Duplicate salary period ${targetYear}-${targetMonth} for applicant ${record.applicant_id}.`;
+        await prisma.salarySlipOcrResult.update({
+            where: { id: record.id },
+            data: {
+                ocr_status: 'FAILED',
+                error_message: errorMessage,
+                raw_ocr_response: dbData.raw_ocr_response,
+                extracted_json: dbData.extracted_json,
+                extraction_warnings: [
+                    ...(Array.isArray(dbData.extraction_warnings) ? dbData.extraction_warnings : []),
+                    errorMessage
+                ]
+            }
+        });
+        const err = new Error(errorMessage);
+        err.statusCode = 409;
+        throw err;
+    }
+
+    return prisma.salarySlipOcrResult.update({
+        where: { id: record.id },
+        data: {
+            ...dbData,
+            month: targetMonth,
+            year: targetYear
+        }
+    });
+}
 
 /**
  * Trigger OCR processing for a specific salary slip document.
@@ -29,6 +93,11 @@ async function triggerSalarySlipOcr(req, res) {
 
         if (!document) {
             return res.status(404).json({ error: 'Salary slip document not found or does not belong to this applicant' });
+        }
+
+        const applicant = await getApplicantForSalaryValidation(applicantId, caseId, tenant_id);
+        if (!applicant) {
+            return res.status(404).json({ error: 'Applicant not found or unauthorized.' });
         }
 
         // 2. Locate File Path
@@ -80,7 +149,8 @@ async function triggerSalarySlipOcr(req, res) {
                 applicant_id: parseInt(applicantId),
                 month,
                 year,
-                tenant_id
+                tenant_id,
+                applicant
             });
 
             // Save processing status
@@ -104,24 +174,12 @@ async function triggerSalarySlipOcr(req, res) {
                 applicant_id: parseInt(applicantId),
                 month,
                 year,
-                tenant_id
+                tenant_id,
+                applicant
             });
 
             // Save completed status
-            await prisma.salarySlipOcrResult.update({
-                where: { id: ocrRecord.id },
-                data: {
-                    ocr_status: ocrResultData.status,
-                    vendor_job_id: ocrResultData.vendor_job_id,
-                    raw_ocr_response: ocrResultData.raw_ocr_response,
-                    extracted_json: ocrResultData.extracted_json,
-                    gross_salary: ocrResultData.gross_salary,
-                    net_salary: ocrResultData.net_salary,
-                    deductions: ocrResultData.deductions,
-                    employer_name: ocrResultData.employer_name,
-                    employee_name: ocrResultData.employee_name
-                }
-            });
+            await applySalaryOcrResult(ocrRecord, ocrResultData);
 
             if (ocrResultData.status === 'COMPLETED') {
                 await recalculateApplicantIncome(tenant_id, parseInt(caseId), parseInt(applicantId));
@@ -129,10 +187,14 @@ async function triggerSalarySlipOcr(req, res) {
         }
 
         const updatedRecord = await prisma.salarySlipOcrResult.findUnique({ where: { id: ocrRecord.id } });
-        res.json({ success: true, data: updatedRecord });
+        res.json({ success: true, data: updatedRecord, validation: ocrResultData?.validation || null });
 
     } catch (error) {
         console.error('[salaryOcr.controller] triggerSalarySlipOcr error:', error);
+
+        if (error.statusCode === 409) {
+            return res.status(409).json({ error: error.message, validation: { duplicate_salary_period: true } });
+        }
 
         // Handle Fracto errors securely
         if (error.message.includes('OCR service') || error.message.includes('File size')) {
@@ -171,6 +233,11 @@ async function processSalarySlipOcrBatch(req, res) {
 
         if (!Array.isArray(documentIds) || documentIds.length === 0) {
             return res.status(400).json({ error: 'documentIds array is required' });
+        }
+
+        const applicant = await getApplicantForSalaryValidation(applicantId, caseId, tenant_id);
+        if (!applicant) {
+            return res.status(404).json({ error: 'Applicant not found or unauthorized.' });
         }
 
         const filesToProcess = [];
@@ -246,7 +313,8 @@ async function processSalarySlipOcrBatch(req, res) {
                 files: filesToProcess,
                 case_id: parseInt(caseId),
                 applicant_id: parseInt(applicantId),
-                tenant_id
+                tenant_id,
+                applicant
             });
 
             // Save processing status and the shared job_id for all records
@@ -277,21 +345,20 @@ async function processSalarySlipOcrBatch(req, res) {
                 // Find specific result for this month/year if available
                 const specificResult = batchResults.find(r => r.month === record.month && r.year === record.year) || ocrResultData;
 
-                await prisma.salarySlipOcrResult.update({
-                    where: { id: record.id },
-                    data: {
-                        ocr_status: specificResult.status || 'FAILED',
-                        vendor_job_id: specificResult.vendor_job_id ? String(specificResult.vendor_job_id) : null,
-                        raw_ocr_response: specificResult.raw_ocr_response || null,
-                        extracted_json: specificResult.extracted_json || null,
-                        gross_salary: specificResult.gross_salary || null,
-                        net_salary: specificResult.net_salary || null,
-                        deductions: specificResult.deductions || null,
-                        employer_name: specificResult.employer_name || null,
-                        employee_name: specificResult.employee_name || null,
-                        error_message: specificResult.error_message || null
-                    }
-                });
+                if ((specificResult.status || ocrResultData.status) === 'COMPLETED') {
+                    await applySalaryOcrResult(record, specificResult);
+                } else {
+                    await prisma.salarySlipOcrResult.update({
+                        where: { id: record.id },
+                        data: {
+                            ocr_status: specificResult.status || 'FAILED',
+                            vendor_job_id: specificResult.vendor_job_id ? String(specificResult.vendor_job_id) : null,
+                            raw_ocr_response: specificResult.raw_ocr_response || null,
+                            extracted_json: specificResult.extracted_json || null,
+                            error_message: specificResult.error_message || null
+                        }
+                    });
+                }
             }
 
             if (ocrResultData.status === 'COMPLETED') {
@@ -305,10 +372,23 @@ async function processSalarySlipOcrBatch(req, res) {
             }
         });
 
-        res.json({ success: true, message: ocrMode === 'async' ? 'Batch OCR triggered' : 'Batch OCR completed', job_id: ocrResultData.vendor_job_id, data: updatedRecords });
+        res.json({
+            success: true,
+            message: ocrMode === 'async' ? 'Batch OCR triggered' : 'Batch OCR completed',
+            job_id: ocrResultData.vendor_job_id,
+            data: updatedRecords,
+            validation: (ocrResultData.batchResults || []).map(r => ({
+                month: r.month,
+                year: r.year,
+                validation: r.validation || null
+            }))
+        });
 
     } catch (error) {
         console.error('[salaryOcr.controller] processSalarySlipOcrBatch error:', error);
+        if (error.statusCode === 409) {
+            return res.status(409).json({ error: error.message, validation: { duplicate_salary_period: true } });
+        }
         res.status(500).json({ error: error.message || 'Failed to process salary slip batch.' });
     }
 }
@@ -339,7 +419,12 @@ async function pollSalarySlipOcr(req, res) {
             return res.json({ success: true, data: ocrRecord });
         }
 
-        const statusResult = await getJobStatus(ocrRecord.vendor_job_id);
+        const applicant = await getApplicantForSalaryValidation(applicantId, caseId, tenant_id);
+        const statusResult = await getJobStatus(ocrRecord.vendor_job_id, {
+            month: ocrRecord.month,
+            year: ocrRecord.year,
+            applicant
+        });
 
         if (statusResult.status === 'PROCESSING') {
             // Still processing
@@ -355,23 +440,11 @@ async function pollSalarySlipOcr(req, res) {
                     raw_ocr_response: statusResult.raw_ocr_response
                 }
             });
-            return res.json({ success: true, data: updated });
+            return res.json({ success: true, data: updated, validation: statusResult.validation || null });
         }
 
         if (statusResult.status === 'COMPLETED') {
-            const updated = await prisma.salarySlipOcrResult.update({
-                where: { id: ocrRecord.id },
-                data: {
-                    ocr_status: 'COMPLETED',
-                    raw_ocr_response: statusResult.raw_ocr_response,
-                    extracted_json: statusResult.extracted_json,
-                    gross_salary: statusResult.gross_salary,
-                    net_salary: statusResult.net_salary,
-                    deductions: statusResult.deductions,
-                    employer_name: statusResult.employer_name,
-                    employee_name: statusResult.employee_name
-                }
-            });
+            const updated = await applySalaryOcrResult(ocrRecord, statusResult);
 
             await recalculateApplicantIncome(tenant_id, parseInt(caseId), parseInt(applicantId));
 
@@ -381,6 +454,9 @@ async function pollSalarySlipOcr(req, res) {
         res.json({ success: true, data: ocrRecord });
     } catch (error) {
         console.error('[salaryOcr.controller] pollSalarySlipOcr error:', error);
+        if (error.statusCode === 409) {
+            return res.status(409).json({ error: error.message, validation: { duplicate_salary_period: true } });
+        }
         res.status(500).json({ error: 'Failed to poll OCR status.' });
     }
 }
@@ -507,8 +583,11 @@ async function addManualSalaryEntry(req, res) {
                 gross_salary: parseFloat(gross_salary),
                 net_salary: parseFloat(net_salary),
                 deductions: deductions ? parseFloat(deductions) : null,
+                deductions_is_derived: false,
                 employer_name: employer_name || null,
-                employee_name: employee_name || null
+                employee_name: employee_name || null,
+                name_match_status: employee_name ? 'MANUAL_REVIEW' : 'NOT_AVAILABLE',
+                pan_match_status: 'NOT_AVAILABLE'
             },
             create: {
                 tenant_id,
@@ -522,8 +601,11 @@ async function addManualSalaryEntry(req, res) {
                 gross_salary: parseFloat(gross_salary),
                 net_salary: parseFloat(net_salary),
                 deductions: deductions ? parseFloat(deductions) : null,
+                deductions_is_derived: false,
                 employer_name: employer_name || null,
-                employee_name: employee_name || null
+                employee_name: employee_name || null,
+                name_match_status: employee_name ? 'MANUAL_REVIEW' : 'NOT_AVAILABLE',
+                pan_match_status: 'NOT_AVAILABLE'
             }
         });
 

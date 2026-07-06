@@ -3,7 +3,9 @@ const { updateStage } = require('../case.service');
 const EsrTraceLogger = require('./esrTraceLogger');
 const EsrCalculationLogBuilder = require('./esrCalculationLogBuilder');
 const { buildIncomeCalculationLog } = require('./incomeCalculationLogBuilder');
+const { persistEsrCalculationLog } = require('./esrCalculationLog.service');
 const { getAbbDivisor } = require('./bankAbbPolicy');
+const { extractBankFySnapshot } = require('../bankParser.service');
 const {
     parseMoneySafe,
     parsePercentSafe,
@@ -141,13 +143,13 @@ const LENDER_POLICY_REGISTRY = {
         displayName: 'ICICI Bank Policy',
         aliases: ['ICICI', 'ICICI BANK'],
         salariedCalculator: 'ICICI',
-        // ICICI salaried income is already policy weighted: Salary 70%, Agri 50/100%, Rent 70%.
-        // So EMI capacity is considered income - obligations, not FOIR again.
+        // ICICI salaried salary base is verified net salary. FOIR is applied once
+        // later by the scheme parameter. Other income components keep their own haircuts.
         salariedEmiCapacityRule: 'INCOME_MINUS_OBLIGATIONS',
         banking: {
             mode: 'ABB_DIVISOR',
             divisorParamKeys: ['abbDivisor', 'abb_divisor', 'banking_abb_divisor', 'banking_abb_multiplier'],
-            defaultDivisor: 3,
+            defaultDivisor: 2,
             sampleDays: [5, 10, 15, 25]
         },
         gstMargins: {
@@ -155,7 +157,8 @@ const LENDER_POLICY_REGISTRY = {
             manufacturing: 0.07,
             wholesale: 0.04,
             retail: 0.05,
-            specialized: 0.03
+            specialized: 0.03,
+            service: 0.15
         },
         exposureFields: ['icici_exposure', 'existing_icici_exposure', 'lender_exposure']
     },
@@ -179,6 +182,7 @@ const LENDER_POLICY_REGISTRY = {
             divisorAboveParamKey: 'banking_abb_divisor_above_75l',
             defaultDivisorUpto: 3,
             defaultDivisorAbove: 4,
+            defaultTenureMonths: 180,
             sampleDays: [5, 15, 25]
         },
         gstMargins: {
@@ -1084,18 +1088,20 @@ function getIncomeEntryMonthlySums(incomeEntries = []) {
 function calculateIciciSalariedConsideredIncome({ esr, incomeEntries = [] }) {
     const entrySums = getIncomeEntryMonthlySums(incomeEntries);
 
-    // Salary is stored/entered as monthly in ESR summary. Apply ICICI salaried-method 70% weight once.
+    // Salary is stored as verified net monthly salary. ICICI FOIR is applied once
+    // later by the scheme parameter; do not pre-haircut salary by 70%.
     // Manual salary rows are used only as a fallback when OCR/API/bank salary is not available.
-    const grossSalaryFromSnapshot =
+    const netSalaryFromSnapshot =
         getFirstPositiveValue(esr, [
+            'salaried_net_monthly',
             'salaried_income',
             'salary_income',
             'monthly_salary_income',
             'net_monthly_salary',
             'applicant_salary_income'
         ], 'monthly');
-    const grossSalaryMonthly = grossSalaryFromSnapshot > 0 ? grossSalaryFromSnapshot : entrySums.manualSalaryMonthly;
-    const consideredSalary = grossSalaryMonthly * 0.70;
+    const netSalaryMonthly = netSalaryFromSnapshot > 0 ? netSalaryFromSnapshot : entrySums.manualSalaryMonthly;
+    const consideredSalary = netSalaryMonthly;
 
     // Agriculture priority:
     // 1. ITR agriculture at 100%.
@@ -1179,9 +1185,10 @@ function calculateIciciSalariedConsideredIncome({ esr, incomeEntries = [] }) {
         rental_cash: 0,
         agri_income: consideredAgriculture,
         other_income: 0,
-        salary_gross_monthly: grossSalaryMonthly,
-        salary_allowed_pct: 70,
-        salary_source: grossSalaryFromSnapshot > 0 ? 'ESR_SALARY_SNAPSHOT' : (entrySums.manualSalaryMonthly > 0 ? 'MANUAL_SALARY_FALLBACK' : 'NONE'),
+        salary_gross_monthly: Number(esr.salaried_gross_monthly) || null,
+        salary_net_monthly: netSalaryMonthly,
+        salary_allowed_pct: 100,
+        salary_source: netSalaryFromSnapshot > 0 ? 'ESR_SALARY_NET_SNAPSHOT' : (entrySums.manualSalaryMonthly > 0 ? 'MANUAL_SALARY_FALLBACK' : 'NONE'),
         agriculture_raw_monthly: agricultureRawMonthly,
         agriculture_source: agricultureSource,
         agriculture_allowed_pct: agricultureAllowedPct,
@@ -1189,13 +1196,13 @@ function calculateIciciSalariedConsideredIncome({ esr, incomeEntries = [] }) {
         rent_source: rentSource,
         rent_cash_excluded_monthly: entrySums.excludedRentCashMonthly || 0,
         breakdown: [
-            ...(grossSalaryMonthly > 0 ? [{
+            ...(netSalaryMonthly > 0 ? [{
                 type: 'Salary Income',
-                raw_monthly: grossSalaryMonthly,
-                allowed_pct: 70,
+                raw_monthly: netSalaryMonthly,
+                allowed_pct: 100,
                 eligible_monthly: consideredSalary,
-                source: grossSalaryFromSnapshot > 0 ? 'ESR salary snapshot' : 'Manual salary fallback',
-                rule: 'ICICI Salaried method: salary income considered at 70%; manual salary used only if OCR/API/bank salary is missing'
+                source: netSalaryFromSnapshot > 0 ? 'ESR salary net snapshot' : 'Manual salary fallback',
+                rule: 'ICICI Salaried method: verified monthly net salary is the base; FOIR is applied once by the scheme parameter.'
             }] : []),
             ...(consideredAgriculture > 0 ? [{
                 type: 'Agriculture Income',
@@ -1230,14 +1237,15 @@ function calculateIciciSalariedConsideredIncome({ esr, incomeEntries = [] }) {
 
 function calculateHdfcSalariedConsideredIncome({ esr, paramMap = {} }) {
     const grossSalaryMonthly = getFirstPositiveValue(esr, [
+        'salaried_gross_monthly',
         'salaried_income',
         'salary_income',
         'monthly_salary_income',
-        'net_monthly_salary',
         'applicant_salary_income'
     ], 'monthly');
 
     const bankNetSalaryMonthly = getFirstPositiveValue(esr, [
+        'bank_net_salary_monthly',
         'bank_net_salary',
         'bank_salary_income',
         'net_salary_as_per_bank',
@@ -1317,6 +1325,104 @@ function calculateHdfcSalariedConsideredIncome({ esr, paramMap = {} }) {
             }] : [])
         ]
     };
+}
+
+function getCoApplicantSalaryMonthly({ esr, incomeEntries = [], applicants = [] }) {
+    const applicantById = new Map((applicants || []).map(app => [Number(app.id), app]));
+    let manualSalaryMonthly = 0;
+    let hasCoApplicantSalaryEntry = false;
+
+    for (const entry of incomeEntries || []) {
+        const type = normalizeManualIncomeType(entry);
+        if (!isManualSalaryIncomeType(type)) continue;
+
+        const monthly = normalizeManualEntryMonthlyAmount(entry);
+        if (monthly <= 0) continue;
+
+        const applicantId = Number(entry.applicant_id || entry.applicantId);
+        const applicant = applicantById.get(applicantId);
+        const isCoApplicant = applicant
+            ? (applicant.is_primary === false || String(applicant.type || '').toUpperCase().includes('CO'))
+            : false;
+
+        if (isCoApplicant) {
+            manualSalaryMonthly += monthly;
+            hasCoApplicantSalaryEntry = true;
+        }
+    }
+
+    if (manualSalaryMonthly > 0) {
+        return {
+            monthlySalary: manualSalaryMonthly,
+            source: 'CO_APPLICANT_MANUAL_SALARY_ENTRY'
+        };
+    }
+
+    const hasSalariedCoApplicant = (applicants || []).some(app =>
+        (app.is_primary === false || String(app.type || '').toUpperCase().includes('CO'))
+        && String(app.employment_type || '').toUpperCase().includes('SALAR')
+    );
+    const snapshotSalary = hasSalariedCoApplicant && !hasCoApplicantSalaryEntry
+        ? getFirstPositiveValue(esr, ['salaried_net_monthly', 'salaried_income'], 'monthly')
+        : 0;
+
+    return {
+        monthlySalary: snapshotSalary,
+        source: snapshotSalary > 0 ? 'CO_APPLICANT_SALARY_SNAPSHOT' : 'NONE'
+    };
+}
+
+function calculateCoApplicantSalaryLoanAddon({ esr, incomeEntries = [], applicants = [], lenderPolicy, paramMap, tenureMonths, roi }) {
+    const salary = getCoApplicantSalaryMonthly({ esr, incomeEntries, applicants });
+    if (salary.monthlySalary <= 0 || tenureMonths <= 0 || roi <= 0) {
+        return {
+            monthlySalary: salary.monthlySalary,
+            source: salary.source,
+            eligibleEmi: 0,
+            eligibleLoanAmount: 0,
+            rule: 'No co-applicant salary add-on available.'
+        };
+    }
+
+    let eligibleEmi = 0;
+    let rule = '';
+
+    if (lenderPolicy.key === 'HDFC') {
+        const hdfcSalary = calculateHdfcSalariedConsideredIncome({ esr, paramMap });
+        eligibleEmi = Math.max(0, hdfcSalary.total_eligible_income || 0);
+        rule = 'HDFC co-applicant salary add-on uses HDFC salaried EMI capacity policy.';
+    } else if (lenderPolicy.key === 'ICICI') {
+        const salaryFoir = salary.monthlySalary > 75000 ? 0.70 : 0.60;
+        eligibleEmi = salary.monthlySalary * salaryFoir;
+        rule = `ICICI co-applicant salary add-on uses salaried slab FOIR ${(salaryFoir * 100).toFixed(0)}%.`;
+    } else {
+        eligibleEmi = salary.monthlySalary * 0.60;
+        rule = 'Generic co-applicant salary add-on uses 60% salary EMI capacity.';
+    }
+
+    return {
+        monthlySalary: salary.monthlySalary,
+        source: salary.source,
+        eligibleEmi,
+        eligibleLoanAmount: calculateMaxLoanAmount(eligibleEmi, roi, tenureMonths),
+        rule
+    };
+}
+
+function pickBestBankStatement(records = []) {
+    if (!Array.isArray(records) || records.length === 0) return null;
+    const completed = records.find(r => ['COMPLETED', 'COMPLETE', 'SUCCESS'].includes(String(r?.status || '').toUpperCase()));
+    return completed || records[0];
+}
+
+function resolveLenderSpecificBankSnapshot(rawBankData, lenderPolicy) {
+    if (!rawBankData) return null;
+    const sampleDays = lenderPolicy?.banking?.sampleDays || [5, 10, 15, 25];
+    try {
+        return extractBankFySnapshot(rawBankData, { sampleDays });
+    } catch (err) {
+        return { error: err.message, latest: null, _trace: { sampling_days: sampleDays.join(', ') } };
+    }
 }
 
 // ------ LTV RESOLVER ------
@@ -1816,6 +1922,28 @@ function resolveAgeMaturityParam(raw, defaultVal, monthlyIncome = 0) {
     return defaultVal;
 }
 
+function calculateAgeFromDob(dob) {
+    if (!dob) return null;
+    const raw = String(dob).trim();
+    let parsed = null;
+
+    const dmy = raw.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+    if (dmy) {
+        parsed = new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]));
+    } else {
+        parsed = new Date(raw);
+    }
+
+    if (!parsed || Number.isNaN(parsed.getTime())) return null;
+    const today = new Date();
+    let age = today.getFullYear() - parsed.getFullYear();
+    const monthDiff = today.getMonth() - parsed.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < parsed.getDate())) {
+        age -= 1;
+    }
+    return age > 0 && age < 120 ? age : null;
+}
+
 function calculateAgeBasedTenureLimit(applicants, paramMap, warnings, policyWarnings, esr = {}) {
     const getIntParam = (key, defaultVal = null) => {
         const raw = paramMap[key];
@@ -1830,6 +1958,10 @@ function calculateAgeBasedTenureLimit(applicants, paramMap, warnings, policyWarn
     if (Array.isArray(applicants)) {
         for (const app of applicants) {
             let appAge = Number(app.age);
+            if (isNaN(appAge) || appAge <= 0) {
+                const dobAge = calculateAgeFromDob(app.dob);
+                if (dobAge) appAge = dobAge;
+            }
             if (isNaN(appAge) || appAge <= 0) {
                 if (app.bureau_checks && app.bureau_checks.length > 0) {
                     const check = app.bureau_checks[0];
@@ -1886,6 +2018,17 @@ function calculateMaxLoanAmount(eligibleEmi, annualRoi, tenureMonths) {
     return Number.isFinite(P) ? Math.round(P) : 0;
 }
 
+function calculateDoubleWhammyFoirFromLtv(conditionalFlags, applicableLtvPercent) {
+    if (!conditionalFlags || conditionalFlags.type !== 'conditional_foir') return null;
+    if (conditionalFlags.special_program !== 'double_wammy') return null;
+    if (!Number.isFinite(Number(applicableLtvPercent))) return null;
+
+    const specialLimit = Number(conditionalFlags.special_limit);
+    if (!Number.isFinite(specialLimit) || specialLimit <= 0) return null;
+
+    return Math.max(0, (specialLimit / 100) - Number(applicableLtvPercent));
+}
+
 
 // ------ CONDITIONAL UNDERWRITING RELAXATIONS ------
 function applyConditionalUnderwritingRelaxations(evaluation, conditionalFlags, paramMap) {
@@ -1926,6 +2069,8 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         String(schemeIncomeMethod || '').toUpperCase() === 'SALARIED';
     const isNoDoubleFoirSalariedMethod =
         isSalariedMethod && lenderPolicy.salariedEmiCapacityRule === 'INCOME_MINUS_OBLIGATIONS';
+    const isHdfcSalariedEmiCapacityMethod =
+        isSalariedMethod && lenderPolicy.key === 'HDFC';
     let income_method_matched = true;
 
     if (caseIncomeMethod && schemeIncomeMethod) {
@@ -2205,10 +2350,10 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
 
     if (foir_allowed_percent_value !== null) {
         if (typeof foir_allowed_percent_value === 'object' && foir_allowed_percent_value.type === 'conditional_foir') {
-            const isDoubleWhammy = esr.double_whammy_flag === true;
+            const isDoubleWhammy = foir_allowed_percent_value.special_program === 'double_wammy';
             if (isDoubleWhammy) {
-                foir_allowed_percent = foir_allowed_percent_value.special_limit / 100;
-                warnings.push(`Double Whammy activated — FOIR limit set to ${foir_allowed_percent_value.special_limit}%.`);
+                foir_allowed_percent = foir_allowed_percent_value.base_limit / 100;
+                warnings.push(`Double Whammy policy detected in lender config; FOIR will be recalculated as ${foir_allowed_percent_value.special_limit}% minus property LTV after LTV resolution.`);
             } else {
                 foir_allowed_percent = foir_allowed_percent_value.base_limit / 100;
             }
@@ -2312,8 +2457,15 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
 
     // 4. Resolve final tenure used (Lender max tenure vs age-based restrictions)
     const maxTenureRes = getParamTenure(paramMap, `${pref}_max_tenure`);
-    const maxTenureMonths = handleParseResult(maxTenureRes, `${pref}_max_tenure`);
+    let maxTenureMonths = handleParseResult(maxTenureRes, `${pref}_max_tenure`);
     logger?.traceParser('parseTenureSafe', `${pref}_max_tenure`, maxTenureRes.raw, maxTenureRes);
+    if (lenderPolicy.key === 'HDFC' && isBankingMethod) {
+        const hdfcBankingTenure = lenderPolicy.banking?.defaultTenureMonths || 180;
+        if (!maxTenureMonths || maxTenureMonths < hdfcBankingTenure) {
+            warnings.push(`HDFC Banking tenure corrected to ${hdfcBankingTenure} months as per HDFC LAP Banking policy.`);
+            maxTenureMonths = hdfcBankingTenure;
+        }
+    }
     const ageBasedLimit = calculateAgeBasedTenureLimit(applicants, paramMap, warnings, policyWarnings, esr);
 
     let final_tenure_used = maxTenureMonths || 0;
@@ -2336,13 +2488,58 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const roi_max = handleParseResult(roiMaxRes, `${pref}_roi_max`);
     logger?.traceParser('parsePercentSafe', `${pref}_roi_max`, roiMaxRes.raw, roiMaxRes);
 
-    const underwriting_roi_used = roi_max || roi_min || 0;
+    const underwriting_roi_used = roi_min || roi_max || 0;
 
     logger?.traceStep('STEP 6 — ROI RESOLUTION', [
         `ROI Min:              ${toDisplayRoi(roi_min) ?? 'N/A'}%`,
         `ROI Max:              ${toDisplayRoi(roi_max) ?? 'N/A'}%`,
-        `Underwriting ROI:     ${toDisplayRoi(underwriting_roi_used)}% (roi_max preferred)`,
+        `Underwriting ROI:     ${toDisplayRoi(underwriting_roi_used)}% (roi_min preferred to match lender calculators)`,
     ].join('\n'));
+
+    if (lenderPolicy.key === 'HDFC' && isBankingMethod && underwriting_roi_used > 0 && final_tenure_used > 0) {
+        const bankingPolicy = lenderPolicy.banking || {};
+        const abb = toSafeNumber(incomeComposition?.banking_adjusted_abb || esr.bank_avg_balance);
+        const threshold = getNumericParam(paramMap, [bankingPolicy.thresholdParamKey], bankingPolicy.defaultThreshold || 7500000);
+        const divisorUpto = resolveFirstConfiguredParam(paramMap, [bankingPolicy.divisorUptoParamKey])?.value || bankingPolicy.defaultDivisorUpto || 3;
+        const divisorAbove = resolveFirstConfiguredParam(paramMap, [bankingPolicy.divisorAboveParamKey])?.value || bankingPolicy.defaultDivisorAbove || 4;
+
+        if (abb > 0 && threshold > 0) {
+            const obligationDeduction = addEmiToAbb ? 0 : netObligations;
+            const emiAtUpto = Math.max(0, (abb / divisorUpto) - obligationDeduction);
+            const loanAtUpto = calculateMaxLoanAmount(emiAtUpto, underwriting_roi_used, final_tenure_used);
+            const useAboveSlab = loanAtUpto > threshold;
+            const selectedDivisor = useAboveSlab ? divisorAbove : divisorUpto;
+            const correctedMonthlyIncome = abb / selectedDivisor;
+
+            composedIncome = correctedMonthlyIncome;
+            incomeComposition.primary_income = composedIncome;
+            incomeComposition.total_eligible_income = composedIncome;
+            incomeComposition.banking_adjusted_abb = abb;
+            incomeComposition.banking_divisor = selectedDivisor;
+            incomeComposition.banking_divisor_source_key = useAboveSlab
+                ? (bankingPolicy.divisorAboveParamKey || 'POLICY_DEFAULT_ABOVE_75L')
+                : (bankingPolicy.divisorUptoParamKey || 'POLICY_DEFAULT_UPTO_75L');
+            incomeComposition.breakdown = [{
+                type: addEmiToAbb ? 'HDFC Banking Obligation Add-back' : 'HDFC Banking ABB',
+                raw_abb: toSafeNumber(esr.bank_avg_balance),
+                obligation_added_to_abb: incomeComposition.banking_obligation_added_to_abb || 0,
+                adjusted_abb: abb,
+                divisor: selectedDivisor,
+                divisor_source_key: incomeComposition.banking_divisor_source_key,
+                eligible_monthly: correctedMonthlyIncome,
+                rule: useAboveSlab
+                    ? 'HDFC Banking: preliminary loan exceeds 75L, so ABB divided by 4 is used.'
+                    : 'HDFC Banking: preliminary loan is up to 75L, so ABB divided by 3 is used.'
+            }];
+
+            logger?.traceFormula(
+                'STEP 6A - HDFC BANKING 75L SLAB CHECK',
+                'If ABB/3 loan exceeds 75L, recalculate EMI capacity as ABB/4',
+                `ABB ${abb.toLocaleString()} / ${divisorUpto} => EMI ${emiAtUpto.toLocaleString()} => loan ${Math.round(loanAtUpto).toLocaleString()} vs threshold ${threshold.toLocaleString()}`,
+                `Selected divisor ${selectedDivisor}; monthly income ${correctedMonthlyIncome.toLocaleString()}`
+            );
+        }
+    }
 
     // GUARD: ROI must be > 0 for any meaningful loan calculation
     if (underwriting_roi_used <= 0) {
@@ -2366,9 +2563,9 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
 
     // 6. Calculate Maximum Eligible EMI
     let maximum_eligible_emi = 0;
-    if (isNoDoubleFoirSalariedMethod && configuredRawFoir == null && composedIncome > 0) {
+    if ((isHdfcSalariedEmiCapacityMethod || (isNoDoubleFoirSalariedMethod && configuredRawFoir == null)) && composedIncome > 0) {
         // Lender-specific salaried method where income has already been policy-weighted
-        // Salary 70%, Agri 50%/100%, Rent 70%. Do NOT apply FOIR again.
+        // HDFC returns EMI capacity from gross salary weighting. Do NOT apply FOIR again.
         maximum_eligible_emi = Math.max(0, composedIncome - netObligations);
         logger?.traceFormula(
             'STEP 7 — ELIGIBLE EMI CAPACITY',
@@ -2416,6 +2613,64 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         logger?.traceWarning('STEP 7 — ELIGIBLE EMI CAPACITY: Could not calculate (missing FOIR% or income)');
     }
 
+    let coApplicantSalaryAddon = null;
+    let coApplicantSalaryAddonApplied = false;
+    const methodAllowsCoApplicantSalaryAddon =
+        !isSalariedMethod
+        && (
+            isGrpMethod
+            || isDscrMethod
+            || (lenderPolicy.key === 'HDFC' && isBankingMethod)
+            || String(scheme.scheme_name || '').toUpperCase().includes('GST')
+            || String(scheme.scheme_name || '').toUpperCase().includes('NET PROFIT')
+            || String(scheme.scheme_name || '').toUpperCase().includes('NPM')
+        );
+
+    if (methodAllowsCoApplicantSalaryAddon && underwriting_roi_used > 0 && final_tenure_used > 0) {
+        const coApplicantAddonTenure = lenderPolicy.key === 'HDFC' && isBankingMethod
+            ? 120
+            : final_tenure_used;
+        const coApplicantAddonRoi = lenderPolicy.key === 'HDFC' && isBankingMethod
+            ? (roi_max || underwriting_roi_used)
+            : underwriting_roi_used;
+        coApplicantSalaryAddon = calculateCoApplicantSalaryLoanAddon({
+            esr,
+            incomeEntries,
+            applicants,
+            lenderPolicy,
+            paramMap,
+            tenureMonths: coApplicantAddonTenure,
+            roi: coApplicantAddonRoi
+        });
+
+        if (coApplicantSalaryAddon.eligibleEmi > 0) {
+            incomeComposition.breakdown = [
+                ...(incomeComposition.breakdown || []),
+                {
+                    type: 'Co-applicant Salary EMI Capacity Add-on',
+                    raw_monthly: coApplicantSalaryAddon.monthlySalary,
+                    eligible_emi: coApplicantSalaryAddon.eligibleEmi,
+                    eligible_loan_amount: coApplicantSalaryAddon.eligibleLoanAmount,
+                    source: coApplicantSalaryAddon.source,
+                    rule: coApplicantSalaryAddon.rule
+                }
+            ];
+
+            if (!isGrpMethod && !(lenderPolicy.key === 'HDFC' && isBankingMethod)) {
+                const primaryEmiCapacity = maximum_eligible_emi;
+                maximum_eligible_emi += coApplicantSalaryAddon.eligibleEmi;
+                coApplicantSalaryAddonApplied = true;
+                warnings.push(`Co-applicant salary EMI capacity added before final eligibility: EMI add-on ${coApplicantSalaryAddon.eligibleEmi.toLocaleString()}.`);
+                logger?.traceFormula(
+                    'STEP 7A - CO-APPLICANT SALARY EMI CAPACITY',
+                    coApplicantSalaryAddon.rule,
+                    `Primary EMI capacity ${primaryEmiCapacity.toLocaleString()} + co-app EMI ${coApplicantSalaryAddon.eligibleEmi.toLocaleString()}`,
+                    `Combined EMI capacity ${maximum_eligible_emi.toLocaleString()} | Tenure ${final_tenure_used}m`
+                );
+            }
+        }
+    }
+
     // 7. Calculate FOIR-based Maximum Eligible Loan Amount (or Method-based direct loan amount)
     let foir_based_eligible_loan_amount = 0;
 
@@ -2431,8 +2686,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
             failure_reasons.push('GRP gross receipt not available');
         }
 
-        const monthlyGrossReceipts = grossReceipts / 12;
-        foir_based_eligible_loan_amount = Math.max(0, (monthlyGrossReceipts * grpMultiplier) - exposure.amount);
+        foir_based_eligible_loan_amount = Math.max(0, (grossReceipts * grpMultiplier) - exposure.amount);
 
         logger?.traceFormula(
             'STEP 8 — GRP DIRECT LOAN ELIGIBILITY',
@@ -2441,9 +2695,8 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
             `₹${foir_based_eligible_loan_amount.toLocaleString()} | Multiplier Source: ${grpResolution.source}`
         );
         logger?.traceStep('GRP POLICY SOURCE', [
-            `Formula Used: Gross Receipts / 12 * GRP Multiplier - Exposure`,
+            `Formula Used: Gross Receipts * GRP Multiplier - Exposure`,
             `Gross Receipts: ${grossReceipts.toLocaleString()}`,
-            `Monthly Gross Receipts: ${monthlyGrossReceipts.toLocaleString()}`,
             `GRP Multiplier Used: ${grpMultiplier}`,
             `Profession Bucket: ${grpResolution.professionBucket || 'DEFAULT'}`,
             `Multiplier Source: ${grpResolution.source}`,
@@ -2451,7 +2704,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         ].join('\n'));
         isEligible = isEligible && foir_based_eligible_loan_amount > 0;
         if (!isEligible) {
-            failure_reasons.push("GRP eligibility is 0 (Gross receipts / 12 * Multiplier <= Exposure).");
+            failure_reasons.push("GRP eligibility is 0 (Gross receipts * Multiplier <= Exposure).");
         }
     } else if (isDscrMethod && maximum_eligible_emi > 0 && underwriting_roi_used > 0 && final_tenure_used > 0) {
         foir_based_eligible_loan_amount = calculateMaxLoanAmount(maximum_eligible_emi, underwriting_roi_used, final_tenure_used);
@@ -2483,6 +2736,18 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         );
     } else {
         logger?.traceWarning('STEP 8 — FOIR-BASED LOAN: Could not calculate (zero EMI capacity, ROI or tenure)');
+    }
+
+    if ((isGrpMethod || (lenderPolicy.key === 'HDFC' && isBankingMethod)) && coApplicantSalaryAddon?.eligibleLoanAmount > 0) {
+        foir_based_eligible_loan_amount += coApplicantSalaryAddon.eligibleLoanAmount;
+        coApplicantSalaryAddonApplied = true;
+        warnings.push(`Co-applicant salary eligibility added to ${isBankingMethod ? 'HDFC Banking' : 'GRP'} direct method: loan add-on ${coApplicantSalaryAddon.eligibleLoanAmount.toLocaleString()}.`);
+        logger?.traceFormula(
+            isBankingMethod ? 'STEP 8A - CO-APPLICANT SALARY ADD-ON FOR HDFC BANKING' : 'STEP 8A - CO-APPLICANT SALARY ADD-ON FOR GRP',
+            coApplicantSalaryAddon.rule,
+            `${isBankingMethod ? 'HDFC Banking' : 'GRP'} direct amount + co-app salary eligibility ${coApplicantSalaryAddon.eligibleLoanAmount.toLocaleString()}`,
+            `Combined before caps ${foir_based_eligible_loan_amount.toLocaleString()}`
+        );
     }
 
     // 8. Resolve LTV and Max Loan by LTV based on estimated capacity before LTV cap
@@ -2531,6 +2796,41 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     ].join('\n'));
 
     // --- NWM Cap: NET WORTH × LOAN% ---
+    const isDoubleWhammyPolicy = conditionalFlags?.special_program === 'double_wammy';
+    const ltvDrivenDoubleWhammyFoir = isDoubleWhammyPolicy
+        ? calculateDoubleWhammyFoirFromLtv(conditionalFlags, applicable_ltv_percent)
+        : null;
+    if (
+        ltvDrivenDoubleWhammyFoir !== null
+        && !isGrpMethod
+        && !isDscrMethod
+        && !isHdfcSalariedEmiCapacityMethod
+        && !skip_foir_check
+        && composedIncome > 0
+    ) {
+        foir_allowed_percent = ltvDrivenDoubleWhammyFoir;
+        maximum_eligible_emi = Math.max(0, (composedIncome * foir_allowed_percent) - netObligations);
+        if (coApplicantSalaryAddonApplied && coApplicantSalaryAddon?.eligibleEmi > 0) {
+            maximum_eligible_emi += coApplicantSalaryAddon.eligibleEmi;
+        }
+        foir_based_eligible_loan_amount = (maximum_eligible_emi > 0 && underwriting_roi_used > 0 && final_tenure_used > 0)
+            ? calculateMaxLoanAmount(maximum_eligible_emi, underwriting_roi_used, final_tenure_used)
+            : 0;
+
+        warnings.push(`Double Whammy FOIR recalculated from LTV: ${(conditionalFlags.special_limit || 140).toFixed(0)}% - ${(applicable_ltv_percent * 100).toFixed(0)}% = ${(foir_allowed_percent * 100).toFixed(2)}%.`);
+        logger?.traceFormula(
+            'STEP 9A - DOUBLE WHAMMY LTV-BASED FOIR',
+            'FOIR = Double Whammy Limit - Property LTV',
+            `${(conditionalFlags.special_limit || 140).toFixed(0)}% - ${(applicable_ltv_percent * 100).toFixed(0)}%`,
+            `${(foir_allowed_percent * 100).toFixed(2)}% | EMI ${maximum_eligible_emi.toLocaleString()} | Loan ${foir_based_eligible_loan_amount.toLocaleString()}`
+        );
+    } else if (isDoubleWhammyPolicy && applicable_ltv_percent === null) {
+        const warn = 'Double Whammy policy is configured but property-type LTV could not be resolved; FOIR was not silently converted to LTV-based FOIR.';
+        warnings.push(warn);
+        policyWarnings.push(warn);
+        logger?.traceWarning(warn);
+    }
+
     let nwm_cap = null;
     if ((scheme.scheme_name || '').toUpperCase().includes('NET WORTH') ||
         (scheme.scheme_name || '').toUpperCase().includes('NWM')) {
@@ -2647,8 +2947,13 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         );
     }
 
+    const coApplicantMonthlyIncomeForFoir = coApplicantSalaryAddonApplied && coApplicantSalaryAddon?.monthlySalary > 0
+        ? coApplicantSalaryAddon.monthlySalary
+        : 0;
+    const combinedMonthlyIncomeUsed = composedIncome + coApplicantMonthlyIncomeForFoir;
+
     // Correct Underwriting FOIR Formula: FOIR = (Existing Obligations + Proposed EMI) / Eligible Monthly Income
-    let foir_actual_percent = composedIncome > 0 ? ((netObligations + proposed_emi) / composedIncome) : 0;
+    let foir_actual_percent = combinedMonthlyIncomeUsed > 0 ? ((netObligations + proposed_emi) / combinedMonthlyIncomeUsed) : 0;
 
     let foir_display_string = `${(foir_actual_percent * 100).toFixed(2)}%`;
     if (isDscrMethod) {
@@ -2715,6 +3020,8 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         proposed_emi,
         maximum_eligible_emi: maximum_eligible_emi === Infinity ? null : maximum_eligible_emi,
         final_tenure_used,
+        lender_max_tenure_months: maxTenureMonths || null,
+        age_based_tenure_limit_months: ageBasedLimit !== null && ageBasedLimit !== Infinity ? ageBasedLimit : null,
         underwriting_roi_used: toDisplayRoi(underwriting_roi_used),
         roi_min: toDisplayRoi(roi_min),
         roi_max: toDisplayRoi(roi_max),
@@ -2724,7 +3031,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         foir_allowed_percent,
         foir_actual_percent,
         max_eligible_emi: maximum_eligible_emi,
-        monthly_income_used: composedIncome,
+        monthly_income_used: combinedMonthlyIncomeUsed,
         primary_monthly_income_used: incomeComposition.primary_income,
         monthly_income_note: isDscrMethod
             ? `${lenderPolicy.key} DSCR: annual income tested against annual obligations and proposed annual EMI.`
@@ -2734,11 +3041,14 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
                     ? `${lenderPolicy.key} Salaried: configured ${pref}_dbr_foir applied to lender-weighted salaried income.`
                     : `${lenderPolicy.key} scheme-specific composed monthly income used for FOIR/eligibility.`,
         dscr_breakdown: isDscrMethod ? dscrBreakdown : null,
+        co_applicant_salary_addon: coApplicantSalaryAddon && coApplicantSalaryAddon.eligibleLoanAmount > 0 ? coApplicantSalaryAddon : null,
         eligible_income_breakdown: incomeComposition.breakdown,
         weighted_other_income: composedIncome - incomeComposition.primary_income,
         foir_breakdown: {
             skip_foir_check,
-            composed_income: composedIncome,
+            composed_income: combinedMonthlyIncomeUsed,
+            primary_composed_income: composedIncome,
+            co_applicant_salary_income: coApplicantMonthlyIncomeForFoir,
             net_obligations: netObligations,
             proposed_emi: proposed_emi,
             foir_allowed_percent: foir_allowed_percent,
@@ -2889,6 +3199,21 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         property_collateral_snapshot: auditPropertySnapshot,
         bureau_json: auditBureauReport
     };
+    const salaryAuditSnapshot = {
+        salaried_gross_monthly: esr.salaried_gross_monthly || null,
+        salaried_net_monthly: esr.salaried_net_monthly || esr.salaried_income || null,
+        salaried_deductions_monthly: esr.salaried_deductions_monthly || null,
+        salaried_slip_count: esr.salaried_slip_count || 0,
+        salaried_months_available: esr.salaried_months_available || 0,
+        salaried_months_required: esr.salaried_months_required || null,
+        salaried_period_from: esr.salaried_period_from || null,
+        salaried_period_to: esr.salaried_period_to || null,
+        salaried_data_complete: esr.salaried_data_complete ?? null,
+        salaried_source: esr.salaried_source || esr.salaried_income_source || null,
+        bank_net_salary_monthly: esr.bank_net_salary_monthly || null,
+        bank_salary_months_available: esr.bank_salary_months_available || null
+    };
+    esrAuditSource.salary_audit_summary = salaryAuditSnapshot;
 
     // 2. Resolve CIBIL scores (Corrected: moved before lender evaluation)
     // Fetch all applicants with their latest successful bureau checks
@@ -3003,6 +3328,15 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
     });
 
     const lenderResults = [];
+    const bankStatementsForCalculation = await prisma.bankStatementAnalysisRequest.findMany({
+        where: { case_id, tenant_id },
+        orderBy: { created_at: 'desc' },
+        take: 10
+    });
+    const bestBankStatementForCalculation = pickBestBankStatement(bankStatementsForCalculation);
+    const rawBankDataForCalculation = bestBankStatementForCalculation
+        ? (bestBankStatementForCalculation.raw_retrieve_response || bestBankStatementForCalculation.raw_download_response || bestBankStatementForCalculation.raw_analyze_response)
+        : null;
 
     // Initialize ESR Trace Logger
     const logger = new EsrTraceLogger({ enabled: true });
@@ -3015,6 +3349,13 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         'Ownership': auditPropertySnapshot.ownership || 'N/A',
         'Product Type': esr.product_type,
         'Income Method': esr.selected_income_method || 'N/A',
+        'Salary Gross Monthly': salaryAuditSnapshot.salaried_gross_monthly ? `₹${salaryAuditSnapshot.salaried_gross_monthly.toLocaleString()}` : 'N/A',
+        'Salary Net Monthly': salaryAuditSnapshot.salaried_net_monthly ? `₹${salaryAuditSnapshot.salaried_net_monthly.toLocaleString()}` : 'N/A',
+        'Salary Deductions Monthly': salaryAuditSnapshot.salaried_deductions_monthly ? `₹${salaryAuditSnapshot.salaried_deductions_monthly.toLocaleString()}` : 'N/A',
+        'Salary Unique Months Available': salaryAuditSnapshot.salaried_months_available,
+        'Salary Months Required': salaryAuditSnapshot.salaried_months_required || 'N/A',
+        'Salary Period Range': salaryAuditSnapshot.salaried_period_from && salaryAuditSnapshot.salaried_period_to ? `${salaryAuditSnapshot.salaried_period_from} to ${salaryAuditSnapshot.salaried_period_to}` : 'N/A',
+        'Salary Data Complete': salaryAuditSnapshot.salaried_data_complete === null ? 'N/A' : (salaryAuditSnapshot.salaried_data_complete ? 'Yes' : 'No'),
         'Property Details Updated At': esr.source_updated_at?.propertyDetailsUpdatedAt || 'N/A',
         'Manual Income Updated At': esr.source_updated_at?.manualIncomeUpdatedAt || 'N/A',
         'Bureau Obligation Updated At': esr.source_updated_at?.bureauObligationUpdatedAt || 'N/A',
@@ -3032,6 +3373,13 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
     });
 
     logger.traceStep('PROPERTY & COLLATERAL SNAPSHOT', auditPropertySnapshot);
+    logger.traceStep('SALARY OCR SUMMARY', salaryAuditSnapshot);
+    if (salaryAuditSnapshot.salaried_months_required && salaryAuditSnapshot.salaried_months_available < salaryAuditSnapshot.salaried_months_required) {
+        logger.traceWarning(
+            'SALARY HISTORY INCOMPLETE',
+            `Only ${salaryAuditSnapshot.salaried_months_available} unique salary month(s) available; ${salaryAuditSnapshot.salaried_months_required} required for complete salaried assessment.`
+        );
+    }
     logger.traceTable(
         'MANUAL INCOME ADDITION ROWS USED',
         ['Type', 'Annual', 'Monthly', 'Doc', 'Rent Class', 'Auto Included', 'Remarks'],
@@ -3060,6 +3408,21 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
 
     // 3. Evaluate Config Matrix — iterate ALL products per lender, not just [0]
     for (const lender of lenders) {
+        const lenderPolicyForSnapshot = resolveLenderPolicy(lender);
+        const bankSnapshotForLender = resolveLenderSpecificBankSnapshot(rawBankDataForCalculation, lenderPolicyForSnapshot);
+        const lenderEsr = { ...esr };
+        if (bankSnapshotForLender?.latest !== null && bankSnapshotForLender?.latest !== undefined) {
+            lenderEsr.bank_avg_balance = bankSnapshotForLender.latest;
+            lenderEsr.bank_monthly_income = null;
+            logger?.traceStep('LENDER-SPECIFIC ABB SNAPSHOT', [
+                `Lender: ${lender.name}`,
+                `Sample Days: ${bankSnapshotForLender._trace?.sampling_days || (lenderPolicyForSnapshot.banking?.sampleDays || []).join(', ')}`,
+                `ABB Used: ${bankSnapshotForLender.latest.toLocaleString()}`
+            ].join('\n'));
+        } else if (rawBankDataForCalculation && lenderPolicyForSnapshot.key === 'HDFC') {
+            logger?.traceWarning(`HDFC ABB 5/15/25 could not be recalculated from raw bank payload; using stored ESR bank_avg_balance ${Number(esr.bank_avg_balance || 0).toLocaleString()}.`);
+        }
+
         if (lender.products.length === 0) {
             // Lender does not offer this product type at all
             continue;
@@ -3084,7 +3447,7 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
 
             for (const scheme of schemes) {
                 const evalOutput = evaluateDynamicSchemeEligibility({
-                    esr,
+                    esr: lenderEsr,
                     scheme,
                     product,
                     lender,
@@ -3215,6 +3578,7 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         auditPropertySnapshot.lender_policy_key = auditLenderPolicyKey;
     }
     let incomeCalculationLog = buildIncomeCalculationLog(esrAuditSource, lenderResults);
+    let structuredAuditLog = null;
     try {
         const calculationLogBuilder = new EsrCalculationLogBuilder();
         const esrAuditJson = calculationLogBuilder.buildLog({
@@ -3242,11 +3606,7 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
                 },
                 bureauReport: auditBureauReport,
                 salaryDetails: esr.salary_details || null,
-                salarySummary: {
-                    salariedIncome: esr.salaried_income || null,
-                    salariedIncomeSource: esr.salaried_income_source || null,
-                    salariedSlipCount: esr.salaried_slip_count || null
-                },
+                salarySummary: salaryAuditSnapshot,
                 manualIncomeEntries: auditManualIncomeEntries,
                 agricultureIncome: esr.agriculture_income || {},
                 manualObligations: esrAuditSource.manual_obligations || [],
@@ -3268,6 +3628,7 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
             }
         });
         esrAuditJson.incomeCalculationLog = incomeCalculationLog;
+        structuredAuditLog = esrAuditJson;
         logger.flushTrace({ jsonData: esrAuditJson });
     } catch (err) {
         console.warn('[ESR TRACE WARNING] Failed to generate structured JSON audit log:', err.message);
@@ -3356,6 +3717,18 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         salaried_income: esr.salaried_income,
         salaried_income_source: esr.salaried_income_source,
         salaried_slip_count: esr.salaried_slip_count,
+        salary_audit_summary: salaryAuditSnapshot,
+        salaried_gross_monthly: esr.salaried_gross_monthly,
+        salaried_net_monthly: esr.salaried_net_monthly,
+        salaried_deductions_monthly: esr.salaried_deductions_monthly,
+        salaried_months_available: esr.salaried_months_available,
+        salaried_months_required: esr.salaried_months_required,
+        salaried_period_from: esr.salaried_period_from,
+        salaried_period_to: esr.salaried_period_to,
+        salaried_data_complete: esr.salaried_data_complete,
+        salaried_source: esr.salaried_source,
+        bank_net_salary_monthly: esr.bank_net_salary_monthly,
+        bank_salary_months_available: esr.bank_salary_months_available,
 
         // ITR
         itr_pat: esr.itr_pat,
@@ -3405,7 +3778,7 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
     //   Two concurrent requests for the same case_id will serialize here:
     //   the second request blocks on the FOR UPDATE until the first commits.
     //
-    await prisma.$transaction(async (tx) => {
+    const newESR = await prisma.$transaction(async (tx) => {
         // LAYER 1: Acquire case-row lock for this transaction.
         // All subsequent reads/writes in this transaction are safe on this connection.
         await tx.$queryRawUnsafe(
@@ -3484,6 +3857,27 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         return newESR;
     });
 
+    let calculationLogMeta = null;
+    try {
+        calculationLogMeta = await persistEsrCalculationLog({
+            caseId: case_id,
+            tenantId: tenant_id,
+            userId: user_id,
+            esrReport: newESR,
+            lenderResults,
+            inputSnapshot,
+            incomeCalculationLog,
+            structuredAuditLog
+        });
+        console.log(`[ESR CALC LOG] Generated run ${calculationLogMeta.calculation_run_id} for Case ${case_id}`);
+    } catch (err) {
+        console.warn(`[ESR CALC LOG WARNING] Failed to persist calculation log for Case ${case_id}:`, err.message);
+        calculationLogMeta = {
+            error: 'ESR calculation log persistence failed.',
+            message: err.message
+        };
+    }
+
     // ISSUE 3 FIX: Call updateStage OUTSIDE the transaction.
     // updateStage uses the global prisma client internally (not a tx-client).
     // Calling it inside $transaction would deadlock the connection pool.
@@ -3505,7 +3899,8 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         property_value: esr.property_value,
         primary_cibil_score: primary_cibil,
         lowest_cibil_score: lowest_cibil,
-        total_emi_per_month: esr.existing_obligations
+        total_emi_per_month: esr.existing_obligations,
+        calculation_log: calculationLogMeta
     };
 }
 

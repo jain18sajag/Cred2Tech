@@ -1,4 +1,5 @@
 const prisma = require('../../config/db');
+const { extractGstDetails } = require('./financial.extractor');
 
 /**
  * Priority of sources for GST turnover.
@@ -42,6 +43,11 @@ async function getBestUsableGstSnapshot({ tenantId, caseId, applicantId, gstin }
     let bestRequest = requests.find(r => r.metrics_status === 'COMPLETED');
     if (!bestRequest) {
         bestRequest = requests[0]; // fallback to latest even if not completed
+    }
+
+    const rollingSnapshot = _buildRollingSnapshotFromRequest(bestRequest);
+    if (rollingSnapshot) {
+        return rollingSnapshot;
     }
 
     // Now fetch the parsed FY summaries
@@ -102,6 +108,48 @@ async function getBestUsableGstSnapshot({ tenantId, caseId, applicantId, gstin }
         _raw_summaries: summaries, // to allow consumers to access the exact Indian FY slices if needed
         _best_request_id: bestRequest.id
     };
+}
+
+function _buildRollingSnapshotFromRequest(request) {
+    if (!request) return null;
+
+    if (request.raw_report_data) {
+        try {
+            const extracted = extractGstDetails(request.raw_report_data);
+            if (extracted?.turnover_latest_year) {
+                return {
+                    turnover_latest_year: extracted.turnover_latest_year,
+                    turnover_previous_year: request.turnover_previous_year,
+                    financial_year_latest: extracted.financial_year_latest,
+                    financial_year_previous: request.financial_year_previous,
+                    avg_monthly_turnover: extracted.avg_monthly_turnover,
+                    months_filed_12m: extracted.months_filed_12m,
+                    nil_return_months: extracted.nil_return_months,
+                    selected_turnover_source: 'GSTR1_GROSS_SALES_ROLLING_12M_RAW_REPORT',
+                    _best_request_id: request.id
+                };
+            }
+        } catch (err) {
+            console.warn(`[GST Snapshot] Raw report rolling turnover parse failed for request ${request.id}: ${err.message}`);
+        }
+    }
+
+    if (request.rolling_12_month_turnover || request.avg_monthly_turnover) {
+        const turnover = request.rolling_12_month_turnover || request.turnover_latest_year || null;
+        return {
+            turnover_latest_year: turnover,
+            turnover_previous_year: request.turnover_previous_year,
+            financial_year_latest: request.rolling_12_month_end_period || request.financial_year_latest,
+            financial_year_previous: request.financial_year_previous,
+            avg_monthly_turnover: request.avg_monthly_turnover || (turnover ? Number(turnover) / 12 : null),
+            months_filed_12m: request.months_filed_12m,
+            nil_return_months: request.nil_return_months,
+            selected_turnover_source: request.selected_turnover_source || 'GSTR1_GROSS_SALES_ROLLING_12M',
+            _best_request_id: request.id
+        };
+    }
+
+    return null;
 }
 
 module.exports = {

@@ -140,6 +140,10 @@ export const caseService = {
     const response = await axiosInstance.post(`/cases/${caseId}/esr/generate`);
     return response.data;
   },
+  recalculateESR: async (caseId) => {
+    const response = await axiosInstance.post(`/cases/${caseId}/esr/recalculate`);
+    return response.data;
+  },
   getESR: async (caseId) => {
     const response = await axiosInstance.get(`/cases/${caseId}/esr`, {
       params: { _: Date.now() },

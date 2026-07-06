@@ -296,7 +296,7 @@ async function syncGstData(req, res) {
                 // "message": "Request is in progress." vs actual data obj payload "gstr1"
                 if (dataRes.status === "SUCCESS" && dataRes.message === "Request is in progress.") {
                     // Still processing
-                } else if (dataRes.gstin) {
+                } else if (hasUsableGstFetchPayload(dataRes)) {
                     currentStatus = 'DATA_READY';
                     
                     const updateData = { 
@@ -419,6 +419,14 @@ async function syncGstData(req, res) {
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
+}
+
+function hasUsableGstFetchPayload(dataRes) {
+    if (!dataRes || typeof dataRes !== 'object') return false;
+    if (dataRes.gstin || dataRes.gstr1 || dataRes.gstr3b) return true;
+    if (dataRes.data?.gstin || dataRes.data?.gstr1 || dataRes.data?.gstr3b) return true;
+    if (dataRes.result?.gstin || dataRes.result?.gstr1 || dataRes.result?.gstr3b) return true;
+    return false;
 }
 
 // Webhook Receiver (No JWT verify)

@@ -368,11 +368,55 @@ async function dispatchProposalEmailByProposalId({ proposalId, tenantId, userId,
     throw new Error('No email contact configured for this lender/product. Please check Lender Contacts.');
   }
 
-  // 3. Fetch sender (DSA user)
+  // 3. Fetch sender (DSA user) and related hierarchy
   const sender = await prisma.user.findUnique({
     where: { id: Number(userId) },
-    select: { id: true, name: true, email: true, mobile: true, designation: true }
+    select: { id: true, name: true, email: true, mobile: true, designation: true, manager_id: true }
   });
+
+  // Fetch Case Creator
+  let caseCreator = null;
+  if (caseData.created_by) {
+    caseCreator = await prisma.user.findUnique({
+      where: { id: caseData.created_by },
+      select: { email: true, manager_id: true }
+    });
+  }
+
+  // Fetch Managers
+  let creatorManager = null;
+  if (caseCreator?.manager_id) {
+    creatorManager = await prisma.user.findUnique({
+      where: { id: caseCreator.manager_id },
+      select: { email: true }
+    });
+  }
+
+  let senderManager = null;
+  if (sender?.manager_id && sender.manager_id !== caseCreator?.manager_id) {
+    senderManager = await prisma.user.findUnique({
+      where: { id: sender.manager_id },
+      select: { email: true }
+    });
+  }
+
+  // Fetch DSA Admins
+  const dsaAdmins = await prisma.user.findMany({
+    where: {
+      tenant_id: Number(tenantId),
+      role: { name: 'DSA' }
+    },
+    select: { email: true }
+  });
+
+  // Consolidate CC list
+  const ccEmails = new Set();
+  if (sender?.email) ccEmails.add(sender.email);
+  if (caseCreator?.email) ccEmails.add(caseCreator.email);
+  if (creatorManager?.email) ccEmails.add(creatorManager.email);
+  if (senderManager?.email) ccEmails.add(senderManager.email);
+  dsaAdmins.forEach(admin => { if (admin.email) ccEmails.add(admin.email); });
+  const ccEmailString = Array.from(ccEmails).join(', ');
 
   // 4. Build content
   const { subject, bodyText, bodyHtml } = buildProposalEmailFromTemplate({
@@ -420,6 +464,8 @@ async function dispatchProposalEmailByProposalId({ proposalId, tenantId, userId,
   const mailOptions = {
     from: `"${fromName}" <${fromEmail}>`,
     to: contact.contact_email,
+    cc: ccEmailString,
+    replyTo: sender.email,
     subject,
     text: bodyText,
     html: bodyHtml,
@@ -431,15 +477,11 @@ async function dispatchProposalEmailByProposalId({ proposalId, tenantId, userId,
   let emailSent = false;
 
   if (transporter) {
-    try {
-      const info = await transporter.sendMail(mailOptions);
-      messageId = info.messageId;
-      emailSent = true;
-      console.log(`[PROPOSAL SEND] ✅ Email actually dispatched! MsgId: ${messageId}`);
-    } catch (err) {
-      console.error('[PROPOSAL SEND] ❌ Email Send failed:', err.message);
-      throw new Error(`Failed to send email to lender: ${err.message}`);
-    }
+    // Fire and forget to improve response time
+    transporter.sendMail(mailOptions)
+      .then(info => console.log(`[PROPOSAL SEND] ✅ Email actually dispatched! MsgId: ${info.messageId}`))
+      .catch(err => console.error('[PROPOSAL SEND] ❌ Email Send failed:', err.message));
+    emailSent = true;
   } else {
     console.log('[PROPOSAL SEND] MOCK SEND (No SMTP):', subject);
     emailSent = true;
@@ -450,7 +492,8 @@ async function dispatchProposalEmailByProposalId({ proposalId, tenantId, userId,
   const smsMessage = `Cred2Tech: New proposal from DSA ${sender.name} (${dsaCode}). Customer: ${customer.name || customer.business_name}. Amount: ₹${(proposal.requested_amount / 100000).toFixed(1)}L. Case: CASE-${caseData.id}.`;
 
   if (contact.contact_mobile) {
-    await sendProposalSms({ mobile: contact.contact_mobile, message: smsMessage }).catch(() => { });
+    // Fire and forget SMS
+    sendProposalSms({ mobile: contact.contact_mobile, message: smsMessage }).catch(() => { });
   }
 
   // 9. Child Case Lifecycle Linkage (Standardize Lender Tracking)

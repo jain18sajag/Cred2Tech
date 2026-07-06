@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { caseService } from '../api/caseService';
 import { toast } from 'react-hot-toast';
@@ -937,6 +937,7 @@ export default function EsrPage() {
 
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const generatingRef = useRef(false);
   const [esr, setEsr] = useState(null);
   const [proposals, setProposals] = useState([]);
 
@@ -958,14 +959,20 @@ export default function EsrPage() {
   useEffect(() => { load(); }, [load]);
 
   const handleGenerate = async () => {
+    if (generatingRef.current) return;
+    generatingRef.current = true;
     try {
       setGenerating(true);
-      const result = await caseService.generateESR(caseId);
+      const result = esr
+        ? await caseService.recalculateESR(caseId)
+        : await caseService.generateESR(caseId);
       await load();
-      toast.success(`ESR generated! ${result.eligible_count} lender(s) eligible.`);
+      const eligibleCount = result.eligible_count ?? result.eligible_lenders_count ?? (result.lenders || []).filter(l => l.is_eligible).length;
+      toast.success(`ESR ${esr ? 'regenerated' : 'generated'}! ${eligibleCount} lender(s) eligible.`);
     } catch (e) {
-      toast.error(e.response?.data?.error || 'Failed to generate ESR');
+      toast.error(e.response?.data?.error || `Failed to ${esr ? 'regenerate' : 'generate'} ESR`);
     } finally {
+      generatingRef.current = false;
       setGenerating(false);
     }
   };

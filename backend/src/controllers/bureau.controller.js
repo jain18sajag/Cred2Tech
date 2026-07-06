@@ -1,4 +1,5 @@
 const bureauService = require('../services/externalApis/bureau.service');
+const experianService = require('../services/externalApis/experian.service');
 const walletService = require('../services/wallet.service');
 const prisma = require('../../config/db');
 
@@ -84,6 +85,28 @@ async function runBureauVerification(req, res) {
             applicantType: applicant.type
          };
 
+         let dobRaw = applicant.dob || panProfile?.dob || caseRecord.customer.dob;
+         let formattedDob = '1990-01-01'; // Fallback
+         if (dobRaw) {
+            if (/^\d{4}-\d{2}-\d{2}$/.test(dobRaw)) {
+                formattedDob = dobRaw;
+            } else {
+               const parsedDate = new Date(dobRaw);
+               if (!isNaN(parsedDate.getTime())) {
+                  formattedDob = parsedDate.toISOString().split('T')[0];
+               }
+            }
+         }
+
+         const experianPayload = {
+            phoneNumber: mobile,
+            pan: panNumber,
+            firstName,
+            lastName,
+            dateOfBirth: formattedDob,
+            pincode: applicant.pincode || panProfile?.principal_pincode || '560026'
+         };
+
          try {
             const response = await walletService.executePaidApi({
                apiCode: 'BUREAU_PULL',
@@ -99,7 +122,25 @@ async function runBureauVerification(req, res) {
                }
             });
 
+            // Immediately trigger Experian to get obligations
+            // Not running through wallet as it might not be configured as a paid API yet, or we want it silently alongside
+            await experianService.runExperianCheck({
+               caseId: caseId,
+               applicantId: applicant.id,
+               payloadData: experianPayload
+            });
+
             successCount++;
+            
+            // Sync the DB state regardless of whether this was a live pull or a cached response
+            await prisma.applicant.update({
+               where: { id: applicant.id },
+               data: { 
+                  bureau_fetched: true, 
+                  cibil_score: response.score ? parseInt(response.score, 10) : null 
+               }
+            });
+
             if (applicant.type === 'PRIMARY') {
                results.applicantScore = response.score;
             } else {

@@ -71,6 +71,7 @@ model Tenant {
   commission_rules          LenderCommissionRule[]
   audit_logs                AuditLog[]
   eligibility_reports       EligibilityReport[]
+  esr_calculation_logs      CaseEsrCalculationLog[]
   proposals                 Proposal[]
   sanctions                 CaseSanction[]
   disbursements             Disbursement[]
@@ -337,6 +338,7 @@ model Case {
   income_entries     CaseIncomeEntry[]
   obligations        CaseCreditObligation[]
   esrs               EligibilityReport[]
+  esr_calculation_logs CaseEsrCalculationLog[]
   esr_financials     CaseEsrFinancials?
   stage_history      CaseStageHistory[]
   proposals          Proposal[]
@@ -347,7 +349,7 @@ model Case {
   pdd_tasks                 PDDTask[]
   salary_ocr_results        SalarySlipOcrResult[]
   commission_ledgers        CommissionLedger[]
-  SubDsaPayoutLedger        SubDsaPayoutLedger[]
+  SubDsaPayoutLedger        SubDsaPayoutLedger[] 
   SalesIncentiveLedger      SalesIncentiveLedger[]
   data_pull_background_jobs DataPullBackgroundJob[]
   system_notifications      SystemNotification[]
@@ -379,6 +381,7 @@ model Applicant {
   dob                 String?
   mobile              String?
   email               String?
+  pincode             String?
   cibil_score         Int?
   emi                 Float? // DEPRECATED: use sum of CaseCreditObligation.emi_per_month
   is_primary          Boolean        @default(false)
@@ -1323,6 +1326,17 @@ model CaseEsrFinancials {
   salaried_income        Float? // avg net monthly salary derived from OCR + manual income entries
   salaried_income_source String? // "OCR" | "MANUAL" | "MIXED"
   salaried_slip_count    Int? // number of OCR-completed salary slips used in derivation
+  salaried_gross_monthly      Float?
+  salaried_net_monthly        Float?
+  salaried_deductions_monthly Float?
+  salaried_months_available   Int?
+  salaried_months_required    Int?
+  salaried_period_from        String?
+  salaried_period_to          String?
+  salaried_data_complete      Boolean?
+  salaried_source             String?
+  bank_net_salary_monthly     Float?
+  bank_salary_months_available Int?
 
   selected_income_method  String?
   selected_monthly_income Float?
@@ -1383,7 +1397,8 @@ model EligibilityReport {
 
   status String @default("GENERATED")
 
-  lenders EligibilityReportLender[]
+  lenders          EligibilityReportLender[]
+  calculation_logs CaseEsrCalculationLog[]
 
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
@@ -1397,6 +1412,70 @@ model EligibilityReport {
   @@unique([case_id, tenant_id, version_number])
   @@index([case_id, tenant_id, is_latest])
   @@map("eligibility_reports")
+}
+
+model CaseEsrCalculationLog {
+  id                 Int      @id @default(autoincrement())
+  tenant_id          Int
+  case_id            Int
+  esr_id             Int?
+  calculation_run_id String
+
+  lender_code String?
+  lender_name String?
+  scheme_code String?
+  scheme_name String?
+
+  selected_method    String?
+  calculation_status String  @default("GENERATED")
+  calculation_version String?
+  policy_version     String?
+  source_snapshot_id Int?
+
+  requested_loan_amount  Float?
+  requested_tenure_months Int?
+  final_tenure_months     Int?
+  roi_annual              Float?
+  emi_per_lakh            Float?
+
+  eligible_monthly_income   Float?
+  eligible_emi_capacity     Float?
+  income_based_eligibility  Float?
+  ltv_based_eligibility     Float?
+  product_cap               Float?
+  exposure_deduction        Float?
+  pos_deduction             Float?
+  final_eligible_amount     Float?
+
+  manual_review_required Boolean @default(false)
+  configuration_error    Boolean @default(false)
+
+  warnings_json          Json?
+  errors_json            Json?
+  input_snapshot_json    Json?
+  source_paths_json      Json?
+  calculation_steps_json Json?
+  excluded_records_json  Json?
+
+  json_file_name        String?
+  json_file_path        String?
+  json_file_url         String?
+  json_checksum_sha256  String?
+  xlsx_file_name        String?
+  xlsx_file_path        String?
+  xlsx_file_url         String?
+  xlsx_checksum_sha256  String?
+
+  created_at DateTime @default(now())
+  created_by Int?
+
+  case_entity Case               @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  tenant      Tenant             @relation(fields: [tenant_id], references: [id])
+  esr         EligibilityReport? @relation(fields: [esr_id], references: [id], onDelete: SetNull)
+
+  @@index([case_id, calculation_run_id])
+  @@index([tenant_id, case_id, created_at])
+  @@map("case_esr_calculation_logs")
 }
 
 model EligibilityReportLender {
@@ -1801,6 +1880,17 @@ model SalarySlipOcrResult {
   deductions    Float?
   employer_name String?
   employee_name String?
+  ocr_confidence         Float?
+  pages_processed        Int?
+  employee_pan           String?
+  net_salary_words_match Boolean?
+  extraction_checks      Json?
+  extraction_warnings    Json?
+  extraction_source      String?
+  salary_period          String?
+  deductions_is_derived  Boolean @default(false)
+  name_match_status      String?
+  pan_match_status       String?
 
   vendor_name      String?
   vendor_job_id    String?

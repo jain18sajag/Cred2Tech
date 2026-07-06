@@ -59,6 +59,7 @@ async function createCase(customer_id, product_type, tenant_id, user_id) {
           mobile: customer.business_mobile,
           email: customer.business_email,
           pan_number: customer.business_pan,
+          pincode: customer.pan_profiles?.[0]?.principal_pincode || null,
           otp_verified: customer.mobile_verified || false // Security Fix: Remove || true bypass
         }
       }
@@ -211,6 +212,7 @@ async function addApplicant(case_id, applicantData, tenant_id) {
         pan_number: applicantData.pan_number,
         mobile: applicantData.mobile,
         email: applicantData.email,
+        pincode: applicantData.pincode,
         employment_type: applicantData.employment_type || undefined
       }
     });
@@ -232,6 +234,7 @@ async function addApplicant(case_id, applicantData, tenant_id) {
           data: {
             mobile: applicantData.mobile || existingCoApp.mobile,
             email: applicantData.email || existingCoApp.email,
+            pincode: applicantData.pincode || existingCoApp.pincode,
             employment_type: applicantData.employment_type || existingCoApp.employment_type
           }
         });
@@ -242,6 +245,7 @@ async function addApplicant(case_id, applicantData, tenant_id) {
           name: applicantData.name || existingCoApp.name,
           mobile: applicantData.mobile || existingCoApp.mobile,
           email: applicantData.email || existingCoApp.email,
+          pincode: applicantData.pincode || existingCoApp.pincode,
           employment_type: applicantData.employment_type || existingCoApp.employment_type
         }
       });
@@ -260,6 +264,7 @@ async function addApplicant(case_id, applicantData, tenant_id) {
           data: {
             mobile: applicantData.mobile,
             email: applicantData.email,
+            pincode: applicantData.pincode,
             employment_type: applicantData.employment_type || undefined
           }
         });
@@ -272,6 +277,7 @@ async function addApplicant(case_id, applicantData, tenant_id) {
           pan_number: applicantData.pan_number,
           mobile: applicantData.mobile,
           email: applicantData.email,
+          pincode: applicantData.pincode,
           employment_type: applicantData.employment_type || undefined
         }
       });
@@ -288,6 +294,7 @@ async function addApplicant(case_id, applicantData, tenant_id) {
       pan_number: applicantData.pan_number,
       mobile: applicantData.mobile,
       email: applicantData.email,
+      pincode: applicantData.pincode,
       employment_type: applicantData.employment_type || 'SELF_EMPLOYED'
     }
   });
@@ -1225,8 +1232,19 @@ async function createCaseFromExisting(customerId, tenantId, userId, productType 
               gross_salary: ocr.gross_salary,
               net_salary: ocr.net_salary,
               deductions: ocr.deductions,
+              deductions_is_derived: ocr.deductions_is_derived,
               employer_name: ocr.employer_name,
               employee_name: ocr.employee_name,
+              employee_pan: ocr.employee_pan,
+              ocr_confidence: ocr.ocr_confidence,
+              pages_processed: ocr.pages_processed,
+              net_salary_words_match: ocr.net_salary_words_match,
+              extraction_checks: ocr.extraction_checks || null,
+              extraction_warnings: ocr.extraction_warnings || null,
+              extraction_source: ocr.extraction_source,
+              salary_period: ocr.salary_period,
+              name_match_status: ocr.name_match_status,
+              pan_match_status: ocr.pan_match_status,
               vendor_name: ocr.vendor_name,
               vendor_job_id: ocr.vendor_job_id,
               raw_ocr_response: ocr.raw_ocr_response || {},
@@ -1355,6 +1373,20 @@ async function createCaseFromExisting(customerId, tenantId, userId, productType 
           net_profit_income: latestCase.esr_financials.net_profit_income,
           gst_income: latestCase.esr_financials.gst_income,
           banking_income: latestCase.esr_financials.banking_income,
+          salaried_income: latestCase.esr_financials.salaried_income,
+          salaried_income_source: latestCase.esr_financials.salaried_income_source,
+          salaried_slip_count: latestCase.esr_financials.salaried_slip_count,
+          salaried_gross_monthly: latestCase.esr_financials.salaried_gross_monthly,
+          salaried_net_monthly: latestCase.esr_financials.salaried_net_monthly,
+          salaried_deductions_monthly: latestCase.esr_financials.salaried_deductions_monthly,
+          salaried_months_available: latestCase.esr_financials.salaried_months_available,
+          salaried_months_required: latestCase.esr_financials.salaried_months_required,
+          salaried_period_from: latestCase.esr_financials.salaried_period_from,
+          salaried_period_to: latestCase.esr_financials.salaried_period_to,
+          salaried_data_complete: latestCase.esr_financials.salaried_data_complete,
+          salaried_source: latestCase.esr_financials.salaried_source,
+          bank_net_salary_monthly: latestCase.esr_financials.bank_net_salary_monthly,
+          bank_salary_months_available: latestCase.esr_financials.bank_salary_months_available,
           selected_income_method: latestCase.esr_financials.selected_income_method,
           selected_monthly_income: latestCase.esr_financials.selected_monthly_income,
           constitution_type: latestCase.esr_financials.constitution_type,
@@ -1531,8 +1563,19 @@ async function reuseApplicant(caseId, sourceApplicantId, tenantId, userId) {
           gross_salary: ocr.gross_salary,
           net_salary: ocr.net_salary,
           deductions: ocr.deductions,
+          deductions_is_derived: ocr.deductions_is_derived,
           employer_name: ocr.employer_name,
           employee_name: ocr.employee_name,
+          employee_pan: ocr.employee_pan,
+          ocr_confidence: ocr.ocr_confidence,
+          pages_processed: ocr.pages_processed,
+          net_salary_words_match: ocr.net_salary_words_match,
+          extraction_checks: ocr.extraction_checks || null,
+          extraction_warnings: ocr.extraction_warnings || null,
+          extraction_source: ocr.extraction_source,
+          salary_period: ocr.salary_period,
+          name_match_status: ocr.name_match_status,
+          pan_match_status: ocr.pan_match_status,
           vendor_name: ocr.vendor_name,
           vendor_job_id: ocr.vendor_job_id,
           raw_ocr_response: ocr.raw_ocr_response ? ocr.raw_ocr_response : {},

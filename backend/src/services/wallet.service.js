@@ -278,7 +278,7 @@ async function executePaidApi({ apiCode, tenantId, userId, customerId, caseId, r
       where: { tenant_id_api_code_idempotency_key: { tenant_id: tenantId, api_code: apiCode, idempotency_key: idempotencyKey } }
     });
     if (previousLog) {
-      if (previousLog.status === 'SUCCESS') return previousLog.request_payload;
+      if (previousLog.status === 'SUCCESS') return previousLog.response_payload;
       
       // If the previous attempt failed or was blocked, allow retry by removing the old log
       await prisma.apiUsageLog.delete({ where: { id: previousLog.id } });
