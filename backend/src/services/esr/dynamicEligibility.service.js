@@ -1379,6 +1379,77 @@ function getCoApplicantSalaryMonthly({ esr, incomeEntries = [], applicants = [] 
     };
 }
 
+function resolveSalaryTenureScope({ esr, incomeEntries = [], applicants = [], isSalariedMethod = false, methodAllowsCoApplicantSalaryAddon = false }) {
+    if (!isSalariedMethod) {
+        const coApplicantSalary = methodAllowsCoApplicantSalaryAddon
+            ? getCoApplicantSalaryMonthly({ esr, incomeEntries, applicants })
+            : { monthlySalary: 0, source: 'NOT_ALLOWED_FOR_METHOD' };
+        return {
+            includePrimary: true,
+            includeCoApplicants: coApplicantSalary.monthlySalary > 0,
+            source: coApplicantSalary.source,
+            coApplicantSalary
+        };
+    }
+
+    const applicantById = new Map((applicants || []).map(app => [Number(app.id), app]));
+    let primarySalaryMonthly = 0;
+    let coApplicantSalaryMonthly = 0;
+
+    for (const entry of incomeEntries || []) {
+        const type = normalizeManualIncomeType(entry);
+        if (!isManualSalaryIncomeType(type)) continue;
+
+        const monthly = normalizeManualEntryMonthlyAmount(entry);
+        if (monthly <= 0) continue;
+
+        const applicantId = Number(entry.applicant_id || entry.applicantId);
+        const applicant = applicantById.get(applicantId);
+        const isCoApplicant = applicant
+            ? (applicant.is_primary === false || String(applicant.type || '').toUpperCase().includes('CO'))
+            : false;
+
+        if (isCoApplicant) {
+            coApplicantSalaryMonthly += monthly;
+        } else {
+            primarySalaryMonthly += monthly;
+        }
+    }
+
+    if (primarySalaryMonthly > 0 || coApplicantSalaryMonthly > 0) {
+        return {
+            includePrimary: primarySalaryMonthly > 0,
+            includeCoApplicants: coApplicantSalaryMonthly > 0,
+            source: primarySalaryMonthly > 0 && coApplicantSalaryMonthly > 0
+                ? 'SALARIED_METHOD_PRIMARY_AND_CO_APPLICANT_MANUAL_SALARY'
+                : coApplicantSalaryMonthly > 0
+                    ? 'SALARIED_METHOD_CO_APPLICANT_MANUAL_SALARY'
+                    : 'SALARIED_METHOD_PRIMARY_MANUAL_SALARY',
+            coApplicantSalary: {
+                monthlySalary: coApplicantSalaryMonthly,
+                source: coApplicantSalaryMonthly > 0 ? 'CO_APPLICANT_MANUAL_SALARY_ENTRY' : 'NONE'
+            }
+        };
+    }
+
+    const coApplicantSalary = getCoApplicantSalaryMonthly({ esr, incomeEntries, applicants });
+    if (coApplicantSalary.monthlySalary > 0) {
+        return {
+            includePrimary: false,
+            includeCoApplicants: true,
+            source: `SALARIED_METHOD_${coApplicantSalary.source}`,
+            coApplicantSalary
+        };
+    }
+
+    return {
+        includePrimary: true,
+        includeCoApplicants: false,
+        source: 'SALARIED_METHOD_PRIMARY_OR_CASE_LEVEL_SALARY',
+        coApplicantSalary: { monthlySalary: 0, source: 'NONE' }
+    };
+}
+
 function calculateCoApplicantSalaryLoanAddon({ esr, incomeEntries = [], applicants = [], lenderPolicy, paramMap, tenureMonths, roi }) {
     const salary = getCoApplicantSalaryMonthly({ esr, incomeEntries, applicants });
     if (salary.monthlySalary <= 0 || tenureMonths <= 0 || roi <= 0) {
@@ -2025,6 +2096,7 @@ function calculateAgeBasedTenureResolution(applicants, paramMap, warnings, polic
     const salariedAgeMaturityIncome = salariedParamMap
         ? getIntParam(salariedParamMap, 'age_maturity_income', ageMaturityIncome)
         : ageMaturityIncome;
+    const includePrimary = options.includePrimary !== false;
     const includeCoApplicants = options.includeCoApplicants === true;
 
     let lowestLimitMonths = Infinity;
@@ -2035,6 +2107,16 @@ function calculateAgeBasedTenureResolution(applicants, paramMap, warnings, polic
         for (const [index, app] of applicants.entries()) {
             const isPrimary = isPrimaryApplicant(app, index);
             const role = isPrimary ? 'Applicant' : 'Co-applicant';
+            if (isPrimary && !includePrimary) {
+                rows.push({
+                    role,
+                    name: app?.name || null,
+                    dob: getApplicantDob(app),
+                    incomeConsideredForTenure: false,
+                    ignoredReason: 'Applicant salary income not considered'
+                });
+                continue;
+            }
             if (!isPrimary && !includeCoApplicants) {
                 rows.push({
                     role,
@@ -2610,10 +2692,16 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
             || String(scheme.scheme_name || '').toUpperCase().includes('NET PROFIT')
             || String(scheme.scheme_name || '').toUpperCase().includes('NPM')
         );
-    const coApplicantSalaryForTenure = methodAllowsCoApplicantSalaryAddon
-        ? getCoApplicantSalaryMonthly({ esr, incomeEntries, applicants })
-        : { monthlySalary: 0, source: 'NOT_ALLOWED_FOR_METHOD' };
-    const includeCoApplicantAgeForTenure = coApplicantSalaryForTenure.monthlySalary > 0;
+    const salaryTenureScope = resolveSalaryTenureScope({
+        esr,
+        incomeEntries,
+        applicants,
+        isSalariedMethod,
+        methodAllowsCoApplicantSalaryAddon
+    });
+    const coApplicantSalaryForTenure = salaryTenureScope.coApplicantSalary || { monthlySalary: 0, source: 'NONE' };
+    const includeCoApplicantAgeForTenure = salaryTenureScope.includeCoApplicants;
+    const includePrimaryAgeForTenure = salaryTenureScope.includePrimary;
     const salariedSchemeParamMap = includeCoApplicantAgeForTenure ? findSalariedSchemeParamMap(product) : null;
 
     if (addEmiToAbb) {
@@ -2657,6 +2745,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     let maxTenureMonths = handleParseResult(maxTenureRes, `${pref}_max_tenure`);
     logger?.traceParser('parseTenureSafe', `${pref}_max_tenure`, maxTenureRes.raw, maxTenureRes);
     const ageTenureResolution = calculateAgeBasedTenureResolution(applicants, paramMap, warnings, policyWarnings, esr, {
+        includePrimary: includePrimaryAgeForTenure,
         includeCoApplicants: includeCoApplicantAgeForTenure,
         salariedParamMap: salariedSchemeParamMap
     });
@@ -2682,6 +2771,8 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         ...ageTenureTraceLines,
         `Age-Based Limit:      ${ageBasedLimit !== null && ageBasedLimit !== Infinity ? ageBasedLimit + ' months' : 'No restriction'}`,
         `Age Restriction Source: ${ageTenureResolution.restrictionSource || 'N/A'}`,
+        `Salary Tenure Scope: ${salaryTenureScope.source}`,
+        `Applicant Income Considered For Tenure: ${includePrimaryAgeForTenure ? 'Yes' : 'No'}`,
         `Co-applicant Income Considered For Tenure: ${includeCoApplicantAgeForTenure ? 'Yes' : 'No'}`,
         `Final Tenure Formula: MIN(${maxTenureMonths ?? 'N/A'}, ${ageBasedLimit !== null && ageBasedLimit !== Infinity ? ageBasedLimit : 'No age cap'})`,
         `Final Tenure Used:    ${final_tenure_used} months`,
