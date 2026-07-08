@@ -14,6 +14,7 @@ const {
     parseFoirRuleSafe,
     isCriticalParameter
 } = require('../../utils/esrParsers');
+const { dedupeObligations } = require('../../utils/obligationDedup');
 
 // ---------- UNDERWRITING ROI NORMALIZATION HELPERS ----------
 function normalizeRoi(value) {
@@ -2043,17 +2044,33 @@ function calculateAgeBasedTenureMonthsFromDob(dob, maturityAge) {
     const baseMonths = (maturityDate.getFullYear() - today.getFullYear()) * 12
         + (maturityDate.getMonth() - today.getMonth());
     const dayAdjustment = maturityDate.getDate() < today.getDate() ? 1 : 0;
-    const months = maturityDate <= today ? 0 : Math.max(0, baseMonths - dayAdjustment);
+    const rawMonths = maturityDate <= today ? 0 : Math.max(0, baseMonths - dayAdjustment);
+    const months = roundAgeBasedTenureMonthsToFullYears(rawMonths);
 
     return {
         months,
+        rawMonths,
         dob: parsed.toISOString().slice(0, 10),
         calculationDate: today.toISOString().slice(0, 10),
         maturityDate: maturityDate.toISOString().slice(0, 10),
         baseMonths,
         dayAdjustment,
-        calculation: `${baseMonths} - ${dayAdjustment} = ${months}`
+        calculation: `CEIL((${baseMonths} - ${dayAdjustment}) / 12) * 12 = ${months}`
     };
+}
+
+function roundAgeBasedTenureMonthsToFullYears(months) {
+    const value = Number(months);
+    if (!Number.isFinite(value) || value <= 0) return 0;
+    return Math.ceil(value / 12) * 12;
+}
+
+function calculateAgeBasedTenureMonthsFromAge(appAge, maturityAge) {
+    const age = Number(appAge);
+    const maturity = Number(maturityAge);
+    if (!Number.isFinite(age) || !Number.isFinite(maturity) || maturity <= 0) return null;
+    const remainingYears = maturity - age;
+    return roundAgeBasedTenureMonthsToFullYears(remainingYears * 12);
 }
 
 function getApplicantAge(app) {
@@ -2156,7 +2173,7 @@ function calculateAgeBasedTenureResolution(applicants, paramMap, warnings, polic
                 const dobTenure = calculateAgeBasedTenureMonthsFromDob(dob, limitAge);
                 const allowedMonths = dobTenure !== null
                     ? dobTenure.months
-                    : Math.max(0, (limitAge - appAge) * 12);
+                    : calculateAgeBasedTenureMonthsFromAge(appAge, limitAge);
                 rows.push({
                     role,
                     name: app?.name || null,
@@ -2173,7 +2190,7 @@ function calculateAgeBasedTenureResolution(applicants, paramMap, warnings, polic
                     monthCalculation: dobTenure?.calculation || null,
                     formula: dobTenure !== null
                         ? `DOB maturity date (${dob} + ${limitAge} years) minus today`
-                        : `(${limitAge} - ${appAge}) * 12`
+                        : `CEIL(${limitAge} - ${appAge}) * 12`
                 });
                 if (allowedMonths < lowestLimitMonths) {
                     lowestLimitMonths = allowedMonths;
@@ -2325,6 +2342,9 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const warnings = [];
     const policyWarnings = [];
     const obligationExclusionNotes = [];
+    if (Array.isArray(esr.duplicate_obligation_notes)) {
+        obligationExclusionNotes.push(...esr.duplicate_obligation_notes);
+    }
 
     const schemeIncomeMethod = normalizeIncomeMethod(scheme.scheme_name);
     const caseIncomeMethod = normalizeIncomeMethod(esr.selected_income_method);
@@ -3493,7 +3513,7 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         }
     });
 
-    const obligationsList = await prisma.caseCreditObligation.findMany({
+    const rawObligationsList = await prisma.caseCreditObligation.findMany({
         where: {
             case_id,
             status: 'ACTIVE',
@@ -3501,8 +3521,10 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         },
         select: {
             id: true,
+            applicant_id: true,
             lender_name: true,
             loan_type: true,
+            loan_amount: true,
             emi_per_month: true,
             outstanding_amount: true,
             loan_start_date: true,
@@ -3511,11 +3533,17 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
             updated_at: true
         }
     });
+    const obligationDedupe = dedupeObligations(rawObligationsList);
+    const obligationsList = obligationDedupe.obligations;
+    const duplicateObligationNotes = obligationDedupe.duplicates.map(entry => entry.note);
 
     esr.existing_obligations = (obligationsList || []).reduce((sum, obligation) => {
         if (obligation.include_in_foir === false) return sum;
         return sum + (toSafeNumber(obligation.emi_per_month) || 0);
     }, 0);
+    esr.duplicate_obligation_notes = duplicateObligationNotes;
+    esr.raw_obligation_count = rawObligationsList.length;
+    esr.deduped_obligation_count = obligationsList.length;
 
     const manualIncomeUpdatedAt = (incomeEntries || []).reduce((latest, entry) => {
         const updated = entry.updated_at ? new Date(entry.updated_at).getTime() : 0;
@@ -3716,12 +3744,17 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         'Manual Income Monthly Total': `₹${auditManualIncomeEntries.reduce((s, o) => s + (o.monthly_amount || 0), 0).toLocaleString()}`,
         'Source Manual Income Monthly Total Used': auditManualIncomeEntries.reduce((s, o) => s + (o.monthly_amount || 0), 0),
         'Total Obligations': auditObligations.length,
+        'Raw Bureau/UI Obligation Rows': esr.raw_obligation_count ?? auditObligations.length,
+        'Duplicate Obligation Rows Skipped': (esr.raw_obligation_count ?? auditObligations.length) - (esr.deduped_obligation_count ?? auditObligations.length),
         'Total EMI': `₹${auditObligations.reduce((s, o) => s + (o.emi_per_month || 0), 0).toLocaleString()}`,
         'Lenders Evaluated': lenders.length,
     });
 
     logger.traceStep('PROPERTY & COLLATERAL SNAPSHOT', auditPropertySnapshot);
     logger.traceStep('SALARY OCR SUMMARY', salaryAuditSnapshot);
+    if (duplicateObligationNotes.length > 0) {
+        logger.traceWarning('DUPLICATE OBLIGATIONS IGNORED', duplicateObligationNotes.join('\n'));
+    }
     if (salaryAuditSnapshot.salaried_months_required && salaryAuditSnapshot.salaried_months_available < salaryAuditSnapshot.salaried_months_required) {
         logger.traceWarning(
             'SALARY HISTORY INCOMPLETE',

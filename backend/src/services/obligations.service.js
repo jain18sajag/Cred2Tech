@@ -1,4 +1,5 @@
 const prisma = require('../../config/db');
+const { dedupeObligations } = require('../utils/obligationDedup');
 
 function parseNumericInput(value, fieldName, { nullable = true } = {}) {
   if (value === undefined || value === null || value === '') {
@@ -143,7 +144,8 @@ async function getObligations(case_id, tenant_id) {
   });
 
   const allActive = caseRecord.obligations.filter(o => o.status === 'ACTIVE');
-  const combinedEmi = allActive.reduce((sum, o) => sum + (Number(o.emi_per_month) || 0), 0);
+  const dedupedActive = dedupeObligations(allActive);
+  const combinedEmi = dedupedActive.obligations.reduce((sum, o) => sum + (Number(o.emi_per_month) || 0), 0);
   const allScores = caseRecord.applicants.map(a => a.cibil_score).filter(Boolean);
   const lowestCibil = allScores.length ? Math.min(...allScores) : null;
 
@@ -151,7 +153,10 @@ async function getObligations(case_id, tenant_id) {
     grouped,
     summary: {
       combined_emi_per_month: combinedEmi,
-      lowest_cibil_score:     lowestCibil
+      lowest_cibil_score:     lowestCibil,
+      raw_obligation_count:   allActive.length,
+      deduped_obligation_count: dedupedActive.obligations.length,
+      duplicate_obligation_notes: dedupedActive.duplicates.map(entry => entry.note)
     }
   };
 }

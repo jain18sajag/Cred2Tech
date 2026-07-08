@@ -25,6 +25,7 @@
 const prisma = require('../../config/db');
 const { extractBankFySnapshot, extractBankSalary } = require('./bankParser.service');
 const { extractGstDetails, extractItrDetails } = require('./financial.extractor');
+const { dedupeObligations } = require('../utils/obligationDedup');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UTILITIES
@@ -259,7 +260,10 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
         let icici_exposure = 0;
         let hdfc_exposure = 0;
 
-        for (const obl of caseRecord.obligations) {
+        const activeObligations = (caseRecord.obligations || []).filter(obl => obl.status === 'ACTIVE');
+        const { obligations: dedupedObligations } = dedupeObligations(activeObligations);
+
+        for (const obl of dedupedObligations) {
             const emi = toNum(obl.emi_per_month);
             // include_in_foir defaults to true; only sum it if the flag is not explicitly false
             if (emi !== null && emi > 0 && obl.include_in_foir !== false) {
