@@ -698,7 +698,8 @@ function isHdfcRentalBankAllowedMethod(methodName = '') {
 
 function calculateHdfcManualIncomeAdditions({ incomeEntries = [], methodName = '', primaryIncome = 0 }) {
     const breakdown = [];
-    let rentalBankRaw = 0;
+    let rentalItrRaw = 0;
+    let rentalBankOnlyRaw = 0;
     let rentalCashRaw = 0;
     let agriRaw = 0;
     let otherRaw = 0;
@@ -710,12 +711,15 @@ function calculateHdfcManualIncomeAdditions({ incomeEntries = [], methodName = '
         if (monthly <= 0) continue;
 
         const isRent = type.includes('rent') || type.includes('rental');
-        const isBankOrItr = isRent && (type.includes('bank') || docText.includes('bank') || docText.includes('credit') || docText.includes('itr') || docText.includes('income tax'));
-        const isCashRent = isRent && !isBankOrItr;
+        const isItrRent = isRent && (docText.includes('itr') || docText.includes('income tax'));
+        const isBankRent = isRent && !isItrRent && (type.includes('bank') || docText.includes('bank') || docText.includes('credit'));
+        const isCashRent = isRent && !isItrRent && !isBankRent;
         const isAgri = type.includes('agri') || type.includes('agriculture');
 
-        if (isBankOrItr) {
-            rentalBankRaw += monthly;
+        if (isItrRent) {
+            rentalItrRaw += monthly;
+        } else if (isBankRent) {
+            rentalBankOnlyRaw += monthly;
         } else if (isCashRent) {
             rentalCashRaw += monthly;
         } else if (isAgri) {
@@ -728,19 +732,28 @@ function calculateHdfcManualIncomeAdditions({ incomeEntries = [], methodName = '
     const methodAllowsRental = isHdfcRentalBankAllowedMethod(methodName);
     const cap = Math.max(0, primaryIncome || 0);
     const rentalBankEligible = methodAllowsRental
-        ? (cap > 0 ? Math.min(rentalBankRaw, cap) : 0)
+        ? (cap > 0 ? Math.min(rentalItrRaw, cap) : 0)
         : 0;
 
-    if (rentalBankRaw > 0) {
+    if (rentalItrRaw > 0) {
         breakdown.push({
             type: 'Rental Income — Bank/ITR',
-            raw_monthly: rentalBankRaw,
+            raw_monthly: rentalItrRaw,
             allowed_pct: methodAllowsRental ? 100 : 0,
             eligible_monthly: rentalBankEligible,
             cap_monthly: methodAllowsRental ? cap : 0,
             rule: methodAllowsRental
-                ? 'HDFC LAP: rental bank/ITR income allowed at 100%, capped to 100% of main business profit considered.'
+                ? 'HDFC LAP: ITR-reported rental income allowed at 100%, capped to 100% of main business profit considered.'
                 : 'HDFC LAP: rental income is not considered for this method.'
+        });
+    }
+    if (rentalBankOnlyRaw > 0) {
+        breakdown.push({
+            type: 'Rental Income - Bank Credit Without ITR',
+            raw_monthly: rentalBankOnlyRaw,
+            allowed_pct: 0,
+            eligible_monthly: 0,
+            rule: 'HDFC LAP NPM/DSCR requires rental income to be reported in ITR; bank credit or CA certificate alone is not auto-counted.'
         });
     }
     if (rentalCashRaw > 0) {
@@ -778,7 +791,7 @@ function calculateHdfcManualIncomeAdditions({ incomeEntries = [], methodName = '
         other_income: 0,
         total_eligible_manual_income: rentalBankEligible,
         breakdown,
-        raw: { rentalBankRaw, rentalCashRaw, agriRaw, otherRaw }
+        raw: { rentalItrRaw, rentalBankOnlyRaw, rentalCashRaw, agriRaw, otherRaw }
     };
 }
 
@@ -1756,12 +1769,16 @@ function calculateComposedIncome({ scheme, esr, incomeEntries, paramMap, warning
 
     const methodName = String(scheme.scheme_name || '').toUpperCase();
     const otherIncomeAllowedByPolicy = methodName.includes('SALARIED') || methodName.includes('NET PROFIT') || methodName.includes('NPM');
+    const isIciciNpm = lenderPolicy.key === 'ICICI'
+        && (methodName.includes('NET PROFIT') || methodName.includes('NPM'));
 
-    const eligRentalBank = otherIncomeAllowedByPolicy && getBoolParam('elig_rental_bank', true);
+    // The ICICI sheet explicitly allows these NPM income buckets. Older rows may
+    // still contain MANUAL_REVIEW_REQUIRED, which must not behave like policy "No".
+    const eligRentalBank = otherIncomeAllowedByPolicy && (isIciciNpm || getBoolParam('elig_rental_bank', true));
     const dbrRentalBank = getPercentParam('dbr_rental_bank', 0.70);
     const eligRentalCash = otherIncomeAllowedByPolicy && lenderPolicy.key !== 'ICICI' && getBoolParam('elig_rental_cash', false);
     const dbrRentalCash = getPercentParam('dbr_rental_cash', 0.50);
-    const eligAgriItr = otherIncomeAllowedByPolicy && getBoolParam('elig_agri_itr', true);
+    const eligAgriItr = otherIncomeAllowedByPolicy && (isIciciNpm || getBoolParam('elig_agri_itr', true));
     const dbrAgriItr = getPercentParam('dbr_agri_itr', 0.50);
 
     let rentalIncomeBank = 0;
@@ -2107,7 +2124,7 @@ function calculateAgeBasedTenureResolution(applicants, paramMap, warnings, polic
         return resolveAgeMaturityParam(raw, defaultVal, Number(esr.selected_monthly_income) || Number(esr.salaried_income) || 0);
     };
 
-    const ageMaturityIncome = getIntParam(paramMap, 'age_maturity_income', 60);
+    const ageMaturityIncome = getIntParam(paramMap, 'age_maturity_income', options.defaultIncomeMaturityAge ?? 60);
     const ageMaturityNonIncome = getIntParam(paramMap, 'age_maturity_non_income', 75);
     const salariedParamMap = options.salariedParamMap || null;
     const salariedAgeMaturityIncome = salariedParamMap
@@ -2258,9 +2275,10 @@ function calculateDoubleWhammyFoirFromLtv(conditionalFlags, applicableLtvPercent
     return Math.max(0, (specialLimit / 100) - Number(applicableLtvPercent));
 }
 
-function calculateCombinedDoubleWhammyEligibility({ primaryMonthlyIncome, otherEmiCapacity = 0, propertyValue, roi, tenureMonths, conditionalFlags }) {
+function calculateCombinedDoubleWhammyEligibility({ primaryMonthlyIncome, otherEmiCapacity = 0, existingObligations = 0, propertyValue, roi, tenureMonths, conditionalFlags }) {
     const primaryIncome = Number(primaryMonthlyIncome) || 0;
     const o = Number(otherEmiCapacity) || 0;
+    const obligations = Number(existingObligations) || 0;
     const value = Number(propertyValue) || 0;
     const tenure = Number(tenureMonths) || 0;
     const specialLimit = Number(conditionalFlags?.special_limit) || 140;
@@ -2274,16 +2292,16 @@ function calculateCombinedDoubleWhammyEligibility({ primaryMonthlyIncome, otherE
     }
 
     const doubleWhammyEligibleLoan = Math.max(0, Math.round(
-        (emiMultiplier * ((primaryIncome * doubleWhammyPercent) + o)) /
+        (emiMultiplier * ((primaryIncome * doubleWhammyPercent) - obligations + o)) /
         (1 + ((emiMultiplier * primaryIncome) / value))
     ));
     const foirCapEligibleLoan = Math.max(0, Math.round(
-        emiMultiplier * ((primaryIncome * maxFoirPercent) + o)
+        emiMultiplier * ((primaryIncome * maxFoirPercent) - obligations + o)
     ));
 
     const incomeEligibleLoan = Math.max(0, Math.min(doubleWhammyEligibleLoan, foirCapEligibleLoan));
     const proposedEmiAtIncomeLoan = incomeEligibleLoan > 0 ? calculateEMI(incomeEligibleLoan, roi, tenure) : 0;
-    const primaryIncomeEmi = Math.max(0, proposedEmiAtIncomeLoan - o);
+    const primaryIncomeEmi = Math.max(0, obligations + proposedEmiAtIncomeLoan - o);
     const primaryIncomeFoirPercent = primaryIncome > 0 ? primaryIncomeEmi / primaryIncome : null;
     const actualLtvPercent = value > 0 ? incomeEligibleLoan / value : null;
     const doubleWhammyActualPercent = primaryIncomeFoirPercent !== null && actualLtvPercent !== null
@@ -2294,6 +2312,7 @@ function calculateCombinedDoubleWhammyEligibility({ primaryMonthlyIncome, otherE
         primaryMonthlyIncome: primaryIncome,
         netProfitMonthly: primaryIncome,
         otherEmiCapacity: o,
+        existingObligations: obligations,
         propertyValue: value,
         emiMultiplier,
         doubleWhammyPercent,
@@ -2501,9 +2520,18 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
 
         const nwmManualAdditions = lenderPolicy.key === 'HDFC'
             ? calculateHdfcManualIncomeAdditions({ incomeEntries, methodName: scheme.scheme_name, primaryIncome: npmMonthlyIncome })
-            : { rental_bank: 0, agri_income: 0, breakdown: [] };
+            : lenderPolicy.key === 'ICICI'
+                ? (() => {
+                    const policyIncome = calculateIciciSalariedConsideredIncome({ esr, incomeEntries });
+                    return {
+                        rental_bank: policyIncome.rental_bank || 0,
+                        agri_income: policyIncome.agri_income || 0,
+                        breakdown: (policyIncome.breakdown || []).filter(item => item.type !== 'Salary Income')
+                    };
+                })()
+                : { rental_bank: 0, agri_income: 0, breakdown: [] };
         const eligibleRentalMonthly = nwmManualAdditions.rental_bank || 0;
-        const eligibleAgriMonthly = 0;
+        const eligibleAgriMonthly = nwmManualAdditions.agri_income || 0;
 
         composedIncome = npmMonthlyIncome + propertyIncomeMonthly + financialAssetIncomeMonthly + eligibleRentalMonthly + eligibleAgriMonthly;
         incomeComposition = {
@@ -2513,7 +2541,8 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
                 { source: 'NPM Component', amount: npmMonthlyIncome, rule: lenderPolicy.key === 'HDFC' ? 'HDFC NWM: PAT + 2/3 Dep + interest + remuneration + director interest' : 'NPM component' },
                 { source: 'Property Add-on', amount: propertyIncomeMonthly, rule: `${(propertyAddonPct * 100).toFixed(2)}% of property value / 12` },
                 { source: 'Financial Asset Add-on', amount: financialAssetIncomeMonthly, rule: `${(financialAssetPct * 100).toFixed(2)}% of Shares/MF/FD / 12` },
-                { source: 'Eligible Rental Bank/ITR', amount: eligibleRentalMonthly, rule: 'HDFC NWM: 100% rental bank/ITR capped to 100% of main business profit' },
+                { source: 'Eligible Rental Bank/ITR', amount: eligibleRentalMonthly, rule: lenderPolicy.key === 'ICICI' ? 'ICICI NWM: bank/ITR rental considered at 70%' : 'HDFC NWM: 100% rental bank/ITR capped to 100% of main business profit' },
+                { source: 'Eligible Agriculture', amount: eligibleAgriMonthly, rule: lenderPolicy.key === 'ICICI' ? 'ICICI NWM: 50%, or 100% with ITR/ownership proof' : 'Not considered unless enabled by lender policy' },
                 ...nwmManualAdditions.breakdown
             ]
         };
@@ -2767,7 +2796,8 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const ageTenureResolution = calculateAgeBasedTenureResolution(applicants, paramMap, warnings, policyWarnings, esr, {
         includePrimary: includePrimaryAgeForTenure,
         includeCoApplicants: includeCoApplicantAgeForTenure,
-        salariedParamMap: salariedSchemeParamMap
+        salariedParamMap: salariedSchemeParamMap,
+        defaultIncomeMaturityAge: lenderPolicy.key === 'ICICI' && !isSalariedMethod ? 75 : 60
     });
     const ageBasedLimit = ageTenureResolution.limitMonths;
 
@@ -3120,6 +3150,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         const combinedDoubleWhammy = calculateCombinedDoubleWhammyEligibility({
             primaryMonthlyIncome: composedIncome,
             otherEmiCapacity: coApplicantOtherEmiCapacity,
+            existingObligations: netObligations,
             propertyValue: esr.property_value,
             roi: underwriting_roi_used,
             tenureMonths: final_tenure_used,
@@ -3135,7 +3166,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
             warnings.push(`Double Whammy combined eligibility used: primary income FOIR is capped at ${(combinedDoubleWhammy.maxFoirPercent * 100).toFixed(0)}% and primary FOIR + actual LTV is capped at ${(combinedDoubleWhammy.doubleWhammyPercent * 100).toFixed(0)}%.`);
             logger?.traceFormula(
                 'STEP 9A - COMBINED DOUBLE WHAMMY ELIGIBILITY',
-                'Income Eligible Loan = MIN(K*(PrimaryIncome*DW+OtherEMI)/(1+K*PrimaryIncome/PropertyValue), K*(PrimaryIncome*MaxFOIR+OtherEMI))',
+                'Income Eligible Loan = MIN(K*(PrimaryIncome*DW-Obligations+OtherEMI)/(1+K*PrimaryIncome/PropertyValue), K*(PrimaryIncome*MaxFOIR-Obligations+OtherEMI))',
                 [
                     `K=${combinedDoubleWhammy.emiMultiplier.toFixed(4)}`,
                     `PrimaryIncome=₹${combinedDoubleWhammy.primaryMonthlyIncome.toLocaleString()}`,

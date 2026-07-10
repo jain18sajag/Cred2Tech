@@ -51,13 +51,9 @@ function buildMapping() {
         "lap_ltv_plot_rented": "40%",
         "lap_ltv_plot_vacant": "40%",
         "lap_ltv_special": "50%",
-        "elig_rental_bank": MANUAL_REVIEW,
-        "elig_rental_cash": MANUAL_REVIEW,
-        "elig_agri_itr": MANUAL_REVIEW,
-        "dbr_rental_bank": MANUAL_REVIEW,
-        "dbr_rental_cash": MANUAL_REVIEW,
-        "dbr_agri_itr": MANUAL_REVIEW,
-        "existing_obligation": MANUAL_REVIEW
+        "elig_rental_cash": "NO",
+        "dbr_rental_cash": "No",
+        "existing_obligation": "All Obligation to be considered except getting closed in next 12 months"
     };
 
     return {
@@ -70,12 +66,12 @@ function buildMapping() {
             "Net Worth Method": { ...HL_COMMON, "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": MANUAL_REVIEW }
         },
         "LAP": {
-            "Salaried": { ...LAP_COMMON, "age_maturity_income": "60", "lap_dbr_foir": "<75k -60%, >75k - 70%" },
-            "Net Profit Method": { ...LAP_COMMON, "age_maturity_income": MANUAL_REVIEW, "lap_dbr_foir": MANUAL_REVIEW },
-            "Banking": { ...LAP_COMMON, "age_maturity_income": "75", "lap_dbr_foir": MANUAL_REVIEW },
-            "GST": { ...LAP_COMMON, "age_maturity_income": "75", "lap_dbr_foir": MANUAL_REVIEW },
-            "GRP": { ...LAP_COMMON, "age_maturity_income": "75", "lap_dbr_foir": MANUAL_REVIEW },
-            "Net Worth Method": { ...LAP_COMMON, "age_maturity_income": "75", "lap_dbr_foir": MANUAL_REVIEW }
+            "Salaried": { ...LAP_COMMON, "age_maturity_income": "60", "lap_dbr_foir": "<75k -60%, >75k - 70%", "elig_rental_bank": "Yes", "elig_agri_itr": "Yes", "dbr_rental_bank": "70%", "dbr_agri_itr": "50%, can be considered 100% if ownership proof provided." },
+            "Net Profit Method": { ...LAP_COMMON, "age_maturity_income": "75", "lap_dbr_foir": "Max 100% (Double whammy - 140%)", "elig_rental_bank": "Yes", "elig_agri_itr": "Yes", "dbr_rental_bank": "70%", "dbr_agri_itr": "50%, can be considered 100% if ownership proof provided." },
+            "Banking": { ...LAP_COMMON, "age_maturity_income": "75", "lap_dbr_foir": "No DBR", "elig_rental_bank": "NO", "elig_agri_itr": "NO", "dbr_rental_bank": "No", "dbr_agri_itr": "No" },
+            "GST": { ...LAP_COMMON, "age_maturity_income": "75", "lap_dbr_foir": "Max 100% (Double whammy - 140%)", "elig_rental_bank": "NO", "elig_agri_itr": "NO", "dbr_rental_bank": "No", "dbr_agri_itr": "No" },
+            "GRP": { ...LAP_COMMON, "age_maturity_income": "75", "lap_dbr_foir": "No DBR", "elig_rental_bank": "NO", "elig_agri_itr": "NO", "dbr_rental_bank": "No", "dbr_agri_itr": "No" },
+            "Net Worth Method": { ...LAP_COMMON, "age_maturity_income": "75", "lap_dbr_foir": "Max 100% (Double whammy - 140%)", "elig_rental_bank": "Yes", "elig_agri_itr": "Yes", "dbr_rental_bank": "70%", "dbr_agri_itr": "50%, can be considered 100% if ownership proof provided." }
         }
     };
 }

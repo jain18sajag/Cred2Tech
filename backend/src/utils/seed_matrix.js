@@ -197,11 +197,18 @@ const valueData = {
 
     elig_rental_bank: { SAL: 'Yes', NPM: 'Yes', BANK: 'NO', GST: 'NO', GRP: 'NO', NWM: 'Yes' },
     elig_rental_cash: { default: 'NO' },
-    elig_agri_itr: { default: 'NO' },
+    elig_agri_itr: { SAL: 'Yes', NPM: 'Yes', BANK: 'NO', GST: 'NO', GRP: 'NO', NWM: 'Yes' },
 
     dbr_rental_bank: { SAL: '70%', NPM: '70%', BANK: 'No', GST: 'No', GRP: 'No', NWM: '70%' },
     dbr_rental_cash: { default: 'No' },
-    dbr_agri_itr: { default: 'No' },
+    dbr_agri_itr: {
+      SAL: '50%, can be considered 100% if onweship proof provided.',
+      NPM: '50%, can be considered 100% if onweship proof provided.',
+      BANK: 'No',
+      GST: 'No',
+      GRP: 'No',
+      NWM: '50%, can be considered 100% if onweship proof provided.'
+    },
     existing_obligation: { default: 'All Obligation to be considered except getting closed in next 12 months' }
   }
 };
