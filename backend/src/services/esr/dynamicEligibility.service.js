@@ -3168,12 +3168,16 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
                 'STEP 9A - COMBINED DOUBLE WHAMMY ELIGIBILITY',
                 'Income Eligible Loan = MIN(K*(PrimaryIncome*DW-Obligations+OtherEMI)/(1+K*PrimaryIncome/PropertyValue), K*(PrimaryIncome*MaxFOIR-Obligations+OtherEMI))',
                 [
-                    `K=${combinedDoubleWhammy.emiMultiplier.toFixed(4)}`,
+                    `K≈${combinedDoubleWhammy.emiMultiplier.toFixed(4)} (display rounded; calculation uses full precision)` ,
                     `PrimaryIncome=₹${combinedDoubleWhammy.primaryMonthlyIncome.toLocaleString()}`,
                     `O=₹${combinedDoubleWhammy.otherEmiCapacity.toLocaleString()}`,
+                    `Obligations=INR ${combinedDoubleWhammy.existingObligations.toLocaleString('en-IN')}`,
                     `DW=${(combinedDoubleWhammy.doubleWhammyPercent * 100).toFixed(2)}%`,
                     `MaxFOIR=${(combinedDoubleWhammy.maxFoirPercent * 100).toFixed(2)}%`,
                     `Property=₹${combinedDoubleWhammy.propertyValue.toLocaleString()}`
+                    ,`DW Loan = ${combinedDoubleWhammy.emiMultiplier.toFixed(10)} * ((${combinedDoubleWhammy.primaryMonthlyIncome.toLocaleString('en-IN')} * ${combinedDoubleWhammy.doubleWhammyPercent.toFixed(4)}) - ${combinedDoubleWhammy.existingObligations.toLocaleString('en-IN')} + ${combinedDoubleWhammy.otherEmiCapacity.toLocaleString('en-IN')}) / (1 + (${combinedDoubleWhammy.emiMultiplier.toFixed(10)} * ${combinedDoubleWhammy.primaryMonthlyIncome.toLocaleString('en-IN')} / ${combinedDoubleWhammy.propertyValue.toLocaleString('en-IN')})) = INR ${combinedDoubleWhammy.doubleWhammyEligibleLoan.toLocaleString('en-IN')}`,
+                    `FOIR Cap Loan = ${combinedDoubleWhammy.emiMultiplier.toFixed(10)} * ((${combinedDoubleWhammy.primaryMonthlyIncome.toLocaleString('en-IN')} * ${combinedDoubleWhammy.maxFoirPercent.toFixed(4)}) - ${combinedDoubleWhammy.existingObligations.toLocaleString('en-IN')} + ${combinedDoubleWhammy.otherEmiCapacity.toLocaleString('en-IN')}) = INR ${combinedDoubleWhammy.foirCapEligibleLoan.toLocaleString('en-IN')}`,
+                    `Income Eligible = MIN(INR ${combinedDoubleWhammy.doubleWhammyEligibleLoan.toLocaleString('en-IN')}, INR ${combinedDoubleWhammy.foirCapEligibleLoan.toLocaleString('en-IN')}) = INR ${combinedDoubleWhammy.incomeEligibleLoan.toLocaleString('en-IN')}`
                 ].join(' | '),
                 `DW Loan ₹${combinedDoubleWhammy.doubleWhammyEligibleLoan.toLocaleString()} | FOIR Cap Loan ₹${combinedDoubleWhammy.foirCapEligibleLoan.toLocaleString()} | Income Eligible ₹${foir_based_eligible_loan_amount.toLocaleString()}`
             );
