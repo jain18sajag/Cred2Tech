@@ -11,7 +11,10 @@ const INCOME_TYPES = [
   'Rental Income — Bank', 'Rental Income — Cash', 'Interest Income',
   'Dividend Income', 'Agriculture Income', 'Professional Fees', 'Other'
 ];
-const DOC_TYPES = ['CA Certificate', 'Salary Slip', 'Form 16', 'Bank Credit', 'None'];
+const DOC_TYPES = [
+  'CA Certificate', 'Salary Slip', 'Form 16', 'Bank Credit',
+  'ITR', 'Ownership / Land Proof', 'ITR + Ownership / Land Proof', 'None'
+];
 const applicantDisplayName = (app) => {
   if (!app) return '';
   return app.name || (app.type === 'PRIMARY' ? 'Primary Applicant' : 'Co-Applicant');

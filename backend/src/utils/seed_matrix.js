@@ -121,7 +121,7 @@ const valueData = {
     hl_pf_min: { default: '0.50%' },
     hl_pf_max: { default: '1%' },
     hl_max_tenure: { SAL: '300 Months', default: '240 Months' },
-    hl_dbr_foir: { SAL: '<75k -60%, >75k - 70%', default: 'Max 100% ( Double wammy - 140%)' },
+    hl_dbr_foir: { SAL: '<75k -60%, >75k - 70%', BANK: 'No DBR', GST: 'Max 100% ( Double wammy - 140%)', GRP: 'No DBR', default: 'Max 100% ( Double wammy - 140%)' },
 
     banking_abb_multiplier: { default: '3' },
     no_dbr_months_multiplier: { default: '60' },
@@ -155,7 +155,7 @@ const valueData = {
       GRP: 'No',
       NWM: '50%, can be considered 100% if onweship proof provided.'
     },
-    existing_obligation: { default: 'All Obligation to be considered except getting closed in next 12 months' }
+    existing_obligation: { BANK: 'Loan availed in last 12 months to be obligated', default: 'All Obligation to be considered except getting closed in next 12 months' }
   },
   LAP: {
     lap_min_loan: { default: '1000000' },
@@ -165,7 +165,7 @@ const valueData = {
     lap_pf_min: { default: '0.50%' },
     lap_pf_max: { default: '1%' },
     lap_max_tenure: { default: '180 Months' },
-    lap_dbr_foir: { SAL: '<75k -60%, >75k - 70%', default: 'Max 100% ( Double wammy - 140%)' },
+    lap_dbr_foir: { SAL: '<75k -60%, >75k - 70%', BANK: 'No DBR', GST: '90%', GRP: 'No DBR', default: 'Max 100% ( Double wammy - 140%)' },
 
     banking_abb_multiplier: { default: '3' },
     no_dbr_months_multiplier: { default: '60' },
@@ -209,7 +209,7 @@ const valueData = {
       GRP: 'No',
       NWM: '50%, can be considered 100% if onweship proof provided.'
     },
-    existing_obligation: { default: 'All Obligation to be considered except getting closed in next 12 months' }
+    existing_obligation: { BANK: 'Loan availed in last 12 months to be obligated', default: 'All Obligation to be considered except getting closed in next 12 months' }
   }
 };
 

@@ -1038,6 +1038,7 @@ function getIncomeEntryMonthlySums(incomeEntries = []) {
         manualSalaryMonthly: 0,
         manualAgriMonthly: 0,
         manualAgriWithOwnershipMonthly: 0,
+        agriOwnershipProofAvailable: false,
         itrAgriMonthly: 0,
         manualRentMonthly: 0,
         manualRentBankMonthly: 0,
@@ -1069,6 +1070,7 @@ function getIncomeEntryMonthlySums(incomeEntries = []) {
         }
 
         if (isAgri) {
+            if (ownershipProof) result.agriOwnershipProofAvailable = true;
             if (isItr) result.itrAgriMonthly += normalizedMonthly;
             else if (ownershipProof) result.manualAgriWithOwnershipMonthly += normalizedMonthly;
             else result.manualAgriMonthly += normalizedMonthly;
@@ -1106,6 +1108,75 @@ function getIncomeEntryMonthlySums(incomeEntries = []) {
     return result;
 }
 
+function resolveIciciAgricultureIncome({ esr = {}, entrySums }) {
+    const sums = entrySums || getIncomeEntryMonthlySums([]);
+    const itrMonthly = sums.itrAgriMonthly || getFirstPositiveValue(esr, [
+        'itr_agriculture_income',
+        'itr_agri_income',
+        'agriculture_income_itr',
+        'agri_income_itr',
+        'annual_itr_agriculture_income',
+        'itr_annual_agriculture_income'
+    ], 'annual');
+    const manualMonthly = (sums.manualAgriMonthly || 0) + (sums.manualAgriWithOwnershipMonthly || 0)
+        || getFirstPositiveValue(esr, [
+            'manual_agriculture_income',
+            'manual_agri_income',
+            'annual_agriculture_income',
+            'agriculture_income',
+            'agri_income'
+        ], 'annual');
+    const proofAvailable = sums.agriOwnershipProofAvailable === true
+        || esr.agriculture_proof_available === true
+        || String(esr.agriculture_proof_available || '').toLowerCase() === 'yes';
+    const differenceMonthly = itrMonthly > 0 && manualMonthly > 0
+        ? Math.abs(itrMonthly - manualMonthly)
+        : null;
+    const toleranceMonthly = itrMonthly > 0 ? Math.max(1, itrMonthly * 0.01) : 1;
+    const amountMatched = differenceMonthly === null ? null : differenceMonthly <= toleranceMonthly;
+
+    let rawMonthly = 0;
+    let eligibleMonthly = 0;
+    let allowedPct = 0;
+    let source = 'NONE';
+    let manualReviewRequired = false;
+
+    if (itrMonthly > 0 && proofAvailable) {
+        rawMonthly = itrMonthly;
+        eligibleMonthly = itrMonthly;
+        allowedPct = 100;
+        source = 'ITR_AGRICULTURE_WITH_OWNERSHIP_PROOF_100_PERCENT';
+        manualReviewRequired = amountMatched === false;
+    } else if (itrMonthly > 0) {
+        rawMonthly = itrMonthly;
+        eligibleMonthly = itrMonthly * 0.50;
+        allowedPct = 50;
+        source = 'ITR_AGRICULTURE_WITHOUT_OWNERSHIP_PROOF_50_PERCENT';
+    } else if (manualMonthly > 0) {
+        rawMonthly = manualMonthly;
+        eligibleMonthly = manualMonthly * 0.50;
+        allowedPct = 50;
+        source = proofAvailable
+            ? 'MANUAL_AGRICULTURE_PROOF_AVAILABLE_ITR_MISSING_50_PERCENT'
+            : 'MANUAL_AGRICULTURE_50_PERCENT';
+        manualReviewRequired = proofAvailable;
+    }
+
+    return {
+        rawMonthly,
+        eligibleMonthly,
+        allowedPct,
+        source,
+        itrMonthly,
+        manualMonthly,
+        proofAvailable,
+        amountMatched,
+        differenceMonthly,
+        toleranceMonthly,
+        manualReviewRequired
+    };
+}
+
 function calculateIciciSalariedConsideredIncome({ esr, incomeEntries = [] }) {
     const entrySums = getIncomeEntryMonthlySums(incomeEntries);
 
@@ -1124,48 +1195,11 @@ function calculateIciciSalariedConsideredIncome({ esr, incomeEntries = [] }) {
     const netSalaryMonthly = netSalaryFromSnapshot > 0 ? netSalaryFromSnapshot : entrySums.manualSalaryMonthly;
     const consideredSalary = netSalaryMonthly;
 
-    // Agriculture priority:
-    // 1. ITR agriculture at 100%.
-    // 2. Manual agriculture with ownership/land/7/12 proof at 100%.
-    // 3. Other manual agriculture at 50%.
-    const itrAgriMonthly = entrySums.itrAgriMonthly || getFirstPositiveValue(esr, [
-        'itr_agriculture_income',
-        'itr_agri_income',
-        'agriculture_income_itr',
-        'agri_income_itr',
-        'annual_itr_agriculture_income',
-        'itr_annual_agriculture_income'
-    ], 'annual');
-
-    const manualAgriMonthly = entrySums.manualAgriMonthly || getFirstPositiveValue(esr, [
-        'manual_agriculture_income',
-        'manual_agri_income',
-        'annual_agriculture_income',
-        'agriculture_income',
-        'agri_income'
-    ], 'annual');
-
-    let consideredAgriculture = 0;
-    let agricultureSource = 'NONE';
-    let agricultureRawMonthly = 0;
-    let agricultureAllowedPct = 0;
-
-    if (itrAgriMonthly > 0) {
-        agricultureRawMonthly = itrAgriMonthly;
-        consideredAgriculture = itrAgriMonthly;
-        agricultureAllowedPct = 100;
-        agricultureSource = 'ITR_AGRICULTURE_100_PERCENT';
-    } else if (entrySums.manualAgriWithOwnershipMonthly > 0) {
-        agricultureRawMonthly = entrySums.manualAgriWithOwnershipMonthly;
-        consideredAgriculture = entrySums.manualAgriWithOwnershipMonthly;
-        agricultureAllowedPct = 100;
-        agricultureSource = 'MANUAL_AGRICULTURE_OWNERSHIP_PROOF_100_PERCENT';
-    } else if (manualAgriMonthly > 0) {
-        agricultureRawMonthly = manualAgriMonthly;
-        consideredAgriculture = manualAgriMonthly * 0.50;
-        agricultureAllowedPct = 50;
-        agricultureSource = 'MANUAL_AGRICULTURE_50_PERCENT';
-    }
+    const agricultureResolution = resolveIciciAgricultureIncome({ esr, entrySums });
+    const consideredAgriculture = agricultureResolution.eligibleMonthly;
+    const agricultureSource = agricultureResolution.source;
+    const agricultureRawMonthly = agricultureResolution.rawMonthly;
+    const agricultureAllowedPct = agricultureResolution.allowedPct;
 
     // ICICI policy: Rental income is auto-counted only if it is Bank Credit / ITR-backed.
     // Rental cash or unclassified manual rent is not auto-counted.
@@ -1213,6 +1247,7 @@ function calculateIciciSalariedConsideredIncome({ esr, incomeEntries = [] }) {
         agriculture_raw_monthly: agricultureRawMonthly,
         agriculture_source: agricultureSource,
         agriculture_allowed_pct: agricultureAllowedPct,
+        agriculture_verification: agricultureResolution,
         rent_raw_monthly: rentRawMonthly,
         rent_source: rentSource,
         rent_cash_excluded_monthly: entrySums.excludedRentCashMonthly || 0,
@@ -1232,8 +1267,9 @@ function calculateIciciSalariedConsideredIncome({ esr, incomeEntries = [] }) {
                 eligible_monthly: consideredAgriculture,
                 source: agricultureSource,
                 rule: agricultureAllowedPct === 100
-                    ? 'Agriculture income considered at 100% because ITR/ownership proof is available'
-                    : 'Manual agriculture income considered at 50%'
+                    ? 'ITR agriculture amount considered at 100% because ownership/land proof is available'
+                    : 'Agriculture considered at 50%; 100% requires both ITR amount and ownership/land proof',
+                verification: agricultureResolution
             }] : []),
             ...(consideredRent > 0 ? [{
                 type: 'Rental Income — Bank/ITR',
@@ -1736,10 +1772,23 @@ function calculateComposedIncome({ scheme, esr, incomeEntries, paramMap, warning
             'Considered Salary': salariedComposition.primary_income,
             'Agriculture Source': salariedComposition.agriculture_source || 'N/A',
             'Considered Agriculture': salariedComposition.agri_income || 0,
+            'Agriculture Manual Monthly': salariedComposition.agriculture_verification?.manualMonthly || 0,
+            'Agriculture ITR Monthly': salariedComposition.agriculture_verification?.itrMonthly || 0,
+            'Agriculture Proof Available': salariedComposition.agriculture_verification?.proofAvailable ? 'Yes' : 'No',
+            'Agriculture Amount Match': salariedComposition.agriculture_verification?.amountMatched === null
+                ? 'Not comparable'
+                : (salariedComposition.agriculture_verification?.amountMatched ? 'Matched' : 'Mismatch'),
             'Rent Source': salariedComposition.rent_source || 'N/A',
             'Considered Rent': salariedComposition.rental_bank || 0,
             'Total Considered Income': salariedComposition.total_eligible_income
         });
+
+        if (salariedComposition.agriculture_verification?.manualReviewRequired) {
+            const verification = salariedComposition.agriculture_verification;
+            warnings.push(verification.itrMonthly > 0
+                ? `Agriculture manual amount and ITR amount differ by ${verification.differenceMonthly.toLocaleString('en-IN')}/month; ITR amount used and manual review flagged.`
+                : 'Agriculture ownership proof is available but ITR agriculture amount is missing; manual amount limited to 50% and manual review flagged.');
+        }
 
         return salariedComposition;
     }
@@ -1780,6 +1829,9 @@ function calculateComposedIncome({ scheme, esr, incomeEntries, paramMap, warning
     const dbrRentalCash = getPercentParam('dbr_rental_cash', 0.50);
     const eligAgriItr = otherIncomeAllowedByPolicy && (isIciciNpm || getBoolParam('elig_agri_itr', true));
     const dbrAgriItr = getPercentParam('dbr_agri_itr', 0.50);
+    const iciciAgricultureResolution = isIciciNpm && eligAgriItr
+        ? resolveIciciAgricultureIncome({ esr, entrySums: getIncomeEntryMonthlySums(incomeEntries) })
+        : null;
 
     let rentalIncomeBank = 0;
     let rentalIncomeCash = 0;
@@ -1834,7 +1886,11 @@ function calculateComposedIncome({ scheme, esr, incomeEntries, paramMap, warning
                     }
                 }
             } else if (type.includes('agri') || type.includes('agriculture')) {
-                if (eligAgriItr) {
+                // ICICI NPM agriculture is resolved once after all rows are compared,
+                // so separate manual, ITR and proof rows cannot be double-counted.
+                if (iciciAgricultureResolution) {
+                    continue;
+                } else if (eligAgriItr) {
                     const proofText = `${type} ${docType}`;
                     const ownershipProof = hasOwnershipProofText(proofText);
                     const allowedPct = ownershipProof ? 1.00 : dbrAgriItr;
@@ -1884,6 +1940,39 @@ function calculateComposedIncome({ scheme, esr, incomeEntries, paramMap, warning
         }
     }
 
+    if (iciciAgricultureResolution?.eligibleMonthly > 0) {
+        agriIncome = iciciAgricultureResolution.eligibleMonthly;
+        breakdownItems.push({
+            type: 'Agricultural Income',
+            raw_monthly: iciciAgricultureResolution.rawMonthly,
+            allowed_pct: iciciAgricultureResolution.allowedPct,
+            eligible_monthly: iciciAgricultureResolution.eligibleMonthly,
+            source: iciciAgricultureResolution.source,
+            manual_monthly: iciciAgricultureResolution.manualMonthly,
+            itr_monthly: iciciAgricultureResolution.itrMonthly,
+            proof_available: iciciAgricultureResolution.proofAvailable,
+            amount_matched: iciciAgricultureResolution.amountMatched,
+            difference_monthly: iciciAgricultureResolution.differenceMonthly,
+            rule: iciciAgricultureResolution.allowedPct === 100
+                ? 'ITR agriculture amount used at 100% because ownership/land proof is available.'
+                : 'Agriculture considered at 50%; 100% requires both ITR amount and ownership/land proof.'
+        });
+        if (iciciAgricultureResolution.manualReviewRequired) {
+            warnings.push(iciciAgricultureResolution.itrMonthly > 0
+                ? `Agriculture manual amount and ITR amount differ by ${iciciAgricultureResolution.differenceMonthly.toLocaleString('en-IN')}/month; ITR amount used and manual review flagged.`
+                : 'Agriculture ownership proof is available but ITR agriculture amount is missing; manual amount limited to 50% and manual review flagged.');
+        }
+        logger?.traceExtraction?.('ICICI AGRICULTURE ITR VERIFICATION', {
+            'Manual Monthly Amount': iciciAgricultureResolution.manualMonthly,
+            'ITR Monthly Amount': iciciAgricultureResolution.itrMonthly,
+            'Ownership/Land Proof': iciciAgricultureResolution.proofAvailable ? 'Yes' : 'No',
+            'Amount Match': iciciAgricultureResolution.amountMatched === null ? 'Not comparable' : (iciciAgricultureResolution.amountMatched ? 'Matched' : 'Mismatch'),
+            'ITR Amount Used': iciciAgricultureResolution.itrMonthly > 0 ? 'Yes' : 'No',
+            'Allowed Percentage': `${iciciAgricultureResolution.allowedPct}%`,
+            'Eligible Agriculture Monthly': iciciAgricultureResolution.eligibleMonthly
+        });
+    }
+
     const totalEligibleIncome = primaryIncome + rentalIncomeBank + rentalIncomeCash + agriIncome + otherIncome;
 
     return {
@@ -1903,6 +1992,29 @@ function parseObligationExclusionMonths(ruleString) {
     const str = String(ruleString).toLowerCase();
     const match = str.match(/closed in next (\d+) months/);
     return match ? parseInt(match[1], 10) : 0;
+}
+
+function estimateObligationTenureFromBalances(obligation = {}) {
+    const emi = toSafeNumber(obligation.emi_per_month);
+    const originalLoanAmount = toSafeNumber(obligation.loan_amount);
+    const outstandingAmount = toSafeNumber(obligation.outstanding_amount);
+    if (emi <= 0 || originalLoanAmount <= 0 || outstandingAmount < 0) return null;
+
+    // Principal-only approximation used only when bureau tenure/date is missing.
+    // Interest allocation is unavailable, so these values are audit estimates.
+    const totalTenureMonths = originalLoanAmount / emi;
+    const remainingTenureMonths = outstandingAmount / emi;
+    const elapsedTenureMonths = Math.max(0, (originalLoanAmount - outstandingAmount) / emi);
+    return {
+        method: 'PRINCIPAL_ONLY_BALANCE_EMI_APPROXIMATION',
+        totalTenureMonths,
+        remainingTenureMonths,
+        elapsedTenureMonths,
+        originalLoanAmount,
+        outstandingAmount,
+        emi,
+        dataInconsistent: outstandingAmount > originalLoanAmount
+    };
 }
 
 function calculateNetObligations(obligationsList, rawObligationRule, warnings, policyWarnings, obligationExclusionNotes, lenderPolicy = LENDER_POLICY_REGISTRY.DEFAULT) {
@@ -1947,18 +2059,41 @@ function calculateNetObligations(obligationsList, rawObligationRule, warnings, p
             }
 
             if (availedInLastMonths > 0) {
-                const dateStr = obl.disbursement_date || obl.opened_date || obl.loan_start_date || obl.created_at;
+                const dateStr = obl.disbursement_date || obl.opened_date || obl.loan_start_date;
                 if (!dateStr) {
-                    warnings.push(`BANKING_OBLIGATION_DATE_MISSING: Missing date for loan ${obl.loan_type}. Safely counting obligation.`);
-                    netObligations += emi;
-                    activeObligations.push(obl);
+                    const estimate = estimateObligationTenureFromBalances(obl);
+                    if (estimate && !estimate.dataInconsistent) {
+                        const isEstimatedRecent = estimate.elapsedTenureMonths <= availedInLastMonths;
+                        const note = `${isEstimatedRecent ? 'Included' : 'Excluded'} EMI INR ${emi.toLocaleString('en-IN')} (${obl.lender_name || 'Lender'} - ${obl.loan_type || 'Loan'}): bureau start date missing; estimated elapsed tenure ${estimate.elapsedTenureMonths.toFixed(1)} months = (Loan Amount INR ${estimate.originalLoanAmount.toLocaleString('en-IN')} - Outstanding INR ${estimate.outstandingAmount.toLocaleString('en-IN')}) / EMI INR ${estimate.emi.toLocaleString('en-IN')}. Rule limit: ${availedInLastMonths} months.`;
+                        warnings.push(`BANKING_OBLIGATION_DATE_ESTIMATED: ${note}`);
+                        obligationExclusionNotes.push(note);
+                        if (isEstimatedRecent) {
+                            netObligations += emi;
+                            activeObligations.push({ ...obl, tenure_estimate: estimate });
+                        } else {
+                            excludedObligations.push({ ...obl, tenure_estimate: estimate });
+                        }
+                    } else {
+                        warnings.push(`BANKING_OBLIGATION_DATE_MISSING: Missing date/usable balance data for loan ${obl.loan_type}. Safely counting obligation.`);
+                        netObligations += emi;
+                        activeObligations.push(obl);
+                    }
                     continue;
                 }
 
                 const loanDate = new Date(dateStr);
-                const monthsSince = (new Date().getTime() - loanDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
+                if (Number.isNaN(loanDate.getTime())) {
+                    warnings.push(`BANKING_OBLIGATION_DATE_INVALID: Invalid date for loan ${obl.loan_type}. Safely counting obligation.`);
+                    netObligations += emi;
+                    activeObligations.push(obl);
+                    continue;
+                }
+                const today = new Date();
+                const cutoffDate = new Date(today);
+                cutoffDate.setMonth(cutoffDate.getMonth() - availedInLastMonths);
+                const isWithinAvailedWindow = loanDate >= cutoffDate && loanDate <= today;
 
-                if (monthsSince > availedInLastMonths) {
+                if (!isWithinAvailedWindow) {
                     excludedObligations.push(obl);
                     const note = `Excluded EMI ₹${emi.toLocaleString()} (${obl.lender_name || 'Lender'} - ${obl.loan_type || 'Loan'}) because it was availed > ${availedInLastMonths} months ago.`;
                     obligationExclusionNotes.push(note);
@@ -1970,13 +2105,20 @@ function calculateNetObligations(obligationsList, rawObligationRule, warnings, p
             const isOdCc = typeLower.includes('od') || typeLower.includes('cc') || typeLower.includes('overdraft') || typeLower.includes('cash credit') || typeLower.includes('working capital');
 
             // Explicit remaining tenure takes priority if available, otherwise check OD/CC, else fallback to derived
-            let remainingMonths = Number(obl.remaining_tenure_months);
-            if (isNaN(remainingMonths) || remainingMonths === null) {
+            const rawRemainingMonths = obl.remaining_tenure_months;
+            let remainingMonths = rawRemainingMonths === null || rawRemainingMonths === undefined || rawRemainingMonths === ''
+                ? NaN
+                : Number(rawRemainingMonths);
+            if (!Number.isFinite(remainingMonths) || remainingMonths <= 0) {
                 if (isOdCc) {
                     remainingMonths = 999; // Never exclude OD/CC/Working Capital lines
                 } else {
+                    const estimate = estimateObligationTenureFromBalances(obl);
                     const outstanding = Number(obl.outstanding_amount) || 0;
-                    remainingMonths = emi > 0 ? (outstanding / emi) : 999;
+                    remainingMonths = estimate?.remainingTenureMonths ?? (emi > 0 ? (outstanding / emi) : 999);
+                    if (estimate) {
+                        obligationExclusionNotes.push(`Estimated remaining tenure ${remainingMonths.toFixed(1)} months for ${obl.lender_name || 'Lender'} - ${obl.loan_type || 'Loan'} using Outstanding INR ${estimate.outstandingAmount.toLocaleString('en-IN')} / EMI INR ${estimate.emi.toLocaleString('en-IN')} (principal-only approximation).`);
+                    }
                 }
             }
 
@@ -2645,7 +2787,18 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
 
     // 2. Resolve Allowed FOIR limit
     const configuredRawFoir = paramMap[`${pref}_dbr_foir`];
-    const rawFoir = configuredRawFoir ?? (isNoDoubleFoirSalariedMethod ? 'No DBR' : null);
+    const isIciciLapGst = lenderPolicy.key === 'ICICI'
+        && pType === 'lap'
+        && String(scheme.scheme_name || '').toUpperCase().includes('GST');
+    // Current ICICI LAP GST policy is a fixed 90% FOIR with no Double Whammy.
+    // Keep the runtime deterministic while older database rows are being updated.
+    const rawFoir = isIciciLapGst
+        ? '90%'
+        : (configuredRawFoir ?? (isNoDoubleFoirSalariedMethod ? 'No DBR' : null));
+    if (isIciciLapGst && configuredRawFoir !== '90%') {
+        warnings.push(`ICICI LAP GST FOIR runtime policy override applied: configured value "${configuredRawFoir ?? 'missing'}" replaced with fixed 90%; Double Whammy disabled.`);
+        logger?.traceWarning(`ICICI LAP GST policy override: fixed FOIR 90%; ignored stale configured value "${configuredRawFoir ?? 'missing'}".`);
+    }
     const foirRes = parseDynamicFoir(rawFoir, composedIncome);
     const foir_allowed_percent_value = handleParseResult(foirRes, `${pref}_dbr_foir`);
     logger?.traceParser('parseDynamicFoir', `${pref}_dbr_foir`, rawFoir, foirRes);
