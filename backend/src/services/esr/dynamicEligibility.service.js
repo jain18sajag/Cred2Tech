@@ -253,6 +253,7 @@ const HDFC_LAP_DSCR_PARAM_DEFAULTS = {
     age_maturity_income: '65',
     age_maturity_non_income: '75',
     bureau_cutoff: '740',
+    bureau_hard_reject_below: '710',
     bureau_name: 'CIBIL',
     lap_dbr_foir: 'No DBR',
     existing_obligation: 'All Obligation to be considered except getting closed in next 12 months. All obligation to be multiplied by 12 to get annual obligation',
@@ -693,23 +694,40 @@ function resolveHdfcNpmAnnualIncome({ esr, paramMap = {}, depreciationFraction =
 }
 
 function resolveGrpMultiplierForPolicy({ esr, paramMap = {}, lenderPolicy }) {
+    // Reference policy (both lenders): doctors get 4x annual gross receipts, every other
+    // professional gets 3x — there is no lender-wide flat multiplier. The seeded
+    // `grp_annual_receipts_multiplier` param was previously allowed to override this
+    // split for *everyone* (it's configured to '4' for both ICICI and HDFC), which
+    // silently gave every non-doctor GRP applicant a 33% inflated eligible amount.
+    // Profession-specific config now always wins; the flat param is only a last-resort
+    // fallback if neither doctor- nor other-professional-specific values are configured.
     const profession = normalizeProfessionForGrp(esr);
-    const doctorMultiplier = getNumericParam(paramMap, ['grpMultiplierByProfession.DOCTOR', 'grp_doctor_multiplier', 'grp_md_multiplier', 'grp_medical_doctor_multiplier'], 4);
-    const defaultMultiplier = getNumericParam(paramMap, ['grpMultiplierByProfession.DEFAULT', 'grp_other_professional_multiplier', 'grp_default_multiplier'], 3);
+    const doctorConfig = resolveFirstConfiguredParam(paramMap, ['grpMultiplierByProfession.DOCTOR', 'grp_doctor_multiplier', 'grp_md_multiplier', 'grp_medical_doctor_multiplier']);
+    const defaultConfig = resolveFirstConfiguredParam(paramMap, ['grpMultiplierByProfession.DEFAULT', 'grp_other_professional_multiplier', 'grp_default_multiplier']);
+    const professionSpecificConfig = profession.bucket === 'DOCTOR' ? doctorConfig : defaultConfig;
+
+    if (professionSpecificConfig) {
+        return {
+            multiplier: professionSpecificConfig.value,
+            source: profession.bucket === 'DOCTOR' ? 'CONFIGURED_GRP_DOCTOR_MULTIPLIER' : 'CONFIGURED_GRP_OTHER_MULTIPLIER',
+            profileText: profession.profileText,
+            professionBucket: profession.bucket
+        };
+    }
+
     const rawGrpMult = paramMap['grp_annual_receipts_multiplier'] || paramMap['grp_industry_margin'];
     const parsedMult = parseFloat(resolveRawParamValue(rawGrpMult));
-
     if (Number.isFinite(parsedMult) && parsedMult > 0) {
         return {
             multiplier: parsedMult,
-            source: 'CONFIGURED_GRP_MULTIPLIER',
+            source: 'CONFIGURED_GRP_FLAT_MULTIPLIER_FALLBACK',
             profileText: profession.profileText,
             professionBucket: profession.bucket
         };
     }
 
     return {
-        multiplier: profession.bucket === 'DOCTOR' ? doctorMultiplier : defaultMultiplier,
+        multiplier: profession.bucket === 'DOCTOR' ? 4 : 3,
         source: profession.bucket === 'DOCTOR' ? 'GRP_DOCTOR_MD_MULTIPLIER' : 'GRP_DEFAULT_NON_DOCTOR_MULTIPLIER',
         profileText: profession.profileText,
         professionBucket: profession.bucket
@@ -2615,19 +2633,32 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const bureauCutoff = handleParseResult(bureauRes, 'bureau_cutoff');
     logger?.traceParser('parseIntegerSafe', 'bureau_cutoff', bureauRes.raw, bureauRes);
 
+    // Deviation band: a score below this hard floor is an outright reject; between the
+    // floor and bureauCutoff is still eligible but flagged as needing deviation approval
+    // (matches the reference engine's bureau_hard_reject_below / min_bureau_score
+    // two-tier check, e.g. HDFC LAP: hard-reject <710, standard cutoff 740). Defaults to
+    // the cutoff itself (i.e. no band, single hard cutoff) when not configured — this
+    // keeps lenders without a documented deviation floor (e.g. ICICI) unchanged.
+    const bureauHardRejectRes = getParamInteger(paramMap, 'bureau_hard_reject_below');
+    const bureauHardRejectConfigured = handleParseResult(bureauHardRejectRes, 'bureau_hard_reject_below');
+    const bureauHardReject = bureauHardRejectConfigured !== null ? bureauHardRejectConfigured : bureauCutoff;
+
     const effectiveCibil = (lowest_cibil_score !== undefined && lowest_cibil_score !== null)
         ? lowest_cibil_score
         : esr.bureau_score;
 
     if (bureauCutoff !== null) {
-        if (!effectiveCibil || effectiveCibil < bureauCutoff) {
+        if (!effectiveCibil) {
             isEligible = false;
-            failure_reasons.push(effectiveCibil
-                ? `Lowest CIBIL score ${effectiveCibil} is below bureau cutoff ${bureauCutoff}`
-                : "Bureau score missing.");
-            logger?.traceFailure('CIBIL_REJECT', effectiveCibil
-                ? `Lowest CIBIL ${effectiveCibil} < Bureau Cutoff ${bureauCutoff}`
-                : 'Bureau score missing');
+            failure_reasons.push("Bureau score missing.");
+            logger?.traceFailure('CIBIL_REJECT', 'Bureau score missing');
+        } else if (bureauHardReject !== null && effectiveCibil < bureauHardReject) {
+            isEligible = false;
+            failure_reasons.push(`Lowest CIBIL score ${effectiveCibil} is below the hard-reject floor of ${bureauHardReject}`);
+            logger?.traceFailure('CIBIL_REJECT', `Lowest CIBIL ${effectiveCibil} < hard-reject floor ${bureauHardReject}`);
+        } else if (effectiveCibil < bureauCutoff) {
+            warnings.push(`Lowest CIBIL score ${effectiveCibil} is below the standard cut-off of ${bureauCutoff} (>= ${bureauHardReject}) — sanction possible only with deviation approval.`);
+            logger?.traceStep('BUREAU CHECK', `DEVIATION — Effective CIBIL ${effectiveCibil} is below cutoff ${bureauCutoff} but >= hard floor ${bureauHardReject}; deviation approval required.`);
         } else {
             logger?.traceStep('BUREAU CHECK', `PASS — Effective CIBIL ${effectiveCibil} >= Cutoff ${bureauCutoff}`);
         }
@@ -2848,12 +2879,6 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
 
     // 2. Resolve Allowed FOIR limit
     const configuredRawFoir = paramMap[`${pref}_dbr_foir`];
-    const isIciciLapGst = lenderPolicy.key === 'ICICI'
-        && pType === 'lap'
-        && String(scheme.scheme_name || '').toUpperCase().includes('GST');
-    // Current ICICI LAP GST policy is a fixed 90% FOIR with no Double Whammy.
-    // Keep the runtime deterministic while older database rows are being updated.
-    //
     // HDFC Salaried's EMI capacity (STEP 7 below) is computed from the dedicated
     // hdfc_salaried_salary_pct_upto_1lakh / _above_1lakh / _bank_salary_cap_pct params
     // via calculateHdfcSalariedConsideredIncome() — it never reads foir_allowed_percent.
@@ -2862,15 +2887,14 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     // (two "%" signs trip the ambiguous-percentage guard), so treat it as "No DBR"
     // for this method specifically rather than failing the whole scheme on a value
     // the calculation never actually consumes.
-    const rawFoir = isIciciLapGst
-        ? '90%'
-        : (isHdfcSalariedEmiCapacityMethod
-            ? 'No DBR'
-            : (configuredRawFoir ?? (isNoDoubleFoirSalariedMethod ? 'No DBR' : null)));
-    if (isIciciLapGst && configuredRawFoir !== '90%') {
-        warnings.push(`ICICI LAP GST FOIR runtime policy override applied: configured value "${configuredRawFoir ?? 'missing'}" replaced with fixed 90%; Double Whammy disabled.`);
-        logger?.traceWarning(`ICICI LAP GST policy override: fixed FOIR 90%; ignored stale configured value "${configuredRawFoir ?? 'missing'}".`);
-    }
+    //
+    // Note: ICICI LAP GST previously had a runtime override here forcing a fixed 90%
+    // FOIR with Double Whammy disabled. That override has been reverted — ICICI GST
+    // now uses its configured Double Whammy policy (foir_max 100%, dw_cap 140%),
+    // matching the reference eligibility engine (ICICI_LAP_NORMS.methods.gst).
+    const rawFoir = isHdfcSalariedEmiCapacityMethod
+        ? 'No DBR'
+        : (configuredRawFoir ?? (isNoDoubleFoirSalariedMethod ? 'No DBR' : null));
     if (isHdfcSalariedEmiCapacityMethod && configuredRawFoir != null && rawFoir === 'No DBR') {
         logger?.traceWarning(`HDFC Salaried: ignored non-parseable ${pref}_dbr_foir config value "${configuredRawFoir}" — EMI capacity for this method is sourced from hdfc_salaried_salary_pct_upto_1lakh/_above_1lakh instead.`);
     }

@@ -8,6 +8,7 @@ const NOT_ALLOWED = 'NOT_ALLOWED';
 const EXTRA_PARAMETERS = [
   // Lender identification / exposure
   { key: 'lender_policy_key', label: 'Lender Policy Key', category: 'Lender Policy', data_type: 'string' },
+  { key: 'bureau_hard_reject_below', label: 'Bureau Hard-Reject Floor', category: 'Lender Policy', data_type: 'integer' },
   { key: 'grp_exposure_field', label: 'GRP Exposure Field', category: 'Eligibility Calculation', data_type: 'string' },
   { key: 'hdfc_exposure_field', label: 'HDFC Exposure Field', category: 'Eligibility Calculation', data_type: 'string' },
 
@@ -88,6 +89,10 @@ function buildHdfcLapMapping() {
     age_maturity_income: '65',
     age_maturity_non_income: '75',
     bureau_cutoff: '740',
+    // Below this floor is a hard reject; between this and bureau_cutoff is still
+    // eligible but requires deviation approval (matches the reference eligibility
+    // engine's HDFC_LAP_NORMS.bureau_hard_reject_below).
+    bureau_hard_reject_below: '710',
     bureau_name: 'CIBIL',
     hdfc_other_income_policy: 'Rental bank/ITR income only for NPM/DSCR at 100% capped to main business profit. Rental cash and agriculture not considered.',
     hdfc_unsecured_pos_treatment: 'For HDFC unsecured loans, deduct POS from final eligible loan amount instead of EMI obligation for Salaried/NPM/GST/GRP; add EMI back to ABB for Banking.',
