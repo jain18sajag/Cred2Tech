@@ -369,6 +369,16 @@ function resolveLenderPolicy(lender = {}) {
     return LENDER_POLICY_REGISTRY.DEFAULT;
 }
 
+// True only for a raw config value that unambiguously spells out zero (e.g. "0", "0%",
+// "₹0") — as opposed to garbage/unset text that also happens to strip down to zero
+// (e.g. "N/A"). Used so an admin who deliberately configures a param to 0 (to disable
+// an add-on/cap) is honored instead of silently falling back to the hardcoded default.
+function isExplicitZeroConfig(raw) {
+    if (raw === undefined || raw === null) return false;
+    const cleaned = String(raw).trim().toLowerCase().replace(/[₹%,\s]/g, '');
+    return cleaned === '0' || cleaned === '0.0' || cleaned === '0.00';
+}
+
 function getNumericParam(paramMap, keys = [], defaultValue = 0) {
     for (const key of keys) {
         if (!key) continue;
@@ -376,6 +386,7 @@ function getNumericParam(paramMap, keys = [], defaultValue = 0) {
         if (raw === undefined || raw === null || raw === '') continue;
         const num = toSafeNumber(raw);
         if (num > 0) return num;
+        if (num === 0 && isExplicitZeroConfig(raw)) return 0;
     }
     return defaultValue;
 }
@@ -387,6 +398,7 @@ function resolveFirstConfiguredParam(paramMap, keys = []) {
         if (raw === undefined || raw === null || raw === '') continue;
         const num = toSafeNumber(raw);
         if (num > 0) return { key, raw, value: num };
+        if (num === 0 && isExplicitZeroConfig(raw)) return { key, raw, value: 0 };
     }
     return null;
 }
@@ -619,7 +631,10 @@ function calculateDscrCapacity({ annualIncome, netObligations, paramMap, lenderP
 
 
 function getHdfcPreviousYearNumber(esr, keys = []) {
-    return getFirstPositiveValue(esr, keys, 'annual') * 12;
+    // These ESR fields already store an annual figure — read directly instead of
+    // round-tripping through getFirstPositiveValue's annual->monthly (/12) conversion
+    // and multiplying back by 12, which was a functional no-op with float-precision risk.
+    return toSafeNumber((keys || []).map(k => esr?.[k]).find(v => toSafeNumber(v) > 0));
 }
 
 function resolveHdfcNpmAnnualIncome({ esr, paramMap = {}, depreciationFraction = null, includeDirectorInterest = false }) {
@@ -647,23 +662,33 @@ function resolveHdfcNpmAnnualIncome({ esr, paramMap = {}, depreciationFraction =
     };
     const previousAnnual = previous.pat + (previous.depreciation * depFraction) + previous.financeCost + previous.remuneration + previous.directorInterest;
 
+    // Reference formula: growth is measured on PAT alone (not the full accrual with
+    // depreciation/interest/remuneration add-backs), and when the 2-year-average rule
+    // triggers, only PAT is averaged — depreciation, finance cost, remuneration and
+    // director interest are always taken from the latest year.
     const growthThresholdRaw = getNumericParam(paramMap, [hdfcNpmPolicy.growthThresholdParamKey || 'npm_growth_threshold'], hdfcNpmPolicy.defaultGrowthThreshold || 1);
     const growthThreshold = growthThresholdRaw > 1 ? growthThresholdRaw / 100 : growthThresholdRaw;
-    const growthRate = previousAnnual > 0 ? ((latestAnnual - previousAnnual) / Math.abs(previousAnnual)) : null;
-    const useTwoYearAverage = !!(previousAnnual > 0 && growthRate !== null && growthRate > growthThreshold);
-    const annualIncome = useTwoYearAverage ? ((latestAnnual + previousAnnual) / 2) : latestAnnual;
+    const patGrowthRate = previous.pat > 0 ? ((latest.pat - previous.pat) / previous.pat) : null;
+    const useTwoYearAverage = !!(previous.pat > 0 && patGrowthRate !== null && patGrowthRate > growthThreshold);
+    const patUsed = useTwoYearAverage ? ((latest.pat + previous.pat) / 2) : latest.pat;
+    const annualIncome = patUsed
+        + (latest.depreciation * depFraction)
+        + latest.financeCost
+        + latest.remuneration
+        + latest.directorInterest;
 
     return {
         annualIncome: Math.max(0, annualIncome),
         monthlyIncome: Math.max(0, annualIncome / 12),
         latestAnnual,
         previousAnnual,
-        growthRate,
+        patUsed,
+        growthRate: patGrowthRate,
         growthThreshold,
         useTwoYearAverage,
         depreciationFraction: depFraction,
         components: { latest, previous, includeDirectorInterest },
-        source: useTwoYearAverage ? 'HDFC_NPM_TWO_YEAR_AVERAGE' : 'HDFC_NPM_LATEST_YEAR'
+        source: useTwoYearAverage ? 'HDFC_NPM_TWO_YEAR_AVERAGE_PAT' : 'HDFC_NPM_LATEST_YEAR'
     };
 }
 
@@ -839,13 +864,13 @@ function isHdfcUnsecuredObligation(obl = {}) {
 function getBankingBusinessCreditCap(esr, paramMap, lenderPolicy, isBankingMethod) {
     if (lenderPolicy.key !== 'HDFC' || !isBankingMethod) return null;
     const multiplier = getNumericParam(paramMap, ['banking_business_credit_cap_multiplier'], 1);
-    const annualBusinessCredit = getFirstPositiveValue(esr, [
+    const annualBusinessCredit = toSafeNumber([
         'bank_total_business_credits',
         'bank_business_credit_12m',
         'banking_business_credit_12m',
         'bank_credits_last_12_months',
         'bank_total_credits'
-    ], 'annual') * 12 || ((toSafeNumber(esr.bank_avg_monthly_credit) || 0) * 12);
+    ].map(k => esr?.[k]).find(v => toSafeNumber(v) > 0)) || ((toSafeNumber(esr.bank_avg_monthly_credit) || 0) * 12);
 
     if (annualBusinessCredit <= 0 || multiplier <= 0) return null;
     return Math.round(annualBusinessCredit * multiplier);
@@ -1193,7 +1218,24 @@ function calculateIciciSalariedConsideredIncome({ esr, incomeEntries = [] }) {
             'applicant_salary_income'
         ], 'monthly');
     const netSalaryMonthly = netSalaryFromSnapshot > 0 ? netSalaryFromSnapshot : entrySums.manualSalaryMonthly;
-    const consideredSalary = netSalaryMonthly;
+
+    // Reference formula: income = net salary + 3-mo avg incentive + annual bonus/12.
+    // These were previously dropped entirely for ICICI Salaried.
+    const incentiveMonthly = getFirstPositiveValue(esr, [
+        'salaried_incentive_income',
+        'average_monthly_incentive',
+        'incentive_3m_average',
+        'salary_incentive_income'
+    ], 'monthly');
+
+    const annualBonusMonthly = getFirstPositiveValue(esr, [
+        'salaried_annual_bonus',
+        'annual_bonus',
+        'latest_year_bonus',
+        'bonus_income_annual'
+    ], 'annual');
+
+    const consideredSalary = netSalaryMonthly + incentiveMonthly + annualBonusMonthly;
 
     const agricultureResolution = resolveIciciAgricultureIncome({ esr, entrySums });
     const consideredAgriculture = agricultureResolution.eligibleMonthly;
@@ -1244,6 +1286,8 @@ function calculateIciciSalariedConsideredIncome({ esr, incomeEntries = [] }) {
         salary_net_monthly: netSalaryMonthly,
         salary_allowed_pct: 100,
         salary_source: netSalaryFromSnapshot > 0 ? 'ESR_SALARY_NET_SNAPSHOT' : (entrySums.manualSalaryMonthly > 0 ? 'MANUAL_SALARY_FALLBACK' : 'NONE'),
+        incentive_monthly: incentiveMonthly,
+        annual_bonus_monthly: annualBonusMonthly,
         agriculture_raw_monthly: agricultureRawMonthly,
         agriculture_source: agricultureSource,
         agriculture_allowed_pct: agricultureAllowedPct,
@@ -1256,9 +1300,23 @@ function calculateIciciSalariedConsideredIncome({ esr, incomeEntries = [] }) {
                 type: 'Salary Income',
                 raw_monthly: netSalaryMonthly,
                 allowed_pct: 100,
-                eligible_monthly: consideredSalary,
+                eligible_monthly: netSalaryMonthly,
                 source: netSalaryFromSnapshot > 0 ? 'ESR salary net snapshot' : 'Manual salary fallback',
                 rule: 'ICICI Salaried method: verified monthly net salary is the base; FOIR is applied once by the scheme parameter.'
+            }] : []),
+            ...(incentiveMonthly > 0 ? [{
+                type: 'Incentive Income',
+                raw_monthly: incentiveMonthly,
+                allowed_pct: 100,
+                eligible_monthly: incentiveMonthly,
+                rule: 'ICICI Salaried: 3-month average incentive is added to the salary base.'
+            }] : []),
+            ...(annualBonusMonthly > 0 ? [{
+                type: 'Annual Bonus',
+                raw_monthly: annualBonusMonthly,
+                allowed_pct: 100,
+                eligible_monthly: annualBonusMonthly,
+                rule: 'ICICI Salaried: latest-year annual bonus considered as monthly equivalent (annual/12).'
             }] : []),
             ...(consideredAgriculture > 0 ? [{
                 type: 'Agriculture Income',
@@ -1293,7 +1351,7 @@ function calculateIciciSalariedConsideredIncome({ esr, incomeEntries = [] }) {
 
 
 function calculateHdfcSalariedConsideredIncome({ esr, paramMap = {} }) {
-    const grossSalaryMonthly = getFirstPositiveValue(esr, [
+    const baseSalaryMonthly = getFirstPositiveValue(esr, [
         'salaried_gross_monthly',
         'salaried_income',
         'salary_income',
@@ -1309,23 +1367,6 @@ function calculateHdfcSalariedConsideredIncome({ esr, paramMap = {} }) {
         'salaried_bank_income'
     ], 'monthly');
 
-    const hdfcPolicy = LENDER_POLICY_REGISTRY.HDFC.salaried;
-    const thresholdMonthly = getNumericParam(paramMap, ['hdfc_salaried_salary_threshold'], hdfcPolicy.thresholdMonthly);
-    const pctUpToThresholdRaw = getNumericParam(paramMap, ['hdfc_salaried_salary_pct_upto_1lakh'], hdfcPolicy.pctUpToThreshold);
-    const pctAboveThresholdRaw = getNumericParam(paramMap, ['hdfc_salaried_salary_pct_above_1lakh'], hdfcPolicy.pctAboveThreshold);
-    const netSalaryCapPctRaw = getNumericParam(paramMap, ['hdfc_salaried_bank_salary_cap_pct'], hdfcPolicy.netSalaryCapPct);
-
-    const pctUpToThreshold = pctUpToThresholdRaw > 1 ? pctUpToThresholdRaw / 100 : pctUpToThresholdRaw;
-    const pctAboveThreshold = pctAboveThresholdRaw > 1 ? pctAboveThresholdRaw / 100 : pctAboveThresholdRaw;
-    const netSalaryCapPct = netSalaryCapPctRaw > 1 ? netSalaryCapPctRaw / 100 : netSalaryCapPctRaw;
-
-    const allowedPct = grossSalaryMonthly > thresholdMonthly ? pctAboveThreshold : pctUpToThreshold;
-
-    const policyWeightedSalary = grossSalaryMonthly * allowedPct;
-    const bankSalaryCap = bankNetSalaryMonthly > 0 ? bankNetSalaryMonthly * netSalaryCapPct : null;
-
-    const consideredSalary = bankSalaryCap !== null ? Math.min(policyWeightedSalary, bankSalaryCap) : policyWeightedSalary;
-
     const incentiveMonthly = getFirstPositiveValue(esr, [
         'salaried_incentive_income',
         'average_monthly_incentive',
@@ -1340,7 +1381,30 @@ function calculateHdfcSalariedConsideredIncome({ esr, paramMap = {} }) {
         'bonus_income_annual'
     ], 'annual');
 
-    const totalConsideredSalaryIncome = consideredSalary + incentiveMonthly + annualBonusMonthly;
+    // Reference formula (lender calculator): gross = base salary + 3-mo avg incentive
+    // + annual bonus/12. The 50%/60% slab AND the FOIR-basis figure are both computed
+    // on this full gross — incentive/bonus are not bolted on afterwards at 100% weight,
+    // they go through the same haircut/INSR-cap as the base salary.
+    const grossSalaryMonthly = baseSalaryMonthly + incentiveMonthly + annualBonusMonthly;
+
+    const hdfcPolicy = LENDER_POLICY_REGISTRY.HDFC.salaried;
+    const thresholdMonthly = getNumericParam(paramMap, ['hdfc_salaried_salary_threshold'], hdfcPolicy.thresholdMonthly);
+    const pctUpToThresholdRaw = getNumericParam(paramMap, ['hdfc_salaried_salary_pct_upto_1lakh'], hdfcPolicy.pctUpToThreshold);
+    const pctAboveThresholdRaw = getNumericParam(paramMap, ['hdfc_salaried_salary_pct_above_1lakh'], hdfcPolicy.pctAboveThreshold);
+    const netSalaryCapPctRaw = getNumericParam(paramMap, ['hdfc_salaried_bank_salary_cap_pct'], hdfcPolicy.netSalaryCapPct);
+
+    const pctUpToThreshold = pctUpToThresholdRaw > 1 ? pctUpToThresholdRaw / 100 : pctUpToThresholdRaw;
+    const pctAboveThreshold = pctAboveThresholdRaw > 1 ? pctAboveThresholdRaw / 100 : pctAboveThresholdRaw;
+    const netSalaryCapPct = netSalaryCapPctRaw > 1 ? netSalaryCapPctRaw / 100 : netSalaryCapPctRaw;
+
+    const allowedPct = grossSalaryMonthly > thresholdMonthly ? pctAboveThreshold : pctUpToThreshold;
+
+    const foirBasisSalary = grossSalaryMonthly * allowedPct;
+    const bankSalaryCap = bankNetSalaryMonthly > 0 ? bankNetSalaryMonthly * netSalaryCapPct : null;
+
+    const totalConsideredSalaryIncome = bankSalaryCap !== null
+        ? Math.min(foirBasisSalary, bankSalaryCap)
+        : foirBasisSalary;
 
     return {
         total_eligible_income: totalConsideredSalaryIncome,
@@ -1350,6 +1414,7 @@ function calculateHdfcSalariedConsideredIncome({ esr, paramMap = {} }) {
         agri_income: 0,
         other_income: 0,
         salary_gross_monthly: grossSalaryMonthly,
+        salary_base_monthly: baseSalaryMonthly,
         salary_allowed_pct: allowedPct * 100,
         bank_net_salary_monthly: bankNetSalaryMonthly,
         bank_salary_cap: bankSalaryCap,
@@ -1357,29 +1422,18 @@ function calculateHdfcSalariedConsideredIncome({ esr, paramMap = {} }) {
         annual_bonus_monthly: annualBonusMonthly,
         breakdown: [
             {
-                type: 'Salary Income',
+                type: 'Salary Income (gross incl. incentive + bonus)',
                 raw_monthly: grossSalaryMonthly,
+                base_salary_monthly: baseSalaryMonthly,
+                incentive_monthly: incentiveMonthly,
+                annual_bonus_monthly: annualBonusMonthly,
                 allowed_pct: allowedPct * 100,
-                eligible_monthly_before_cap: policyWeightedSalary,
+                eligible_monthly_before_cap: foirBasisSalary,
                 bank_net_salary_monthly: bankNetSalaryMonthly,
                 bank_salary_cap: bankSalaryCap,
-                eligible_monthly: consideredSalary,
-                rule: 'HDFC Salaried: 50% up to ₹1L, 60% above ₹1L, capped by 70% of bank net salary when available. This is treated as EMI capacity basis and FOIR is not applied again.'
-            },
-            ...(incentiveMonthly > 0 ? [{
-                type: 'Incentive Income',
-                raw_monthly: incentiveMonthly,
-                allowed_pct: 100,
-                eligible_monthly: incentiveMonthly,
-                rule: 'HDFC Salaried: 3-month average incentive can be considered.'
-            }] : []),
-            ...(annualBonusMonthly > 0 ? [{
-                type: 'Annual Bonus',
-                raw_monthly: annualBonusMonthly,
-                allowed_pct: 100,
-                eligible_monthly: annualBonusMonthly,
-                rule: 'HDFC Salaried: latest-year annual bonus considered as monthly equivalent when reported/vetted.'
-            }] : [])
+                eligible_monthly: totalConsideredSalaryIncome,
+                rule: 'HDFC Salaried: (base salary + 3-mo avg incentive + annual bonus/12) × 50%/60% slab, capped at 70% of bank net salary when available. This is treated as EMI capacity basis and FOIR is not applied again.'
+            }
         ]
     };
 }
@@ -1990,7 +2044,10 @@ function calculateComposedIncome({ scheme, esr, incomeEntries, paramMap, warning
 function parseObligationExclusionMonths(ruleString) {
     if (!ruleString) return 0;
     const str = String(ruleString).toLowerCase();
-    const match = str.match(/closed in next (\d+) months/);
+    // ICICI's seeded policy text says "getting closed in next 12 months"; HDFC's says
+    // "closing in next 12 months" — match both tenses so the exclusion rule actually
+    // fires for HDFC LAP instead of silently defaulting to "never exclude" (0).
+    const match = str.match(/clos(?:ed|ing) in next (\d+) months/);
     return match ? parseInt(match[1], 10) : 0;
 }
 
@@ -2214,14 +2271,17 @@ function calculateAgeBasedTenureMonthsFromDob(dob, maturityAge) {
         maturityDate: maturityDate.toISOString().slice(0, 10),
         baseMonths,
         dayAdjustment,
-        calculation: `CEIL((${baseMonths} - ${dayAdjustment}) / 12) * 12 = ${months}`
+        calculation: `FLOOR(${baseMonths} - ${dayAdjustment}) = ${months}`
     };
 }
 
+// Truncates (never rounds up) months-until-age-cap to whole months, matching the
+// reference engine's `int((cap_age - age_years) * 12)`. Rounding up here would let a
+// loan's tenure mature past the applicant's max permitted age.
 function roundAgeBasedTenureMonthsToFullYears(months) {
     const value = Number(months);
     if (!Number.isFinite(value) || value <= 0) return 0;
-    return Math.ceil(value / 12) * 12;
+    return Math.floor(value);
 }
 
 function calculateAgeBasedTenureMonthsFromAge(appAge, maturityAge) {
@@ -2349,7 +2409,7 @@ function calculateAgeBasedTenureResolution(applicants, paramMap, warnings, polic
                     monthCalculation: dobTenure?.calculation || null,
                     formula: dobTenure !== null
                         ? `DOB maturity date (${dob} + ${limitAge} years) minus today`
-                        : `CEIL(${limitAge} - ${appAge}) * 12`
+                        : `FLOOR((${limitAge} - ${appAge}) * 12)`
                 });
                 if (allowedMonths < lowestLimitMonths) {
                     lowestLimitMonths = allowedMonths;
@@ -2379,26 +2439,27 @@ function calculateAgeBasedTenureLimit(applicants, paramMap, warnings, policyWarn
 // ------ FINANCIAL MATH HELPERS ------
 function calculateEMI(principal, annualRoi, tenureMonths) {
     const normRoi = normalizeRoi(annualRoi);
-    if (!principal || !normRoi || tenureMonths <= 0) return 0;
+    if (!principal || !Number.isFinite(normRoi) || normRoi < 0 || tenureMonths <= 0) return 0;
     const R = normRoi / 12;
     const N = tenureMonths;
+    if (R === 0) return Math.round(principal / N);
     const emi = (principal * R * Math.pow(1 + R, N)) / (Math.pow(1 + R, N) - 1);
     return Number.isFinite(emi) ? Math.round(emi) : 0;
 }
 
 function calculateMaxLoanAmount(eligibleEmi, annualRoi, tenureMonths) {
     const normRoi = normalizeRoi(annualRoi);
-    if (eligibleEmi <= 0 || !normRoi || tenureMonths <= 0) return 0;
+    if (eligibleEmi <= 0 || !Number.isFinite(normRoi) || normRoi < 0 || tenureMonths <= 0) return 0;
     const R = normRoi / 12;
     const N = tenureMonths;
-    if (R === 0) return eligibleEmi * N;
+    if (R === 0) return Math.round(eligibleEmi * N);
     const P = (eligibleEmi * (Math.pow(1 + R, N) - 1)) / (R * Math.pow(1 + R, N));
     return Number.isFinite(P) ? Math.round(P) : 0;
 }
 
 function calculateEmiMultiplier(annualRoi, tenureMonths) {
     const normRoi = normalizeRoi(annualRoi);
-    if (!normRoi || tenureMonths <= 0) return 0;
+    if (!Number.isFinite(normRoi) || normRoi < 0 || tenureMonths <= 0) return 0;
     const R = normRoi / 12;
     const N = tenureMonths;
     if (R === 0) return N;
@@ -2792,12 +2853,26 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         && String(scheme.scheme_name || '').toUpperCase().includes('GST');
     // Current ICICI LAP GST policy is a fixed 90% FOIR with no Double Whammy.
     // Keep the runtime deterministic while older database rows are being updated.
+    //
+    // HDFC Salaried's EMI capacity (STEP 7 below) is computed from the dedicated
+    // hdfc_salaried_salary_pct_upto_1lakh / _above_1lakh / _bank_salary_cap_pct params
+    // via calculateHdfcSalariedConsideredIncome() — it never reads foir_allowed_percent.
+    // The legacy `${pref}_dbr_foir` seed value for this scheme ("50%, 60%") is a
+    // human-readable duplicate of that same policy and is not machine-parseable
+    // (two "%" signs trip the ambiguous-percentage guard), so treat it as "No DBR"
+    // for this method specifically rather than failing the whole scheme on a value
+    // the calculation never actually consumes.
     const rawFoir = isIciciLapGst
         ? '90%'
-        : (configuredRawFoir ?? (isNoDoubleFoirSalariedMethod ? 'No DBR' : null));
+        : (isHdfcSalariedEmiCapacityMethod
+            ? 'No DBR'
+            : (configuredRawFoir ?? (isNoDoubleFoirSalariedMethod ? 'No DBR' : null)));
     if (isIciciLapGst && configuredRawFoir !== '90%') {
         warnings.push(`ICICI LAP GST FOIR runtime policy override applied: configured value "${configuredRawFoir ?? 'missing'}" replaced with fixed 90%; Double Whammy disabled.`);
         logger?.traceWarning(`ICICI LAP GST policy override: fixed FOIR 90%; ignored stale configured value "${configuredRawFoir ?? 'missing'}".`);
+    }
+    if (isHdfcSalariedEmiCapacityMethod && configuredRawFoir != null && rawFoir === 'No DBR') {
+        logger?.traceWarning(`HDFC Salaried: ignored non-parseable ${pref}_dbr_foir config value "${configuredRawFoir}" — EMI capacity for this method is sourced from hdfc_salaried_salary_pct_upto_1lakh/_above_1lakh instead.`);
     }
     const foirRes = parseDynamicFoir(rawFoir, composedIncome);
     const foir_allowed_percent_value = handleParseResult(foirRes, `${pref}_dbr_foir`);
@@ -4197,6 +4272,30 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
             }
         });
         esrAuditJson.incomeCalculationLog = incomeCalculationLog;
+
+        // Reconcile the legacy single-scheme FOIR/eligibility recompute with the
+        // authoritative multi-lender result. buildLog()'s own eligibilityCalculationLog
+        // is never given a policy.foirPercentage, so it always computes
+        // eligibleLoanAmount=0 / eligibilityStatus=NOT_ELIGIBLE ("POLICY_PENDING")
+        // regardless of the real outcome. The correct figure is already available as
+        // finalDerivedValues.bestMethodEligibleLoanAmount (sourced from
+        // methodEligibilitySummary/lenderResults, i.e. the same engine that produced
+        // the live ESR report) — mirror it into the legacy fields so the
+        // downloaded/persisted audit log never contradicts the actual report.
+        const authoritativeEligibleAmount = Number(esrAuditJson?.finalDerivedValues?.bestMethodEligibleLoanAmount);
+        if (Number.isFinite(authoritativeEligibleAmount) && authoritativeEligibleAmount > 0) {
+            if (esrAuditJson.eligibilityCalculationLog) {
+                esrAuditJson.eligibilityCalculationLog.eligibleLoanAmount = authoritativeEligibleAmount;
+                esrAuditJson.eligibilityCalculationLog.finalEligibleLoanAmount = authoritativeEligibleAmount;
+                esrAuditJson.eligibilityCalculationLog.eligibilityStatus = 'ELIGIBLE';
+                esrAuditJson.eligibilityCalculationLog.reconciledFromAuthoritativeEngine = true;
+            }
+            if (esrAuditJson.finalDerivedValues) {
+                esrAuditJson.finalDerivedValues.eligibleLoanAmount = authoritativeEligibleAmount;
+                esrAuditJson.finalDerivedValues.finalEligibleLoanAmount = authoritativeEligibleAmount;
+            }
+        }
+
         structuredAuditLog = esrAuditJson;
         logger.flushTrace({ jsonData: esrAuditJson });
     } catch (err) {
@@ -4524,6 +4623,20 @@ module.exports = {
         LENDER_POLICY_REGISTRY,
         resolveBankingAbbIncome,
         resolveGrpMultiplierForPolicy,
-        normalizeProfessionForGrp
+        normalizeProfessionForGrp,
+        calculateEMI,
+        calculateMaxLoanAmount,
+        calculateEmiMultiplier,
+        calculateHdfcSalariedConsideredIncome,
+        calculateIciciSalariedConsideredIncome,
+        resolveHdfcNpmAnnualIncome,
+        calculateAgeBasedTenureMonthsFromDob,
+        roundAgeBasedTenureMonthsToFullYears,
+        calculateNetObligations,
+        calculateDscrCapacity,
+        calculateCombinedDoubleWhammyEligibility,
+        getNumericParam,
+        resolveFirstConfiguredParam,
+        isExplicitZeroConfig
     }
 };
