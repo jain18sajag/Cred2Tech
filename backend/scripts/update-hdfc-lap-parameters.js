@@ -41,6 +41,10 @@ const EXTRA_PARAMETERS = [
   { key: 'hdfc_unsecured_pos_treatment', label: 'HDFC Unsecured POS Treatment', category: 'Eligibility Calculation', data_type: 'string' },
   { key: 'grp_doctor_multiplier', label: 'GRP Doctor Multiplier', category: 'Eligibility Calculation', data_type: 'number' },
   { key: 'grp_other_professional_multiplier', label: 'GRP Other Professional Multiplier', category: 'Eligibility Calculation', data_type: 'number' },
+  // Pre-existing gap: referenced by the GRP scheme mapping below as a flat fallback
+  // multiplier but was never in EXTRA_PARAMETERS, so every value write for it was
+  // silently skipped ("Unmatched ParameterMaster keys") on every apply run.
+  { key: 'grp_annual_receipts_multiplier', label: 'GRP Annual Receipts Multiplier (flat fallback)', category: 'Eligibility Calculation', data_type: 'number' },
   { key: 'dscr_min_ratio', label: 'DSCR Minimum Ratio', category: 'Eligibility Calculation', data_type: 'number' },
   { key: 'dscr_obligation_multiplier', label: 'DSCR Obligation Multiplier', category: 'Eligibility Calculation', data_type: 'integer' },
   { key: 'dscr_calculation_rule', label: 'DSCR Calculation Rule', category: 'Eligibility Calculation', data_type: 'string' },

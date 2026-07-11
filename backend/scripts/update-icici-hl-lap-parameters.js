@@ -6,6 +6,12 @@ const prisma = new PrismaClient();
 const EXTRA_PARAMETERS = [
     { key: 'lender_policy_key', label: 'Lender Policy Key', category: 'Lender Policy', data_type: 'string' },
     { key: 'banking_profile_divisor_policy', label: 'Banking Profile Divisor Policy', category: 'Eligibility Calculation', data_type: 'string' },
+    // Pre-existing gap: these two keys were referenced by the scheme mappings below
+    // (Banking, GRP) but were never in EXTRA_PARAMETERS, so ParameterMaster never had
+    // a row for them and every value write for them was silently skipped ("Unmatched
+    // Parameters") on every apply run, regardless of this file's edit history.
+    { key: 'banking_abb_multiplier', label: 'Banking ABB Divisor', category: 'Eligibility Calculation', data_type: 'integer' },
+    { key: 'grp_annual_receipts_multiplier', label: 'GRP Annual Receipts Multiplier', category: 'Eligibility Calculation', data_type: 'number' },
     { key: 'gst_margin_manufacturing', label: 'GST Margin - Manufacturing', category: 'Eligibility Calculation', data_type: 'percent' },
     { key: 'gst_margin_factory', label: 'GST Margin - Factory', category: 'Eligibility Calculation', data_type: 'percent' },
     { key: 'gst_margin_retail', label: 'GST Margin - Retail', category: 'Eligibility Calculation', data_type: 'percent' },
