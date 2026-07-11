@@ -11,6 +11,17 @@
 // failed backup BLOCKS the deploy — we never change production without a fresh
 // offsite backup in hand.
 //
+// BRANCHING: main is the only branch that auto-deploys — the GitHub webhook
+// below is still filtered to refs/heads/main. Any other branch can ONLY be
+// deployed by a human running "Build with Parameters" and picking that branch
+// from BRANCH_NAME. Manually deploying a non-main branch is treated as a
+// lighter-weight, deliberate action: it SKIPS the pre-deploy DB backup and the
+// production approval gate (both stages are unchanged for main). Everything
+// else — release creation, health checks, version verification, smoke tests,
+// and automatic rollback-on-failure — runs identically for every branch, and
+// still deploys straight to the SAME production target; there is no separate
+// staging environment in this pipeline.
+//
 // Set Jenkins job "Script Path" = backend/Jenkinsfile.
 // ─────────────────────────────────────────────────────────────────────────────
 pipeline {
@@ -21,10 +32,27 @@ pipeline {
     }
 
     parameters {
+        // Requires the "Git Parameter" Jenkins plugin (id: git-parameter). If it
+        // isn't installed, this job will fail to load its parameters — install it
+        // first (Manage Jenkins → Plugins) or ask an admin to. Ignored for
+        // webhook-triggered builds: those always resolve to main regardless of
+        // this value (see the 'Resolve Branch & Trigger' stage below).
+        gitParameter(
+            name: 'BRANCH_NAME',
+            type: 'PT_BRANCH',
+            description: 'Branch to deploy. ONLY used for manual "Build with Parameters" runs — auto (webhook) builds always deploy main. Picking anything other than main here skips the DB backup and approval gate (see pipeline header comment).',
+            defaultValue: 'main',
+            branchFilter: 'origin/(.*)',
+            useRepository: 'https://github\\.com/jain18sajag/Cred2Tech\\.git',
+            sortMode: 'DESCENDING_SMART',
+            selectedValue: 'DEFAULT',
+            quickFilterEnabled: true,
+            credentialsId: 'github-cred2tech'
+        )
         booleanParam(
             name: 'FORCE_DEPLOY',
             defaultValue: false,
-            description: 'Deploy even if this push did not change backend/ (e.g. manual redeploy).'
+            description: 'Deploy even if this push did not change backend/ (e.g. manual redeploy). Always implied true for a manual non-main branch deploy.'
         )
         booleanParam(
             name: 'RUN_MIGRATIONS',
@@ -93,25 +121,74 @@ pipeline {
 
     stages {
 
+        // ── 0. Resolve Branch & Trigger ──────────────────────────────────────────
+        // Decide WHAT to deploy (which branch) and WHY (webhook vs a human
+        // clicking "Build with Parameters"). This is the single source of truth
+        // the rest of the pipeline reads (env.RESOLVED_BRANCH / env.IS_MAIN_DEPLOY)
+        // — every later branch-conditional stage keys off these two values.
+        stage('Resolve Branch & Trigger') {
+            steps {
+                script {
+                    def causeClasses = currentBuild.getBuildCauses()
+                        .collect { (it._class ?: '').toString() }
+                        .join(', ')
+                        .toLowerCase()
+                    env.TRIGGERED_BY_WEBHOOK = (causeClasses.contains('generictrigger') || causeClasses.contains('gwt')) ? 'true' : 'false'
+
+                    if (env.TRIGGERED_BY_WEBHOOK == 'true') {
+                        // Defense in depth: the webhook is already regex-filtered to
+                        // refs/heads/main (see triggers{} below) — never trust a
+                        // build parameter on an automatic trigger regardless.
+                        env.RESOLVED_BRANCH = 'main'
+                    } else {
+                        env.RESOLVED_BRANCH = (params.BRANCH_NAME?.trim()) ? params.BRANCH_NAME.trim() : 'main'
+                    }
+                    env.IS_MAIN_DEPLOY = (env.RESOLVED_BRANCH == 'main') ? 'true' : 'false'
+
+                    echo "Trigger:          ${env.TRIGGERED_BY_WEBHOOK == 'true' ? 'GitHub webhook (automatic)' : 'Manual (Build with Parameters)'}"
+                    echo "Branch to deploy: ${env.RESOLVED_BRANCH}"
+
+                    if (env.IS_MAIN_DEPLOY != 'true') {
+                        currentBuild.description = "Manual deploy: ${env.RESOLVED_BRANCH} (no backup, no approval gate)"
+                        env.SUBJECT_SUFFIX = " — MANUAL/${env.RESOLVED_BRANCH}"
+                        echo "⚠️  Manual deploy of a non-main branch: the pre-deploy DB backup and the " +
+                             "production approval gate are SKIPPED for this run. This still deploys " +
+                             "straight to the SAME production target (${DEPLOY_BASE}) — there is no " +
+                             "separate staging environment. Proceed only if that's intended."
+                    } else {
+                        env.SUBJECT_SUFFIX = ''
+                    }
+                }
+            }
+        }
+
         // ── 1. Checkout ──────────────────────────────────────────────────────────
         stage('Checkout') {
             steps {
                 cleanWs()
-                git branch: 'main',
+                git branch: env.RESOLVED_BRANCH,
                     credentialsId: 'github-cred2tech',
                     url: "${GIT_REPO}"
             }
         }
 
         // ── 2. Validate Branch ───────────────────────────────────────────────────
+        // No longer a hard "must be main" gate — that restriction is now enforced
+        // up front by the webhook's regex filter (auto builds) and by requiring a
+        // human to explicitly pick a branch (manual builds). This stage just
+        // confirms the checkout actually landed on the branch we intended, and
+        // double-checks a webhook build never somehow resolved to non-main.
         stage('Validate Branch') {
             steps {
                 script {
                     def branch = sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
-                    if (branch != 'main') {
-                        error("Pipeline only runs on main branch. Got: ${branch}")
+                    if (branch != env.RESOLVED_BRANCH) {
+                        error("Checked out branch (${branch}) does not match the resolved branch (${env.RESOLVED_BRANCH}) — aborting.")
                     }
-                    echo "Branch validated: ${branch}"
+                    if (env.TRIGGERED_BY_WEBHOOK == 'true' && branch != 'main') {
+                        error("Webhook-triggered build resolved to a non-main branch (${branch}) — blocked as a safety check; this should never happen.")
+                    }
+                    echo "Branch validated: ${branch} (${env.TRIGGERED_BY_WEBHOOK == 'true' ? 'automatic' : 'manual'} deploy)"
                 }
             }
         }
@@ -122,9 +199,11 @@ pipeline {
         stage('Detect Backend Changes') {
             steps {
                 script {
-                    if (params.FORCE_DEPLOY) {
+                    if (params.FORCE_DEPLOY || env.IS_MAIN_DEPLOY != 'true') {
                         env.BACKEND_CHANGED = 'true'
-                        echo "FORCE_DEPLOY set — deploying regardless of changed paths."
+                        echo((env.IS_MAIN_DEPLOY != 'true')
+                            ? "Manual deploy of non-main branch '${env.RESOLVED_BRANCH}' — always deploying (the diff-vs-last-successful-build heuristic below isn't branch-aware, so it's skipped here)."
+                            : "FORCE_DEPLOY set — deploying regardless of changed paths.")
                     } else if (!env.GIT_PREVIOUS_SUCCESSFUL_COMMIT?.trim() || !env.GIT_COMMIT?.trim()) {
                         env.BACKEND_CHANGED = 'true'
                         echo "No previous successful commit recorded — treating as a backend change (safe default)."
@@ -206,10 +285,12 @@ pipeline {
                     }
                 }
 
-                // ── 4a. Database Backup (ALWAYS FIRST) ───────────────────────────
+                // ── 4a. Database Backup (ALWAYS FIRST for main) ──────────────────
                 // Full pg_dump → encrypted → local + S3 BEFORE we touch production.
                 // A failure here aborts the deploy: no backup, no deploy.
+                // Skipped for manual non-main deploys — see 'Skip Backup (non-main)'.
                 stage('Database Backup → S3') {
+                    when { expression { env.IS_MAIN_DEPLOY == 'true' } }
                     steps {
                         script {
                             echo "Taking pre-deploy PostgreSQL backup (local + S3)…"
@@ -240,6 +321,17 @@ pipeline {
                                 error("Pre-deploy backup did not produce an S3 key — aborting deploy (no verified offsite backup).")
                             }
                             echo "Pre-deploy backup safe in S3: ${env.BACKUP_S3_KEY}"
+                        }
+                    }
+                }
+
+                stage('Skip Backup (non-main)') {
+                    when { expression { env.IS_MAIN_DEPLOY != 'true' } }
+                    steps {
+                        script {
+                            env.BACKUP_S3_KEY = ''
+                            env.BACKUP_FILE = ''
+                            echo "Non-main branch '${env.RESOLVED_BRANCH}' — DB backup skipped (no pre-deploy backup exists for this release)."
                         }
                     }
                 }
@@ -305,8 +397,13 @@ pipeline {
                     }
                 }
 
-                // ── 4e. Approval Gate ────────────────────────────────────────────
+                // ── 4e. Approval Gate (main only) ─────────────────────────────────
+                // Skipped for manual non-main deploys — see 'Skip Approval Gate
+                // (non-main)'. The human already made the deploy decision by
+                // picking a branch and clicking "Build with Parameters"; there is
+                // no second human confirmation step for those runs.
                 stage('Approval Gate') {
+                    when { expression { env.IS_MAIN_DEPLOY == 'true' } }
                     steps {
                         script {
                             def gitRange = (env.GIT_PREVIOUS_SUCCESSFUL_COMMIT?.trim() && env.GIT_COMMIT?.trim()) ? "${env.GIT_PREVIOUS_SUCCESSFUL_COMMIT}..${env.GIT_COMMIT}" : "-10"
@@ -374,6 +471,18 @@ pipeline {
                                 env.APPROVED_BY = (viaChat && currentBuild.description?.trim()) ? currentBuild.description.trim() : approver
                                 echo "Approved by: ${env.APPROVED_BY} (${env.APPROVAL_CHANNEL})"
                             }
+                        }
+                    }
+                }
+
+                stage('Skip Approval Gate (non-main)') {
+                    when { expression { env.IS_MAIN_DEPLOY != 'true' } }
+                    steps {
+                        script {
+                            env.APPROVED_BY = "N/A — manual deploy of non-main branch '${env.RESOLVED_BRANCH}' (approval gate skipped)"
+                            env.APPROVAL_CHANNEL = 'N/A (skipped for non-main)'
+                            env.CHANGELOG = '(non-main manual deploy — changelog step skipped along with the approval gate)'
+                            echo "Non-main branch '${env.RESOLVED_BRANCH}' — approval gate skipped, proceeding straight to release."
                         }
                     }
                 }
@@ -669,17 +778,18 @@ except Exception:
         success {
             emailext(
                 to: "${env.NOTIFY_EMAIL}",
-                subject: "[${SERVICE}] Build #${BUILD_NUMBER} deployed successfully",
+                subject: "[${SERVICE}] Build #${BUILD_NUMBER} deployed successfully${env.SUBJECT_SUFFIX ?: ''}",
                 body: """
                     <h2 style="color:#059669;">Deployment Successful</h2>
                     <table>
                       <tr><td><b>Service</b></td><td>${SERVICE}</td></tr>
+                      <tr><td><b>Branch</b></td><td>${env.RESOLVED_BRANCH ?: 'main'}${env.IS_MAIN_DEPLOY == 'true' ? ' (auto)' : ' (MANUAL — backup + approval gate skipped)'}</td></tr>
                       <tr><td><b>Build</b></td><td>#${BUILD_NUMBER}</td></tr>
                       <tr><td><b>Release</b></td><td>${env.RELEASE_TS ?: '—'}</td></tr>
                       <tr><td><b>Approved by</b></td><td>${env.APPROVED_BY ?: '—'}</td></tr>
                       <tr><td><b>Approval channel</b></td><td>${env.APPROVAL_CHANNEL ?: '—'}</td></tr>
                       <tr><td><b>Migrations</b></td><td>${params.RUN_MIGRATIONS}</td></tr>
-                      <tr><td><b>Pre-deploy backup</b></td><td>${env.BACKUP_S3_KEY ?: '—'}</td></tr>
+                      <tr><td><b>Pre-deploy backup</b></td><td>${env.BACKUP_S3_KEY ?: (env.IS_MAIN_DEPLOY == 'true' ? '—' : 'SKIPPED (non-main manual deploy)')}</td></tr>
                       <tr><td><b>Duration</b></td><td>${currentBuild.durationString}</td></tr>
                     </table>
                     <p><a href="${BUILD_URL}">View Build</a></p>
@@ -691,6 +801,7 @@ except Exception:
                 try {
                     def payload = groovy.json.JsonOutput.toJson([
                         text: "✅ *${SERVICE} #${BUILD_NUMBER} deployed successfully*\n" +
+                              "Branch: ${env.RESOLVED_BRANCH ?: 'main'} (${env.IS_MAIN_DEPLOY == 'true' ? 'auto' : 'MANUAL — no backup, no approval gate'})\n" +
                               "Release: ${env.RELEASE_TS}\n" +
                               "Approved by: ${env.APPROVED_BY ?: '—'} (${env.APPROVAL_CHANNEL ?: '—'})\n" +
                               "Backup: ${env.BACKUP_S3_KEY ?: '—'}\n" +
@@ -733,16 +844,21 @@ except Exception:
             }
             emailext(
                 to: "${env.NOTIFY_EMAIL}",
-                subject: "[${SERVICE}] Build #${BUILD_NUMBER} FAILED",
+                subject: "[${SERVICE}] Build #${BUILD_NUMBER} FAILED${env.SUBJECT_SUFFIX ?: ''}",
                 body: """
                     <h2 style="color:#dc2626;">Deployment Failed</h2>
                     <table>
                       <tr><td><b>Service</b></td><td>${SERVICE}</td></tr>
+                      <tr><td><b>Branch</b></td><td>${env.RESOLVED_BRANCH ?: 'main'}${env.IS_MAIN_DEPLOY == 'true' ? '' : ' (MANUAL — no pre-deploy backup was taken)'}</td></tr>
                       <tr><td><b>Build</b></td><td>#${BUILD_NUMBER}</td></tr>
                       <tr><td><b>Code rollback</b></td><td>${env.DEPLOYED == 'true' ? 'automatic (previous release restored)' : 'not needed (failed before switch)'}</td></tr>
                       <tr><td><b>DB backup for restore</b></td><td>${env.BACKUP_S3_KEY ?: 'n/a'}</td></tr>
                     </table>
-                    <p>If a migration changed the schema, restore the DB from the backup above using the rollback pipeline (or scripts/db-restore.sh --s3 &lt;key&gt; --yes).</p>
+                    <p>${env.BACKUP_S3_KEY
+                        ? 'If a migration changed the schema, restore the DB from the backup above using the rollback pipeline (or scripts/db-restore.sh --s3 &lt;key&gt; --yes).'
+                        : (env.IS_MAIN_DEPLOY == 'true'
+                            ? 'No DB backup key was recorded for this run — check the Database Backup stage log before assuming a restore point exists.'
+                            : 'This was a manual non-main branch deploy: NO pre-deploy DB backup exists for it. Only the code was auto-reverted (if it had switched over) — there is no DB restore point for this run.')}</p>
                     <p><a href="${BUILD_URL}console">Console</a></p>
                 """,
                 mimeType: 'text/html'
@@ -751,6 +867,7 @@ except Exception:
                 try {
                     def payload = groovy.json.JsonOutput.toJson([
                         text: "❌ *${SERVICE} #${BUILD_NUMBER} deployment FAILED*\n" +
+                              "Branch: ${env.RESOLVED_BRANCH ?: 'main'} (${env.IS_MAIN_DEPLOY == 'true' ? 'auto' : 'MANUAL — no backup'})\n" +
                               "Approved by: ${env.APPROVED_BY ?: 'not yet approved'} (${env.APPROVAL_CHANNEL ?: '—'})\n" +
                               "Code rollback: ${env.DEPLOYED == 'true' ? 'automatic' : 'not needed (failed before switch)'}\n" +
                               "DB backup for restore: ${env.BACKUP_S3_KEY ?: 'n/a'}\n" +
