@@ -11,7 +11,9 @@ const EXTRA_PARAMETERS = [
     // a row for them and every value write for them was silently skipped ("Unmatched
     // Parameters") on every apply run, regardless of this file's edit history.
     { key: 'banking_abb_multiplier', label: 'Banking ABB Divisor', category: 'Eligibility Calculation', data_type: 'integer' },
-    { key: 'grp_annual_receipts_multiplier', label: 'GRP Annual Receipts Multiplier', category: 'Eligibility Calculation', data_type: 'number' },
+    { key: 'grp_annual_receipts_multiplier', label: 'GRP Annual Receipts Multiplier (flat fallback, unused by current mapping)', category: 'Eligibility Calculation', data_type: 'number' },
+    { key: 'grp_doctor_multiplier', label: 'GRP Doctor Multiplier', category: 'Eligibility Calculation', data_type: 'number' },
+    { key: 'grp_other_professional_multiplier', label: 'GRP Other Professional Multiplier', category: 'Eligibility Calculation', data_type: 'number' },
     { key: 'gst_margin_manufacturing', label: 'GST Margin - Manufacturing', category: 'Eligibility Calculation', data_type: 'percent' },
     { key: 'gst_margin_factory', label: 'GST Margin - Factory', category: 'Eligibility Calculation', data_type: 'percent' },
     { key: 'gst_margin_retail', label: 'GST Margin - Retail', category: 'Eligibility Calculation', data_type: 'percent' },
@@ -54,7 +56,12 @@ function buildMapping(baseParams) {
             "Net Profit Method": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "Max 100% (Double whammy - 140%)", "npm_depreciation_fraction": "66.67%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
             "Banking": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "No DBR", "banking_abb_multiplier": "3", "banking_profile_divisor_policy": "ABB/3 for Others; ABB/2 only for Super HNI, Elite, Normal profiles", "existing_obligation": "Loan availed in last 12 months to be obligated" },
             "GST": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "Max 100% (Double whammy - 140%)", "gst_margin_manufacturing": "7%", "gst_margin_factory": "7%", "gst_margin_retail": "5%", "gst_margin_wholesale": "4%", "gst_margin_specialized": "3%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
-            "GRP": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "No DBR", "grp_annual_receipts_multiplier": "4", "existing_obligation": "No need to obligate any loans" },
+            // Profession-specific multiplier (doctor 4x / other professional 3x) —
+            // matches the reference eligibility engine's ICICI GRP policy
+            // ({"doctor": 4, "other_professional": 3}). Previously this only had a
+            // flat grp_annual_receipts_multiplier ("4" for everyone), which gave
+            // non-doctor applicants an inflated 4x instead of 3x.
+            "GRP": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "No DBR", "grp_doctor_multiplier": "4", "grp_other_professional_multiplier": "3", "existing_obligation": "No need to obligate any loans" },
             "Net Worth Method": { ...baseParams.HL_COMMON, "hl_min_loan": "500000", "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "Max 100% (Double whammy - 140%)", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
         },
         "LAP": {
@@ -65,7 +72,12 @@ function buildMapping(baseParams) {
             // Banking policy (abb_divisor: 2, no profile tiering).
             "Banking": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "No DBR", "banking_abb_multiplier": "2", "existing_obligation": "Loan availed in last 12 months to be obligated" },
             "GST": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "Max 100% (Double whammy - 140%)", "gst_margin_manufacturing": "7%", "gst_margin_factory": "7%", "gst_margin_retail": "5%", "gst_margin_wholesale": "4%", "gst_margin_specialized": "3%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
-            "GRP": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "No DBR", "grp_annual_receipts_multiplier": "4", "existing_obligation": "No need to obligate any loans" },
+            // Profession-specific multiplier (doctor 4x / other professional 3x) —
+            // matches the reference eligibility engine's ICICI GRP policy
+            // ({"doctor": 4, "other_professional": 3}). Previously this only had a
+            // flat grp_annual_receipts_multiplier ("4" for everyone), which gave
+            // non-doctor applicants an inflated 4x instead of 3x.
+            "GRP": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "No DBR", "grp_doctor_multiplier": "4", "grp_other_professional_multiplier": "3", "existing_obligation": "No need to obligate any loans" },
             "Net Worth Method": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "Max 100% (Double whammy - 140%)", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
         }
     };
