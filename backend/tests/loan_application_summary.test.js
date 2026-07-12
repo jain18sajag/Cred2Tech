@@ -83,7 +83,6 @@ test('loan application summary sanitizes unsafe and missing display values', () 
   assert.equal(sanitizeExcelValue('undefined'), 'N/A');
   assert.equal(sanitizeExcelValue(Number.NaN, 'N/A'), 'N/A');
 });
-
 test('loan application summary copies source Excel sections into existing report sheet', () => {
   const target = new ExcelJS.Workbook();
   const sheet = target.addWorksheet('Bank Statement Analysis');
