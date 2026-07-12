@@ -72,10 +72,16 @@ async function _generateESR(case_id, user_id, tenant_id) {
         }
 
         if (!freshSnapshot.selected_monthly_income || freshSnapshot.selected_monthly_income <= 0) {
-            throw new Error(
-                'No income data found for this case. ' +
-                'Please complete salary OCR, GST, ITR, or Bank analysis before generating ESR.'
-            );
+            const manualIncomeCount = await prisma.caseIncomeEntry.count({
+                where: { case_id, annual_amount: { gt: 0 } }
+            });
+            if (manualIncomeCount === 0) {
+                throw new Error(
+                    'No income data found for this case. ' +
+                    'Please complete salary OCR, GST, ITR, Bank analysis, or add a manual income entry before generating ESR.'
+                );
+            }
+            console.log(`[ESR] Case ${case_id} has no selected primary monthly income but has ${manualIncomeCount} positive manual income row(s); continuing to lender/scheme-specific income composition.`);
         }
     }
 

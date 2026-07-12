@@ -3662,7 +3662,17 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         throw new Error("Product type missing in ESR financials.");
     }
     if (!esr.selected_monthly_income || esr.selected_monthly_income <= 0) {
-        throw new Error("Selected monthly income missing or invalid.");
+        const manualIncomeCount = await prisma.caseIncomeEntry.count({
+            where: {
+                case_id,
+                annual_amount: { gt: 0 },
+                case_entity: { tenant_id }
+            }
+        });
+        if (manualIncomeCount === 0) {
+            throw new Error("Selected monthly income missing or invalid, and no positive manual income entries are available.");
+        }
+        console.log(`[ESR ENGINE] Selected monthly income is zero for Case ${case_id}; continuing with ${manualIncomeCount} positive manual income row(s) for scheme-specific composition.`);
     }
 
     const customerProfile = esr.case_entity?.customer || null;
