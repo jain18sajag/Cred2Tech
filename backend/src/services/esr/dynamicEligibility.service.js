@@ -2261,16 +2261,24 @@ function isPrimaryApplicant(app, index = 0) {
 }
 
 function calculateAgeBasedTenureResolution(applicants, paramMap, warnings, policyWarnings, esr = {}, options = {}) {
-    const getIntParam = (sourceMap, key, defaultVal = null) => {
+    const getIntParam = (sourceMap, key, defaultVal = null, monthlyIncomeOverride = null) => {
         const raw = sourceMap?.[key];
-        return resolveAgeMaturityParam(raw, defaultVal, Number(esr.selected_monthly_income) || Number(esr.salaried_income) || 0);
+        const monthlyIncome = monthlyIncomeOverride !== null && monthlyIncomeOverride !== undefined
+            ? Number(monthlyIncomeOverride) || 0
+            : Number(esr.selected_monthly_income) || Number(esr.salaried_income) || 0;
+        return resolveAgeMaturityParam(raw, defaultVal, monthlyIncome);
     };
 
     const ageMaturityIncome = getIntParam(paramMap, 'age_maturity_income', options.defaultIncomeMaturityAge ?? 60);
     const ageMaturityNonIncome = getIntParam(paramMap, 'age_maturity_non_income', 75);
     const salariedParamMap = options.salariedParamMap || null;
     const salariedAgeMaturityIncome = salariedParamMap
-        ? getIntParam(salariedParamMap, 'age_maturity_income', ageMaturityIncome)
+        ? getIntParam(
+            salariedParamMap,
+            'age_maturity_income',
+            ageMaturityIncome,
+            options.salariedMonthlyIncomeForMaturity
+        )
         : ageMaturityIncome;
     const includePrimary = options.includePrimary !== false;
     const includeCoApplicants = options.includeCoApplicants === true;
@@ -2950,6 +2958,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         includePrimary: includePrimaryAgeForTenure,
         includeCoApplicants: includeCoApplicantAgeForTenure,
         salariedParamMap: salariedSchemeParamMap,
+        salariedMonthlyIncomeForMaturity: coApplicantSalaryForTenure.monthlySalary,
         defaultIncomeMaturityAge: lenderPolicy.key === 'ICICI' && !isSalariedMethod ? 75 : 60
     });
     const ageBasedLimit = ageTenureResolution.limitMonths;

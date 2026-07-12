@@ -58,7 +58,7 @@ function buildMapping() {
 
     return {
         "HL": {
-            "Salaried": { ...HL_COMMON, "hl_max_tenure": "300 Months", "age_maturity_income": "60", "hl_dbr_foir": "<75k -60%, >75k - 70%" },
+            "Salaried": { ...HL_COMMON, "hl_max_tenure": "300 Months", "age_maturity_income": "70 - in income >1 lacs, 60 if income < 1 lacs", "hl_dbr_foir": "<75k -60%, >75k - 70%" },
             "Net Profit Method": { ...HL_COMMON, "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "Max 100% (Double whammy - 140%)" },
             "Banking": { ...HL_COMMON, "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "No DBR", "existing_obligation": "Loan availed in last 12 months to be obligated" },
             "GST": { ...HL_COMMON, "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "Max 100% (Double whammy - 140%)" },
@@ -66,7 +66,7 @@ function buildMapping() {
             "Net Worth Method": { ...HL_COMMON, "hl_max_tenure": "240 Months", "age_maturity_income": "75", "hl_dbr_foir": "Max 100% (Double whammy - 140%)" }
         },
         "LAP": {
-            "Salaried": { ...LAP_COMMON, "age_maturity_income": "60", "lap_dbr_foir": "<75k -60%, >75k - 70%", "elig_rental_bank": "Yes", "elig_agri_itr": "Yes", "dbr_rental_bank": "70%", "dbr_agri_itr": "50%, can be considered 100% if ownership proof provided." },
+            "Salaried": { ...LAP_COMMON, "age_maturity_income": "70 - in income >1 lacs, 60 if income < 1 lacs", "lap_dbr_foir": "<75k -60%, >75k - 70%", "elig_rental_bank": "Yes", "elig_agri_itr": "Yes", "dbr_rental_bank": "70%", "dbr_agri_itr": "50%, can be considered 100% if ownership proof provided." },
             "Net Profit Method": { ...LAP_COMMON, "age_maturity_income": "75", "lap_dbr_foir": "Max 100% (Double whammy - 140%)", "elig_rental_bank": "Yes", "elig_agri_itr": "Yes", "dbr_rental_bank": "70%", "dbr_agri_itr": "50%, can be considered 100% if ownership proof provided." },
             "Banking": { ...LAP_COMMON, "age_maturity_income": "75", "lap_dbr_foir": "No DBR", "elig_rental_bank": "NO", "elig_agri_itr": "NO", "dbr_rental_bank": "No", "dbr_agri_itr": "No", "existing_obligation": "Loan availed in last 12 months to be obligated" },
             "GST": { ...LAP_COMMON, "age_maturity_income": "75", "lap_dbr_foir": "90%", "elig_rental_bank": "NO", "elig_agri_itr": "NO", "dbr_rental_bank": "No", "dbr_agri_itr": "No" },
