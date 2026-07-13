@@ -230,7 +230,18 @@ function calculatePolicyABB(rawBankJson) {
 }
 
 /**
- * Returns divisor based on profile type
+ * Returns divisor based on profile type.
+ *
+ * KNOWN GAP (confirmed with product owner, 2026-07-13): no ESR/case field
+ * currently captures the Super HNI / Elite / Normal / Others tier
+ * classification this depends on. The caller in dynamicEligibility.service.js
+ * (resolveBankingAbbIncome) feeds this an exact-match check against a
+ * concatenation of several unrelated ESR fields (profession, employment_type,
+ * etc.), which will essentially never equal 'SUPER_HNI'/'ELITE'/'NORMAL'
+ * exactly — so this always falls through to the divisor-3 ("Others") default.
+ * That default is the conservative/correct fallback per the requirement
+ * sheet, so this isn't actively wrong today, just inert until tier data
+ * exists. Revisit getAbbDivisor's matching once a real tier field is added.
  */
 function getAbbDivisor(profileType) {
     const prof = String(profileType || '').trim().toUpperCase();
