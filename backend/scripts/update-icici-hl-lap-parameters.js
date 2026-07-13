@@ -67,10 +67,16 @@ function buildMapping(baseParams) {
         "LAP": {
             "Salaried": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "70 - in income >1 lacs, 60 if income < 1 lacs", "lap_dbr_foir": "<75k -60%, >75k - 70%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
             "Net Profit Method": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "Max 100% (Double whammy - 140%)", "npm_depreciation_fraction": "66.67%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
-            // ABB divisor reverted to a flat 2 (was profile-tiered "3 for Others / 2 for
-            // premium profiles"), to match the reference eligibility engine's ICICI LAP
-            // Banking policy (abb_divisor: 2, no profile tiering).
-            "Banking": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "No DBR", "banking_abb_multiplier": "2", "existing_obligation": "Loan availed in last 12 months to be obligated" },
+            // Profile-tiered ABB divisor restored: confirmed against "Requirement Sheet -
+            // ICICI Bank.xlsx" (row 21, Banking column) — "ABB divide by 3 for others.
+            // ABB divide by 2 for Super HNI, Elite, Normal". A prior revert (based on the
+            // Python reference engine's simplified flat divisor of 2) was WRONG — the
+            // reference engine doesn't implement profile tiering at all; the requirement
+            // sheet is the authoritative source here, not the reference engine. The
+            // resolveBankingAbbIncome() code path that reads banking_profile_divisor_policy
+            // and calls getAbbDivisor() (src/services/esr/bankAbbPolicy.js) was never
+            // changed — only this seed value was, so restoring it re-activates it.
+            "Banking": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "No DBR", "banking_abb_multiplier": "3", "banking_profile_divisor_policy": "ABB/3 for Others; ABB/2 only for Super HNI, Elite, Normal profiles", "existing_obligation": "Loan availed in last 12 months to be obligated" },
             "GST": { ...baseParams.LAP_COMMON, "lap_min_loan": "1000000", "lap_max_tenure": "180 Months", "age_maturity_income": "75", "lap_dbr_foir": "Max 100% (Double whammy - 140%)", "gst_margin_manufacturing": "7%", "gst_margin_factory": "7%", "gst_margin_retail": "5%", "gst_margin_wholesale": "4%", "gst_margin_specialized": "3%", "existing_obligation": "All Obligation to be considered except getting closed in next 12 months" },
             // Profession-specific multiplier (doctor 4x / other professional 3x) —
             // matches the reference eligibility engine's ICICI GRP policy
