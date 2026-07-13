@@ -16,8 +16,7 @@ function getLocalEsrLogsDir() {
     if (process.env.LOGS_DIR) {
         return path.resolve(process.env.LOGS_DIR, 'esr');
     }
-
-    return path.join(BACKEND_ROOT, 'logs', 'esr');
+    return path.join(require('os').tmpdir(), 'cred2tech', 'logs', 'esr');
 }
 
 function shouldUploadTraceToStorage() {

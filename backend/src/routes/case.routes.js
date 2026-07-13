@@ -95,4 +95,7 @@ router.get('/:caseId/salary-summary', salaryOcrController.getSalarySummary);
 router.get('/:caseId/pull-statuses', sseController.getPullStatuses);
 router.get('/:caseId/pull-status-stream', sseController.getPullStatusStream);
 
+// DSA Case Allocation
+router.post('/:id/allocate-dsa-user', requireRole('DSA_ADMIN'), caseController.allocateDsaUser);
+
 module.exports = router;

@@ -78,6 +78,17 @@ async function updatePayoutStatus(req, res) {
   }
 }
 
+async function syncMissingIncentives(req, res) {
+  try {
+    const { hierarchyLevel } = req.params;
+    const { tenant_id } = req.user;
+    const processedCount = await salesIncentiveService.syncMissingIncentives(tenant_id, hierarchyLevel);
+    res.json({ success: true, processedCount, message: `Successfully synced ${processedCount} missing incentives.` });
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message });
+  }
+}
+
 module.exports = {
   getRules,
   createRule,
@@ -86,5 +97,6 @@ module.exports = {
   getEmployeesConfig,
   getPayouts,
   calculateIncentives,
-  updatePayoutStatus
+  updatePayoutStatus,
+  syncMissingIncentives
 };

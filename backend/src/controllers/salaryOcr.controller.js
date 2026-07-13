@@ -56,10 +56,21 @@ async function applySalaryOcrResult(record, ocrResultData) {
         throw err;
     }
 
+    // Remove fields that might not be in the old Prisma client
+    const safeData = { ...dbData };
+    delete safeData.deductions_is_derived;
+    delete safeData.salary_period;
+    delete safeData.extraction_source;
+    delete safeData.extraction_checks;
+    delete safeData.extraction_warnings;
+    delete safeData.net_salary_words_match;
+    delete safeData.name_match_status;
+    delete safeData.pan_match_status;
+
     return prisma.salarySlipOcrResult.update({
         where: { id: record.id },
         data: {
-            ...dbData,
+            ...safeData,
             month: targetMonth,
             year: targetYear
         }

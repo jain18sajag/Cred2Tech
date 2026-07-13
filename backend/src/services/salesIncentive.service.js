@@ -436,6 +436,38 @@ async function updatePayoutStatus(tenantId, ledgerId, status, remarks, userId) {
   return prisma.salesIncentiveLedger.update({ where: { id: ledgerId }, data });
 }
 
+async function syncMissingIncentives(tenantId, hierarchyLevel) {
+  const ledgers = await prisma.commissionLedger.findMany({
+    where: {
+      tenant_id: tenantId,
+      entry_type: 'BASE_COMMISSION',
+      is_reversed: false,
+      status: { not: 'CANCELLED' },
+      case_entity: {
+        created_by: {
+          hierarchy_level: hierarchyLevel,
+          role: { name: { notIn: ['SUB_DSA', 'CUSTOMER', 'MSME_CUSTOMER'] } }
+        }
+      },
+      SalesIncentiveLedger: {
+        none: {}
+      }
+    }
+  });
+
+  if (ledgers.length === 0) return 0;
+
+  try {
+    await calculateIncentives(tenantId, {
+      commission_ledger_ids: ledgers.map(l => l.id)
+    });
+  } catch (e) {
+    console.error(`[SALES INCENTIVE] Failed to sync retroactive incentives for hierarchy ${hierarchyLevel}:`, e.message);
+  }
+
+  return ledgers.length;
+}
+
 module.exports = {
   listRules,
   createRule,
@@ -444,5 +476,6 @@ module.exports = {
   calculateIncentives,
   listEmployeesWithConfig,
   listPayouts,
-  updatePayoutStatus
+  updatePayoutStatus,
+  syncMissingIncentives
 };

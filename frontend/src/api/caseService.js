@@ -101,7 +101,7 @@ export const caseService = {
 
   // Phase 1 —— Income Summary
   getIncomeSummary: async (caseId) => {
-    const response = await axiosInstance.get(`/cases/${caseId}/income-summary`);
+    const response = await axiosInstance.get(`/cases/${caseId}/income-summary?_cb=${Date.now()}`);
     return response.data;
   },
   addIncomeEntry: async (caseId, entry) => {
@@ -225,6 +225,11 @@ export const caseService = {
   },
   getPartialDisbursements: async () => {
     const response = await axiosInstance.get('/disbursements/partial');
+    return response.data;
+  },
+
+  allocateDsaUser: async (caseId, userId) => {
+    const response = await axiosInstance.post(`/cases/${caseId}/allocate-dsa-user`, { assigned_dsa_user_id: userId });
     return response.data;
   }
 };

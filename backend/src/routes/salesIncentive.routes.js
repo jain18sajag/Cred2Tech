@@ -19,5 +19,6 @@ router.get('/employees', requireRole('DSA_ADMIN'), salesIncentiveController.getE
 router.get('/payouts', requireRole('DSA_ADMIN', 'DSA_MEMBER'), salesIncentiveController.getPayouts);
 router.post('/calculate', requireRole('DSA_ADMIN'), salesIncentiveController.calculateIncentives);
 router.post('/payouts/:id/status', requireRole('DSA_ADMIN'), salesIncentiveController.updatePayoutStatus);
+router.post('/config/:hierarchyLevel/sync-missing', requireRole('DSA_ADMIN'), salesIncentiveController.syncMissingIncentives);
 
 module.exports = router;

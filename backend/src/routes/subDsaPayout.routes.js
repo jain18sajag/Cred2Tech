@@ -15,8 +15,10 @@ router.get('/users', requireRole('DSA_ADMIN'), ctrl.listSubDsaUsers);
 
 // ── Payout Configuration (Admin only) ───────────────────────────────────────
 router.get('/:userId/payout-config', requireRole('DSA_ADMIN'), ctrl.getPayoutConfig);
+router.get('/:userId/mtd-stats', requireRole('DSA_ADMIN'), ctrl.getMtdStats);
 router.put('/:userId/payout-config', requireRole('DSA_ADMIN'), ctrl.upsertPayoutConfig);
 router.post('/:userId/calculate', requireRole('DSA_ADMIN'), ctrl.previewPayout);
+router.post('/:userId/sync-missing', requireRole('DSA_ADMIN'), ctrl.syncMissingPayouts);
 
 // ── Payout Ledger ────────────────────────────────────────────────────────────
 // Both DSA_ADMIN and SUB_DSA can read — service enforces isolation for SUB_DSA

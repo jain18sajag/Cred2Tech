@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { getUsers, createUser, updateUser } from '../api/userService';
 import { getRoles } from '../api/roleService';
-import { getPayoutConfig, savePayoutConfig } from '../api/subDsaPayoutService';
+import { getPayoutConfig, savePayoutConfig, syncMissingPayouts, getSubDsaMtdStats } from '../api/subDsaPayoutService';
 import { getTenantLenders } from '../api/tenantLenderService';
 
 // ── Styles ───────────────────────────────────────────────────────────────────
@@ -39,6 +39,7 @@ function SubDsaPayoutSetup({ userId, lenders }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   const [defaultRate, setDefaultRate] = useState(30);
   const [payoutTrigger, setPayoutTrigger] = useState('ON_DSA_RECEIPT');
@@ -48,7 +49,7 @@ function SubDsaPayoutSetup({ userId, lenders }) {
   const [schemes, setSchemes] = useState([]);
 
   // MTD summary (preview)
-  const [mtd] = useState({ cases: 4, dsa_earned: 240000, sub_dsa_share: 72000 });
+  const [mtd, setMtd] = useState({ cases: 0, dsa_earned: 0 });
 
   useEffect(() => {
     setLoading(true);
@@ -67,6 +68,12 @@ function SubDsaPayoutSetup({ userId, lenders }) {
           })));
         }
         setConfig(cfg);
+        return getSubDsaMtdStats(userId);
+      })
+      .then(stats => {
+        if (stats) {
+          setMtd({ cases: stats.cases || 0, dsa_earned: stats.dsa_earned || 0 });
+        }
       })
       .catch(() => { })
       .finally(() => setLoading(false));
@@ -89,6 +96,18 @@ function SubDsaPayoutSetup({ userId, lenders }) {
       alert(e.response?.data?.error || 'Save failed');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      const res = await syncMissingPayouts(userId);
+      alert(res.message || 'Synced successfully');
+    } catch (e) {
+      alert(e.response?.data?.error || 'Failed to sync missing payouts');
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -340,7 +359,7 @@ function SubDsaPayoutSetup({ userId, lenders }) {
         </div>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#065F46', textTransform: 'uppercase', marginBottom: 4 }}>DSA Earned (MTD)</div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: '#059669' }}>₹{(mtd.dsa_earned / 1e5).toFixed(1)}L</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#059669' }}>₹{mtd.dsa_earned.toLocaleString('en-IN')}</div>
         </div>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#065F46', textTransform: 'uppercase', marginBottom: 4 }}>Sub-DSA Share ({defaultRate}%)</div>
@@ -358,6 +377,11 @@ function SubDsaPayoutSetup({ userId, lenders }) {
           style={{ ...btnPrimary, display: 'flex', alignItems: 'center', gap: 8, opacity: saving ? 0.7 : 1 }}>
           {saving ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Check size={14} />}
           {saving ? 'Saving...' : saved ? '✓ Saved!' : 'Save Payout Config'}
+        </button>
+        <button onClick={handleSync} disabled={syncing}
+          style={{ ...btnOutline, display: 'flex', alignItems: 'center', gap: 8, color: '#4F46E5', borderColor: '#4F46E5' }}>
+          {syncing ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : '↻'}
+          {syncing ? 'Syncing...' : 'Sync Past Payouts'}
         </button>
       </div>
     </div>

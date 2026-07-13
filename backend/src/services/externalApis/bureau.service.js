@@ -100,26 +100,6 @@ async function runBureauCheck({ caseId, applicantId, mobileNumber, firstName, la
     };
   }
 
-  // If real API fails (either Axios error OR internal JSON error), check if we should fallback to mock
-  if (apiStatus === 'FAILED' && (process.env.BUREAU_MOCK_FALLBACK === 'true' || (baseUrl && baseUrl.includes('sandbox')))) {
-    console.log(`[Bureau Service] Real API failed or returned 500 JSON, falling back to MOCK SUCCESS for development.`);
-    apiStatus = 'SUCCESS';
-    score = "755"; // Premium mock score
-    responsePayload = {
-      status: { isSuccess: true, code: 200 },
-      result: {
-        status: "SUCCESS",
-        verifiedData: {
-          ResponseData: {
-            data: { score: "755" }
-          }
-        }
-      },
-      mock: true,
-      original_error: responsePayload
-    };
-  }
-
   // 1. Audit Logging Native (Logs ALL traces regardless of crash)
   await prisma.bureauVerificationLog.create({
     data: {

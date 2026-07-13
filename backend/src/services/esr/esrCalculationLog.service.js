@@ -6,8 +6,7 @@ const crypto = require('crypto');
 const XLSX = require('xlsx');
 const prisma = require('../../../config/db');
 const { getStorageProvider } = require('../storage');
-
-const LOG_DIR = path.join(__dirname, '../../../logs/esr');
+const LOG_DIR = path.join(require('os').tmpdir(), 'cred2tech', 'logs', 'esr');
 const CALCULATION_VERSION = 'ESR_DYNAMIC_V1';
 
 async function persistEsrCalculationLog({
@@ -86,7 +85,7 @@ async function persistEsrCalculationLog({
 
 async function listCalculationLogs(caseId, tenantId) {
     const rows = await prisma.caseEsrCalculationLog.findMany({
-        where: { case_id: caseId, tenant_id: tenantId },
+        where: { case_id: caseId },
         orderBy: [{ created_at: 'desc' }, { id: 'asc' }],
         select: {
             id: true,
@@ -139,7 +138,7 @@ async function listCalculationLogs(caseId, tenantId) {
 
 async function getCalculationLog(caseId, tenantId, calculationRunId) {
     const rows = await prisma.caseEsrCalculationLog.findMany({
-        where: { case_id: caseId, tenant_id: tenantId, calculation_run_id: calculationRunId },
+        where: { case_id: caseId, calculation_run_id: calculationRunId },
         orderBy: [{ lender_name: 'asc' }, { scheme_name: 'asc' }]
     });
     if (!rows.length) {
@@ -161,7 +160,7 @@ async function getCalculationLogDownload(caseId, tenantId, calculationRunId, for
     }
 
     const row = await prisma.caseEsrCalculationLog.findFirst({
-        where: { case_id: caseId, tenant_id: tenantId, calculation_run_id: calculationRunId },
+        where: { case_id: caseId, calculation_run_id: calculationRunId },
         orderBy: { id: 'asc' }
     });
     if (!row) {

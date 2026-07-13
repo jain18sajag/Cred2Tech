@@ -90,6 +90,52 @@ async function ensureTenantLenders(tenantId, ids, client = prisma) {
   if (count !== unique.length) fail('One or more lenders do not belong to this tenant');
 }
 
+async function getMtdStats(tenantId, subDsaUserId) {
+  await ensureSubDsaUser(tenantId, subDsaUserId);
+
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+  const ledgers = await prisma.commissionLedger.findMany({
+    where: {
+      tenant_id: tenantId,
+      entry_type: 'BASE_COMMISSION',
+      is_reversed: false,
+      status: { not: 'CANCELLED' },
+      case_entity: {
+        OR: [
+          { created_by_user_id: Number(subDsaUserId) },
+          { assigned_dsa_user_id: Number(subDsaUserId) }
+        ]
+      },
+      disbursement: {
+        disbursement_date: {
+          gte: startOfMonth,
+          lte: endOfMonth
+        }
+      }
+    },
+    select: {
+      total_amount: true,
+      case_id: true
+    }
+  });
+
+  const uniqueCases = new Set();
+  let dsa_earned = 0;
+
+  for (const ledger of ledgers) {
+    uniqueCases.add(ledger.case_id);
+    dsa_earned += Number(ledger.total_amount || 0);
+  }
+
+  return {
+    cases: uniqueCases.size,
+    dsa_earned
+  };
+}
+
 async function getPayoutConfig(tenantId, subDsaUserId) {
   await ensureSubDsaUser(tenantId, subDsaUserId);
   return prisma.subDsaPayoutRule.findUnique({
@@ -224,6 +270,7 @@ async function calculatePayout(tenantId, subDsaUserId, commissionLedgerId, clien
 
   const eventDate = sourceDateFor(commLedger);
   const dsaEarned = new Prisma.Decimal(commLedger.calculated_commission).toDecimalPlaces(2);
+  const disbursedAmount = new Prisma.Decimal(commLedger.disbursed_amount || 0).toDecimalPlaces(2);
   const product = commLedger.product_type;
   const lenderId = commLedger.tenant_lender_id;
   const applicableOverrides = rule.overrides
@@ -233,7 +280,7 @@ async function calculatePayout(tenantId, subDsaUserId, commissionLedgerId, clien
     .sort((a, b) => (b.effective_from || new Date(0)) - (a.effective_from || new Date(0)) || a.id - b.id);
   const appliedOverride = applicableOverrides[0] || null;
   const applicableRate = new Prisma.Decimal(appliedOverride?.override_rate ?? rule.default_payout_rate);
-  let subDsaPayout = dsaEarned.mul(applicableRate).div(100).toDecimalPlaces(2);
+  let subDsaPayout = disbursedAmount.mul(applicableRate).div(100).toDecimalPlaces(2);
 
   const period = monthKey(eventDate);
   const { start, end } = monthRange(period);
@@ -265,7 +312,7 @@ async function calculatePayout(tenantId, subDsaUserId, commissionLedgerId, clien
     if (!productMatches(scheme.products, product)) continue;
     let bonus = new Prisma.Decimal(0);
     if (scheme.basis === 'Cases' && scheme.bonus_per_case) bonus = bonus.plus(scheme.bonus_per_case);
-    if (scheme.basis === 'Volume' && scheme.bonus_percent) bonus = bonus.plus(dsaEarned.mul(scheme.bonus_percent).div(100));
+    if (scheme.basis === 'Volume' && scheme.bonus_percent) bonus = bonus.plus(disbursedAmount.mul(scheme.bonus_percent).div(100));
     bonus = bonus.toDecimalPlaces(2);
     schemeBonus = schemeBonus.plus(bonus);
     appliedSchemes.push({ id: scheme.id, scheme_name: scheme.scheme_name, basis: scheme.basis, bonus: bonus.toFixed(2) });
@@ -479,14 +526,47 @@ async function listSubDsaUsers(tenantId) {
   });
 }
 
+async function syncMissingPayouts(tenantId, subDsaUserId) {
+  const ledgers = await prisma.commissionLedger.findMany({
+    where: {
+      tenant_id: tenantId,
+      entry_type: 'BASE_COMMISSION',
+      is_reversed: false,
+      status: { not: 'CANCELLED' },
+      case_entity: {
+        OR: [
+          { created_by_user_id: Number(subDsaUserId) },
+          { assigned_dsa_user_id: Number(subDsaUserId) }
+        ]
+      },
+      SubDsaPayoutLedger: {
+        none: { sub_dsa_user_id: Number(subDsaUserId) }
+      }
+    }
+  });
+
+  let processedCount = 0;
+  for (const ledger of ledgers) {
+    try {
+      await createPayoutEntry(tenantId, subDsaUserId, ledger.id, prisma, { mode: 'MANUAL' });
+      processedCount++;
+    } catch (e) {
+      console.error(`[COMMISSION] Failed to sync retroactive Sub DSA payout for commission ledger ${ledger.id}:`, e.message);
+    }
+  }
+  return processedCount;
+}
+
 module.exports = {
   getPayoutConfig,
   upsertPayoutConfig,
+  getMtdStats,
   createPayoutEntry,
   calculatePayout,
   listPayouts,
   updatePayoutStatus,
   generateInvoice,
   getPayoutHistory,
-  listSubDsaUsers
+  listSubDsaUsers,
+  syncMissingPayouts
 };

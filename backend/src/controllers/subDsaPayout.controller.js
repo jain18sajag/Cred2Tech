@@ -24,6 +24,16 @@ async function getPayoutConfig(req, res) {
   }
 }
 
+// GET /api/sub-dsa/:userId/mtd-stats
+async function getMtdStats(req, res) {
+  try {
+    const stats = await svc.getMtdStats(req.user.tenant_id, parseInt(req.params.userId));
+    res.json(stats);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+}
+
 // PUT /api/sub-dsa/:userId/payout-config
 async function upsertPayoutConfig(req, res) {
   try {
@@ -106,13 +116,26 @@ async function previewPayout(req, res) {
   }
 }
 
+async function syncMissingPayouts(req, res) {
+  try {
+    const { userId } = req.params;
+    const { tenant_id } = req.user;
+    const processedCount = await svc.syncMissingPayouts(tenant_id, userId);
+    res.json({ success: true, processedCount, message: `Successfully synced ${processedCount} missing Sub DSA payouts.` });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+}
+
 module.exports = {
   listSubDsaUsers,
   getPayoutConfig,
+  getMtdStats,
   upsertPayoutConfig,
   listPayouts,
   updatePayoutStatus,
   getPayoutHistory,
   generateInvoice,
-  previewPayout
+  previewPayout,
+  syncMissingPayouts
 };

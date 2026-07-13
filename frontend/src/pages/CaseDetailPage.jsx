@@ -4,6 +4,7 @@ import { caseService } from '../api/caseService';
 import { toast } from 'react-hot-toast';
 import { getTenantLenders } from '../api/tenantLenderService';
 import { viewDocument, downloadDocument } from '../api/documentHelper';
+import { getUsers } from '../api/userService';
 import {
   ArrowLeft,
   ExternalLink,
@@ -91,6 +92,12 @@ export default function CaseDetailPage() {
     ownership_type: '',
     market_value: ''
   });
+
+  // Allocation State
+  const [showAllocateModal, setShowAllocateModal] = useState(false);
+  const [allocateUserId, setAllocateUserId] = useState('');
+  const [dsaUsers, setDsaUsers] = useState([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
 
   // Sanction Form State
   const [sanctionForm, setSanctionForm] = useState({
@@ -191,6 +198,32 @@ export default function CaseDetailPage() {
 
   const handlePullGst = async () => {
     toast.success('GST data pull initiated');
+  };
+
+  const handleAllocateClick = async () => {
+    setShowAllocateModal(true);
+    setLoadingUsers(true);
+    try {
+      const users = await getUsers();
+      setDsaUsers(users);
+    } catch (err) {
+      toast.error('Failed to load users');
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  const handleAllocateSubmit = async (e) => {
+    e.preventDefault();
+    if (!allocateUserId) return toast.error('Please select an employee.');
+    try {
+      await caseService.allocateDsaUser(id, allocateUserId);
+      toast.success('Case successfully allocated');
+      setShowAllocateModal(false);
+      fetchCase(); // Refresh case data
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to allocate case');
+    }
   };
 
   const handleSaveProperty = async (e) => {
@@ -370,6 +403,11 @@ export default function CaseDetailPage() {
 
         {/* 5. ACTION BUTTONS (Top Right) */}
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {hasRole('DSA_ADMIN') && caseData?.lead_source === 'DIRECT_MSME' && (
+            <button className="btn btn-outline" style={{ ...btnOutlineStyle, borderColor: '#6366F1', color: '#6366F1' }} onClick={handleAllocateClick}>
+              👥 Allocate to Employee
+            </button>
+          )}
           <button className="btn btn-outline" style={{ ...btnOutlineStyle, borderColor: '#D97706', color: '#D97706' }} onClick={() => navigate(isMsme ? `/msme/onboarding?caseId=${id}` : `/customers/add?caseId=${id}`)}>🚀 Open Wizard</button>
           <button className="btn btn-outline" style={btnOutlineStyle} onClick={() => setShowPropertyModal(true)}>🏠 Edit Property Details</button>
           <button className="btn btn-outline" style={btnOutlineStyle} onClick={() => navigate(`/cases/${id}/bureau-obligations?mode=edit`)}>🔍 View & Edit Obligations</button>
@@ -1077,6 +1115,37 @@ export default function CaseDetailPage() {
       )}
 
       {/* ── EDIT PROPERTY MODAL ── */}
+      {showAllocateModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+          <form onSubmit={handleAllocateSubmit} style={{ background: '#fff', borderRadius: 20, width: 450, padding: 24, boxShadow: '0 24px 60px rgba(0,0,0,0.18)' }}>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#0A2540', marginBottom: 20 }}>Allocate Case to Employee</h3>
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#425466', marginBottom: 8 }}>Select Employee</label>
+              {loadingUsers ? (
+                <p>Loading users...</p>
+              ) : (
+                <select 
+                  className="form-control" 
+                  value={allocateUserId}
+                  onChange={(e) => setAllocateUserId(e.target.value)}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1.5px solid rgba(60,66,87,0.12)' }}
+                  required
+                >
+                  <option value="">- Select -</option>
+                  {dsaUsers.map(u => (
+                    <option key={u.id} value={u.id}>{u.name} ({u.role.name})</option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+              <button type="button" className="btn" onClick={() => setShowAllocateModal(false)} style={{ color: '#6366F1', fontWeight: 600 }}>Cancel</button>
+              <button type="submit" className="btn btn-primary" disabled={loadingUsers || !allocateUserId}>Allocate</button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {showPropertyModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
           <form onSubmit={handleSaveProperty} style={{ background: '#fff', borderRadius: 20, width: 500, maxHeight: '90vh', boxShadow: '0 24px 60px rgba(0,0,0,0.18)', overflowY: 'auto' }}>

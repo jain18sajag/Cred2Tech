@@ -859,41 +859,42 @@ function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToL
       )}
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {isMsme ? (
-          <button
-            className="btn btn-primary"
-            style={{
-              flex: 1, padding: '10px', fontWeight: 700,
-              background: 'linear-gradient(135deg,#2B6CB0,#553C9A)'
-            }}
-            onClick={onSendToCred2TechTeam}
-            disabled={creating}
-          >
-            {creating ? 'Sending...' : 'Send to Cred2Tech Team →'}
-          </button>
+        {latestProposal ? (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', width: '100%' }}>
+            <button
+              onClick={() => navigate(`/cases/${caseId}/proposals/${latestProposal.id}`)}
+              style={{
+                flex: 1, padding: '10px', fontSize: 13, fontWeight: 700,
+                background: '#EDF2F7', color: '#2D3748', border: '1px solid #CBD5E0',
+                borderRadius: 8, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+              }}>
+              <span>👀</span> View Active Proposal
+            </button>
+            <button
+              onClick={() => setShowCloneDialog(true)}
+              disabled={creating}
+              style={{
+                padding: '10px 14px', fontSize: 13, fontWeight: 600,
+                background: 'var(--bg-elevated)', color: 'var(--text-secondary)',
+                border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer'
+              }}>
+              {creating ? '...' : 'Create New'}
+            </button>
+          </div>
         ) : (
           <>
-            {latestProposal ? (
-              <button
-                className="btn btn-primary"
-                style={{ flex: 1, padding: '10px', fontWeight: 700 }}
-                onClick={() => navigate(`/cases/${caseId}/proposals/${latestProposal.id}`)}
-              >
-                View Proposal →
-              </button>
-            ) : (
-              <button
-                className="btn btn-primary"
-                style={{
-                  flex: 1, padding: '10px', fontWeight: 700,
-                  background: 'linear-gradient(135deg,#2B6CB0,#553C9A)'
-                }}
-                onClick={handlePrepare}
-                disabled={creating}
-              >
-                {creating ? 'Creating...' : '📋 Prepare Proposal →'}
-              </button>
-            )}
+            <button
+              className="btn btn-primary"
+              style={{
+                flex: 1, padding: '10px', fontWeight: 700,
+                background: 'linear-gradient(135deg,#2B6CB0,#553C9A)'
+              }}
+              onClick={handlePrepare}
+              disabled={creating}
+            >
+              {creating ? 'Preparing...' : '📋 Prepare Proposal →'}
+            </button>
             <button
               onClick={onSendToOtherLender}
               title="Prepare proposal for a different lender contact"
@@ -1171,6 +1172,17 @@ export default function EsrPage() {
                   )}
                   <CalcBreakdownPanel evaluations={lender.scheme_evaluations} lender={lender} monthlyIncome={monthlyIncome} selectedSchemeName={lender.best_scheme_name} />
                   <SchemeDiagnosticsPanel evaluations={lender.scheme_evaluations} lender={lender} />
+
+                  {/* Proposal Actions (Manual Override) */}
+                  <LenderActions
+                    lender={lender}
+                    caseId={caseId}
+                    proposals={proposals}
+                    onProposalCreated={load}
+                    onSendToLender={setSendConfirmResult}
+                    onSendToOtherLender={() => setShowOtherLenderModal(true)}
+                    onSendToCred2TechTeam={handleSendToCred2TechTeam}
+                  />
                 </div>
               </div>
             ))}

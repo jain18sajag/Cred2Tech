@@ -45,11 +45,15 @@ const SubDsaPayoutPage = lazy(() => import('../pages/SubDsaPayoutPage'));
 const DsaTeamManagementPage = lazy(() => import('../pages/DsaTeamManagementPage'));
 const DsaWalletPage = lazy(() => import('../pages/DsaWalletPage'));
 const AdminMsmeCasesPage = lazy(() => import('../pages/AdminMsmeCasesPage'));
+const AdminMsmeCaseDetailPage = lazy(() => import('../pages/AdminMsmeCaseDetailPage'));
 
 const MsmeLayout = lazy(() => import('../layouts/MsmeLayout'));
 const MsmeProtectedRoute = lazy(() => import('./MsmeProtectedRoute'));
 const MsmeLogin = lazy(() => import('../pages/MsmeLogin'));
 const MsmeDashboard = lazy(() => import('../pages/MsmeDashboard'));
+const MsmePaymentGate = lazy(() => import('../components/MsmePaymentGate'));
+const MsmeCases = lazy(() => import('../pages/MsmeCases'));
+const MsmeDocuments = lazy(() => import('../pages/MsmeDocuments'));
 
 const PageLoader = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -74,7 +78,14 @@ const AppRouter = () => (
             <Route path="login" element={<MsmeLogin />} />
             <Route element={<MsmeProtectedRoute />}>
               <Route path="dashboard" element={<MsmeDashboard />} />
-              <Route path="onboarding" element={<AddCustomerWizardPage mode="MSME_SELF_SERVICE" />} />
+              <Route path="onboarding" element={
+                <MsmePaymentGate>
+                  <AddCustomerWizardPage mode="MSME_SELF_SERVICE" />
+                </MsmePaymentGate>
+              } />
+              <Route path="cases" element={<MsmeCases />} />
+              <Route path="documents" element={<MsmeDocuments />} />
+              <Route path="profile" element={<ProfilePage />} />
               <Route index element={<Navigate to="dashboard" replace />} />
             </Route>
           </Route>
@@ -133,6 +144,9 @@ const AppRouter = () => (
             } />
             <Route path="/admin/msme-cases" element={
                <ProtectedRoute allowedRoles={['SUPER_ADMIN']}><AdminMsmeCasesPage /></ProtectedRoute>
+            } />
+            <Route path="/admin/msme-cases/:caseId" element={
+               <ProtectedRoute allowedRoles={['SUPER_ADMIN']}><AdminMsmeCaseDetailPage /></ProtectedRoute>
             } />
 
             {/* Customers Pipeline / Wizard */}

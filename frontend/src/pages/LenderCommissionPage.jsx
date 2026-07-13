@@ -4,9 +4,9 @@ import IncentiveSummaryTable from '../components/financials/IncentiveSummaryTabl
 import LenderCommissionFilters from '../components/financials/LenderCommissionFilters';
 import LenderCommissionCard from '../components/financials/LenderCommissionCard';
 import GenerateInvoiceModal from '../components/financials/GenerateInvoiceModal';
-import UpdateInvoiceStatusModal from '../components/financials/UpdateInvoiceStatusModal';
-import { getLenderCommissions } from '../api/commissionOperationsService';
+import { getLenderCommissions, syncMissingLenderCommissions } from '../api/commissionOperationsService';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
+import toast from 'react-hot-toast';
 
 export default function LenderCommissionPage() {
   const [filters, setFilters] = useState({
@@ -27,6 +27,20 @@ export default function LenderCommissionPage() {
 
   const [showGenerateInvoice, setShowGenerateInvoice] = useState(false);
   const [statusModalCase, setStatusModalCase] = useState(null); // When set, opens the update modal
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSync = async () => {
+    try {
+      setSyncing(true);
+      const res = await syncMissingLenderCommissions();
+      toast.success(res.message || 'Synced successfully');
+      fetchCommissions();
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Failed to sync missing commissions');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   useEffect(() => {
     fetchCommissions();
@@ -65,22 +79,39 @@ export default function LenderCommissionPage() {
           title="Lender Commission"
           subtitle="Track and invoice expected commissions from lending partners"
         />
-        <button 
-          style={{
-            background: '#111827',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '8px',
-            padding: '10px 20px',
-            fontSize: '14px',
-            fontWeight: '600',
-            cursor: 'pointer',
-            marginTop: '24px'
-          }}
-          onClick={() => setShowGenerateInvoice(true)}
-        >
-          + Generate Invoice
-        </button>
+        <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+          <button 
+            style={{
+              background: '#fff',
+              color: '#4F46E5',
+              border: '1px solid #4F46E5',
+              borderRadius: '8px',
+              padding: '10px 20px',
+              fontSize: '14px',
+              fontWeight: '600',
+              cursor: 'pointer'
+            }}
+            onClick={handleSync}
+            disabled={syncing}
+          >
+            {syncing ? 'Syncing...' : '↻ Sync Past'}
+          </button>
+          <button 
+            style={{
+              background: '#111827',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '10px 20px',
+              fontSize: '14px',
+              fontWeight: '600',
+              cursor: 'pointer'
+            }}
+            onClick={() => setShowGenerateInvoice(true)}
+          >
+            + Generate Invoice
+          </button>
+        </div>
       </div>
 
       {loading && data.lendersData.length === 0 ? (

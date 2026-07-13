@@ -164,7 +164,43 @@ async function revertDisbursementCommission(tenantId, caseId, disbursementId, us
     return reversalEntry;
 }
 
+/**
+ * Retroactively sync missing commissions for disbursements that have no ledger entry.
+ */
+async function syncMissingLenderCommissions(tenantId, userId) {
+    const disbursements = await prisma.disbursement.findMany({
+        where: { tenant_id: tenantId },
+        include: { sanction: true, case_entity: true }
+    });
+
+    const ledgers = await prisma.commissionLedger.findMany({
+        where: { tenant_id: tenantId, entry_type: 'BASE_COMMISSION' },
+        select: { disbursement_id: true }
+    });
+    
+    const existingDisbursementIds = new Set(ledgers.map(l => l.disbursement_id).filter(id => id));
+
+    let processedCount = 0;
+    
+    for (const disbursement of disbursements) {
+        if (existingDisbursementIds.has(disbursement.id)) continue;
+        if (!disbursement.sanction) continue;
+        
+        try {
+            await prisma.$transaction(async (tx) => {
+                const entry = await processDisbursementCommission(tenantId, disbursement.case_id, disbursement, disbursement.sanction, userId, tx);
+                if (entry) processedCount++;
+            });
+        } catch (e) {
+            console.error(`[COMMISSION] Failed to sync retroactive commission for disbursement ${disbursement.id}:`, e);
+        }
+    }
+
+    return processedCount;
+}
+
 module.exports = {
     processDisbursementCommission,
-    revertDisbursementCommission
+    revertDisbursementCommission,
+    syncMissingLenderCommissions
 };

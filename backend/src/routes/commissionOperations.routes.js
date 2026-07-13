@@ -43,4 +43,11 @@ router.patch(
     commissionOperationsController.updateLedgerStatus
 );
 
+// POST /api/commission-operations/lender-commission/sync-missing
+router.post(
+    '/lender-commission/sync-missing',
+    requireRole('DSA_ADMIN'),
+    commissionOperationsController.syncMissingLenderCommissions
+);
+
 module.exports = router;

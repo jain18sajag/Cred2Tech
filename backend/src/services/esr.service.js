@@ -89,8 +89,10 @@ async function _generateESR(case_id, user_id, tenant_id) {
 }
 
 async function getESR(case_id, tenant_id) {
+    await _assertCaseAccess(case_id, tenant_id); // Ensures user has access to the Case
+
     const latestESR = await prisma.eligibilityReport.findFirst({
-        where: { case_id, tenant_id, is_latest: true },
+        where: { case_id, is_latest: true }, // tenant_id removed to support MSME cases
         include: { lenders: true },
         orderBy: { version_number: 'desc' }
     });

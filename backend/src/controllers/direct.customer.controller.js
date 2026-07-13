@@ -112,7 +112,7 @@ async function selectLender(req, res) {
 
 async function submitCase(req, res) {
   try {
-    const { caseId } = req.body;
+    const { caseId } = req.body || {};
     const result = await directCustomerService.submitCase(req.user.id, caseId);
     return res.status(200).json(result);
   } catch (err) {

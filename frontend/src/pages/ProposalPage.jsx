@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import { getTenantLenders, sendCaseToOtherLender } from '../api/tenantLenderService';
 import { uploadDocument } from '../api/documentHelper';
+import { useAuth } from '../context/AuthContext';
+import { msmeApi } from '../api/directMsme';
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 const fmtINR = (n, fallback = '—') => {
@@ -666,6 +668,7 @@ const tdStyle = { padding: '6px 10px', textAlign: 'right', fontSize: 11 };
 export default function ProposalPage() {
   const { id: caseId, pid: proposalId } = useParams();
   const navigate = useNavigate();
+  const { hasRole } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1067,36 +1070,59 @@ export default function ProposalPage() {
             <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
               <button className="btn btn-ghost" onClick={() => navigate(`/cases/${caseId}/esr`)}
                 style={{ color: '#A0AEC0', fontSize: 12 }}>Cancel</button>
-              <button className="btn btn-secondary" onClick={() => handleSave()} disabled={saving}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#fff',
-                  background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)'
-                }}>
-                <Save size={13} /> {saving ? 'Saving…' : 'Save Draft'}
-              </button>
-              <button onClick={() => {
-                if (validateProposal()) {
-                  handleSave(true).then(() => setShowOtherLenderModal(true));
-                }
-              }}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6, padding: '10px 18px',
-                  background: 'transparent', color: '#A78BFA',
-                  border: '1px solid #A78BFA', borderRadius: 8,
-                  fontWeight: 700, fontSize: 13, cursor: 'pointer'
-                }}>
-                ↗ Send to Another Lender
-              </button>
-              <button onClick={handleSubmit} disabled={submitting}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 8, padding: '11px 28px',
-                  background: 'linear-gradient(135deg,#D69E2E,#B7791F)',
-                  color: '#fff', border: 'none', borderRadius: 8, fontWeight: 800,
-                  fontSize: 14, cursor: 'pointer', boxShadow: '0 2px 12px rgba(214,158,46,0.4)'
-                }}>
-                <Send size={15} />
-                {submitting ? 'Submitting…' : `Send Lead to ${lender?.name || 'Lender'} →`}
-              </button>
+
+              {hasRole('MSME_CUSTOMER') ? (
+                <button 
+                  onClick={async () => {
+                    try {
+                      await msmeApi.submitCase({ caseId });
+                      toast.success('Application submitted successfully!');
+                      navigate('/msme/dashboard');
+                    } catch (err) {
+                      toast.error('Failed to submit application');
+                    }
+                  }} 
+                  className="btn-primary" 
+                  style={{ 
+                    padding: '11px 28px', background: '#6D28D9', border: 'none', 
+                    fontSize: '14px', fontWeight: 600, color: '#fff', borderRadius: 8, cursor: 'pointer' 
+                  }}>
+                  Submit to cred2tech Team  
+                </button>
+              ) : (
+                <>
+                  <button className="btn btn-secondary" onClick={() => handleSave()} disabled={saving}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#fff',
+                      background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)'
+                    }}>
+                    <Save size={13} /> {saving ? 'Saving…' : 'Save Draft'}
+                  </button>
+                  <button onClick={() => {
+                    if (validateProposal()) {
+                      handleSave(true).then(() => setShowOtherLenderModal(true));
+                    }
+                  }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6, padding: '10px 18px',
+                      background: 'transparent', color: '#A78BFA',
+                      border: '1px solid #A78BFA', borderRadius: 8,
+                      fontWeight: 700, fontSize: 13, cursor: 'pointer'
+                    }}>
+                    ↗ Send to Another Lender
+                  </button>
+                  <button onClick={handleSubmit} disabled={submitting}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8, padding: '11px 28px',
+                      background: 'linear-gradient(135deg,#D69E2E,#B7791F)',
+                      color: '#fff', border: 'none', borderRadius: 8, fontWeight: 800,
+                      fontSize: 14, cursor: 'pointer', boxShadow: '0 2px 12px rgba(214,158,46,0.4)'
+                    }}>
+                    <Send size={15} />
+                    {submitting ? 'Submitting…' : `Send Lead to ${lender?.name || 'Lender'} →`}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

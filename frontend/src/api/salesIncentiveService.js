@@ -10,5 +10,6 @@ export const salesIncentiveService = {
   
   getPayouts: (params) => api.get('/sales-incentives/payouts', { params }).then(res => res.data),
   calculateIncentives: (data) => api.post('/sales-incentives/calculate', data).then(res => res.data),
-  updatePayoutStatus: (id, payload) => api.post(`/sales-incentives/payouts/${id}/status`, payload).then(res => res.data)
+  updatePayoutStatus: (id, payload) => api.post(`/sales-incentives/payouts/${id}/status`, payload).then(res => res.data),
+  syncMissingIncentives: (hierarchyLevel) => api.post(`/sales-incentives/config/${hierarchyLevel}/sync-missing`).then(res => res.data)
 };

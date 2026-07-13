@@ -52,3 +52,8 @@ export const updateLedgerStatus = async (ledgerId, status, remarks) => {
     });
     return response.data;
 };
+
+export const syncMissingLenderCommissions = async () => {
+    const response = await api.post(`/commission-operations/lender-commission/sync-missing`);
+    return response.data;
+};

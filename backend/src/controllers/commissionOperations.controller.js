@@ -567,3 +567,15 @@ exports.updateLedgerStatus = async (req, res) => {
         res.status(500).json({ error: 'Failed to update ledger status' });
     }
 };
+
+exports.syncMissingLenderCommissions = async (req, res) => {
+    try {
+        const { tenant_id, id: userId } = req.user;
+        const { syncMissingLenderCommissions } = require('../services/commission/commissionLedger.service');
+        const processedCount = await syncMissingLenderCommissions(tenant_id, userId);
+        res.status(200).json({ success: true, processedCount, message: `Successfully synced ${processedCount} missing lender commissions.` });
+    } catch (error) {
+        console.error('[Commission Operations] Error syncing missing lender commissions:', error);
+        res.status(500).json({ error: 'Failed to sync missing lender commissions' });
+    }
+};

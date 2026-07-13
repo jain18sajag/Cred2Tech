@@ -3,9 +3,18 @@ import { Outlet } from 'react-router-dom';
 import Sidebar from '../components/layout/Sidebar';
 import Topbar from '../components/layout/Topbar';
 import { Toaster } from 'react-hot-toast';
+import { useAuth } from '../context/AuthContext';
+import MsmeLayout from './MsmeLayout';
 
-const AppLayout = () => (
-  <div className="app-shell">
+const AppLayout = () => {
+  const { hasRole } = useAuth();
+
+  if (hasRole('MSME_CUSTOMER')) {
+    return <MsmeLayout />;
+  }
+
+  return (
+    <div className="app-shell">
     <Sidebar />
     <div className="app-main">
       <Topbar />
@@ -26,6 +35,7 @@ const AppLayout = () => (
       }}
     />
   </div>
-);
+  );
+};
 
 export default AppLayout;

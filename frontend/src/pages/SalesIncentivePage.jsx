@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { salesIncentiveService } from '../api/salesIncentiveService';
 import { useAuth } from '../context/AuthContext';
-import { Target, ChevronDown, ChevronUp, FileText, X, Activity, Edit } from 'lucide-react';
+import { Target, ChevronDown, ChevronUp, FileText, X, Activity, Edit, RefreshCw } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const fmt = (v) => {
@@ -213,6 +214,7 @@ export default function SalesIncentivePage() {
   const [summary, setSummary] = useState({ current_month: {}, previous_month: {}, older: {} });
   const [employees, setEmployees] = useState([]);
   const [rules, setRules] = useState([]);
+  const [syncingLevel, setSyncingLevel] = useState(null);
   const [filters, setFilters] = useState({ month: '', user_id: '', product: '', search: '' });
   const [updateModal, setUpdateModal] = useState(null);
   const [showConfigModal, setShowConfigModal] = useState(false);
@@ -275,6 +277,19 @@ export default function SalesIncentivePage() {
   const handleCancelEdit = () => {
     setRuleForm({ hierarchy_level: 'L1', commission_type: 'PERCENTAGE', commission_value: '', calculation_base: 'DISBURSED_AMOUNT' });
     setEditingRuleId(null);
+  };
+
+  const handleSyncIncentives = async (hierarchyLevel) => {
+    try {
+      setSyncingLevel(hierarchyLevel);
+      const res = await salesIncentiveService.syncMissingIncentives(hierarchyLevel);
+      toast.success(res.message || 'Synced successfully');
+      fetchData();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to sync missing incentives');
+    } finally {
+      setSyncingLevel(null);
+    }
   };
 
   const grouped = ledgers.reduce((acc, l) => {
@@ -440,9 +455,17 @@ export default function SalesIncentivePage() {
                               calculation_base: r.calculation_base
                             });
                           }}
-                          style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid #E5E7EB', background: '#fff', color: '#374151', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#4F46E5', display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600 }}
                         >
-                          <Edit size={12} /> Edit
+                          <Edit size={14} /> Edit
+                        </button>
+                        <button 
+                          onClick={() => handleSyncIncentives(r.hierarchy_level)}
+                          disabled={syncingLevel === r.hierarchy_level}
+                          style={{ background: 'none', border: 'none', cursor: syncingLevel === r.hierarchy_level ? 'not-allowed' : 'pointer', color: '#059669', display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, marginTop: 8 }}
+                        >
+                          {syncingLevel === r.hierarchy_level ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <RefreshCw size={14} />}
+                          {syncingLevel === r.hierarchy_level ? 'Syncing...' : 'Sync Past'}
                         </button>
                       </td>
                     </tr>

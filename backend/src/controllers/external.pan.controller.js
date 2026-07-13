@@ -349,61 +349,6 @@ exports.verifyPan = async (req, res) => {
             handlerFunction: async () => {
                 const apiResponse = await signzyService.verifyPanSimple(pan);
                 
-                // Save name and dob
-                if (is_coapplicant && applicant_id) {
-                    await prisma.applicant.update({
-                        where: { id: parseInt(applicant_id, 10) },
-                        data: {
-                            name: apiResponse.name,
-                            dob: apiResponse.dob,
-                            pan_verified: true,
-                            pan_verified_at: new Date(),
-                            pan_verification_status: 'SUCCESS',
-                            pan_verification_reference: apiResponse.panStatus || null,
-                            pan_verified_name: apiResponse.name,
-                            pan_verified_dob: apiResponse.dob,
-                            pan_verification_response: apiResponse.rawResponse || null,
-                            pan_verified_by_user_id: userId
-                        }
-                    });
-                } else {
-                    const primaryApp = await prisma.applicant.findFirst({
-                        where: { case_id: parseInt(case_id, 10), type: 'PRIMARY' }
-                    });
-                    if (primaryApp) {
-                        await prisma.applicant.update({
-                            where: { id: primaryApp.id },
-                            data: {
-                                pan_verified: true,
-                                pan_verified_at: new Date(),
-                                pan_verification_status: 'SUCCESS',
-                                pan_verification_reference: apiResponse.panStatus || null,
-                                pan_verified_name: apiResponse.name,
-                                pan_verified_dob: apiResponse.dob,
-                                pan_verification_response: apiResponse.rawResponse || null,
-                                pan_verified_by_user_id: userId
-                            }
-                        });
-                    }
-
-                    // Precedence: Only update customer business name if no GST name is set
-                    const resolvedBusinessName = customer.legal_business_name || customer.trade_name;
-                    await prisma.customer.update({
-                        where: { id: customer_id },
-                        data: {
-                            business_name: resolvedBusinessName || apiResponse.name || customer.business_name,
-                            business_name_source: resolvedBusinessName ? customer.business_name_source : 'PAN_VERIFICATION',
-                            pan_holder_name: apiResponse.name || customer.pan_holder_name,
-                            proprietor_name: apiResponse.name || customer.proprietor_name,
-                            dob: apiResponse.dob || customer.dob
-                        }
-                    });
-
-                    // Sync Case snapshot
-                    const { syncCustomerSnapshots } = require('../services/case.service');
-                    syncCustomerSnapshots(customer_id, tenantId).catch(err => console.error('Snapshot sync failed:', err));
-                }
-
                 return {
                    status: "SUCCESS",
                    name: apiResponse.name,
@@ -413,6 +358,61 @@ exports.verifyPan = async (req, res) => {
                 };
             }
         });
+
+        // Apply DB Updates (runs whether fresh or cached)
+        if (is_coapplicant && applicant_id) {
+            await prisma.applicant.update({
+                where: { id: parseInt(applicant_id, 10) },
+                data: {
+                    name: result.name,
+                    dob: result.dob,
+                    pan_verified: true,
+                    pan_verified_at: new Date(),
+                    pan_verification_status: 'SUCCESS',
+                    pan_verification_reference: result.panStatus || null,
+                    pan_verified_name: result.name,
+                    pan_verified_dob: result.dob,
+                    pan_verification_response: result.rawResponse || null,
+                    pan_verified_by_user_id: userId
+                }
+            });
+        } else {
+            const primaryApp = await prisma.applicant.findFirst({
+                where: { case_id: parseInt(case_id, 10), type: 'PRIMARY' }
+            });
+            if (primaryApp) {
+                await prisma.applicant.update({
+                    where: { id: primaryApp.id },
+                    data: {
+                        pan_verified: true,
+                        pan_verified_at: new Date(),
+                        pan_verification_status: 'SUCCESS',
+                        pan_verification_reference: result.panStatus || null,
+                        pan_verified_name: result.name,
+                        pan_verified_dob: result.dob,
+                        pan_verification_response: result.rawResponse || null,
+                        pan_verified_by_user_id: userId
+                    }
+                });
+            }
+
+            // Precedence: Only update customer business name if no GST name is set
+            const resolvedBusinessName = customer.legal_business_name || customer.trade_name;
+            await prisma.customer.update({
+                where: { id: customer_id },
+                data: {
+                    business_name: resolvedBusinessName || result.name || customer.business_name,
+                    business_name_source: resolvedBusinessName ? customer.business_name_source : 'PAN_VERIFICATION',
+                    pan_holder_name: result.name || customer.pan_holder_name,
+                    proprietor_name: result.name || customer.proprietor_name,
+                    dob: result.dob || customer.dob
+                }
+            });
+
+            // Sync Case snapshot
+            const { syncCustomerSnapshots } = require('../services/case.service');
+            syncCustomerSnapshots(customer_id, tenantId).catch(err => console.error('Snapshot sync failed:', err));
+        }
 
         res.json(result);
     } catch (error) {

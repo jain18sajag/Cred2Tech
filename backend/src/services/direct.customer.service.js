@@ -18,7 +18,8 @@ const directCustomerService = {
       include: {
         customer: true,
         applicants: { where: { is_primary: true } },
-        case_payment: true
+        case_payment: true,
+        assigned_dsa_user: { select: { name: true } }
       }
     });
 
@@ -357,9 +358,7 @@ const directCustomerService = {
       where: { case_id: dashboard.activeCase.id },
       orderBy: { created_at: 'desc' },
       include: {
-        lenders: {
-          include: { lender: true, product: true }
-        }
+        lenders: true
       }
     });
   },
@@ -372,13 +371,12 @@ const directCustomerService = {
     const esrLender = await prisma.eligibilityReportLender.findFirst({
       where: {
         id: esrLenderId,
-        esr: { case_id: activeCase.id },
-        is_eligible: true
+        esr: { case_id: activeCase.id }
       }
     });
 
     if (!esrLender) {
-      throw new Error("Invalid lender selection or lender is not eligible");
+      throw new Error("Invalid lender selection");
     }
 
     await prisma.case.update({

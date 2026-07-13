@@ -80,7 +80,7 @@ async function runExperianCheck({ caseId, applicantId, payloadData }) {
         if (caseRecord) {
           await ingestFromUrl({
             vendorUrl: excelUrl,
-            documentType: 'BUREAU_REPORT_EXPERIAN',
+            documentType: 'OTHER',
             tenantId: caseRecord.tenant_id,
             caseId,
             applicantId,

@@ -265,7 +265,7 @@ const LoginPage = () => {
               >
                 🏢 Register as a New DSA
               </button>
-              
+
               <button
                 type="button"
                 onClick={() => navigate('/msme/login')}
@@ -288,7 +288,7 @@ const LoginPage = () => {
                 onMouseOver={e => { e.currentTarget.style.background = 'rgba(16, 185, 129, 0.08)'; e.currentTarget.style.borderColor = '#059669'; }}
                 onMouseOut={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.5)'; }}
               >
-                🚀 Apply for a Business Loan (MSME)
+                🚀 Login As MSME
               </button>
             </div>
           </div>

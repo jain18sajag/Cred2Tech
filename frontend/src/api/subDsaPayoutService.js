@@ -11,6 +11,9 @@ export const getSubDsaUsers = () =>
 export const getPayoutConfig = (userId) =>
   api.get(`/sub-dsa/${userId}/payout-config`).then(r => r.data);
 
+export const getSubDsaMtdStats = (userId) =>
+  api.get(`/sub-dsa/${userId}/mtd-stats`).then(r => r.data);
+
 export const savePayoutConfig = (userId, data) =>
   api.put(`/sub-dsa/${userId}/payout-config`, data).then(r => r.data);
 
@@ -34,3 +37,6 @@ export const generateInvoice = (subDsaUserId, monthYear, ledgerIds) =>
     month_year: monthYear,
     ledger_ids: ledgerIds
   }).then(r => r.data);
+
+export const syncMissingPayouts = (userId) =>
+  api.post(`/sub-dsa/${userId}/sync-missing`).then(r => r.data);

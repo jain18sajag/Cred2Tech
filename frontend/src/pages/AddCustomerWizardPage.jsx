@@ -30,7 +30,9 @@ const AddCustomerWizardPage = ({ mode = 'DSA' }) => {
   const [currentStep, setCurrentStep] = useState(1);
   const [caseId, setCaseId] = useState(null);
   const [isResumed, setIsResumed] = useState(false);
+  const [panVerifying, setPanVerifying] = useState(false);
   const [coappPanVerifyingMap, setCoappPanVerifyingMap] = useState({});
+  const [bureauLoadingMap, setBureauLoadingMap] = useState({});
   const { statuses: realPullStatuses, isConnected: sseConnected } = usePullStatusStream(caseId);
 
   const [formData, setFormData] = useState({
@@ -97,7 +99,6 @@ useEffect(() => {
   }
 }, [mode]);
 
-const [panVerifying, setPanVerifying] = useState(false);
 const [existingCustomer, setExistingCustomer] = useState(null);
 const [duplicateWarning, setDuplicateWarning] = useState(null);
 const [suggestedCoApplicants, setSuggestedCoApplicants] = useState([]);
@@ -150,7 +151,7 @@ const restoreSession = async () => {
       mobile_verified: mode === 'MSME_SELF_SERVICE' ? true : (caseData.customer?.mobile_verified || false),
       is_professional: caseData.customer?.is_professional || false,
       profession_type: caseData.customer?.profession_type || '',
-      pan_verified: primaryApp?.pan_verified || false,
+      pan_verified: primaryApp?.pan_verified || !!caseData.customer?.pan_profiles?.length || !!caseData.customer?.business_name_source,
       applicants: (caseData.applicants || []).map(app => ({
         ...app,
         mobile: (app.mobile || '').replace(/\D/g, ''),
@@ -171,8 +172,13 @@ const restoreSession = async () => {
       linked_gstins: caseData.customer?.pan_profiles?.find(p => p.pan === caseData.customer.business_pan)?.gstin_records || []
     });
 
-    // Navigate to step 2 if primary details and mobile are verified
-    if (caseData.customer?.mobile_verified && caseData.applicants?.length > 0) {
+    // Navigate to step 2 only if step 1 is fully completed (all required fields present)
+    const isStep1Complete = caseData.customer?.mobile_verified && 
+                            caseData.customer?.business_pan && 
+                            caseData.customer?.business_email && 
+                            primaryApp?.pincode;
+
+    if (isStep1Complete) {
       setCurrentStep(2);
     } else {
       setCurrentStep(1);
@@ -391,6 +397,10 @@ const handleResetPan = async (isCoapplicant = false, idx = null) => {
   }
 };
 
+// For UI state rendering
+const activeGstJourneys = (formData.customer?.gst_requests || [])
+  .filter(req => req.status === 'COMPLETED' || req.status === 'REPORT_READY' || req.status === 'CALLBACK_RECEIVED');
+
 const handleFetchGst = async () => {
   if (!formData.business_pan || formData.business_pan.length < 10) return toast.error('Valid PAN required');
   if (!formData.customer_id || !caseId) return toast.error('Please verify mobile first to generate a case');
@@ -579,8 +589,11 @@ const handleStep1Submit = async (e) => {
     const { targetCaseId } = await ensureDraftSaved();
 
     const savedApps = [];
-    for (const app of formData.applicants) {
+    for (let app of formData.applicants) {
       if (app.pan_number) {
+        if (app.type === 'PRIMARY') {
+          app = { ...app, pincode: formData.pincode };
+        }
         const savedApp = await caseService.addApplicant(targetCaseId, app);
         savedApps.push(savedApp);
       }
@@ -639,9 +652,9 @@ const handleGenerateItr = async (years) => {
 
 const handleRunBureau = async (applicantId) => {
   if (!caseId) return toast.error("Case ID missing");
-  if (saving) return; // prevent double-click race
+  if (bureauLoadingMap[applicantId]) return; // prevent double-click race
   try {
-    setSaving(true);
+    setBureauLoadingMap(prev => ({ ...prev, [applicantId]: true }));
     const res = await api.post(`/verification/bureau/run/${caseId}`, { applicantId });
     const data = res.data;
 
@@ -670,7 +683,7 @@ const handleRunBureau = async (applicantId) => {
   } catch (err) {
     toast.error(err.response?.data?.error || "Bureau fetch failed");
   } finally {
-    setSaving(false);
+    setBureauLoadingMap(prev => ({ ...prev, [applicantId]: false }));
   }
 };
 
@@ -709,7 +722,11 @@ const handleStep3Submit = async (e) => {
     await caseService.updateProductProperty(caseId, payload);
     localStorage.removeItem('draftCaseId');
     toast.success('Product & property saved!');
-    navigate(`/cases/${caseId}/income-summary`, { replace: true });
+    if (mode === 'MSME_SELF_SERVICE') {
+      window.location.href = `/cases/${caseId}/income-summary`;
+    } else {
+      navigate(`/cases/${caseId}/income-summary`, { replace: true });
+    }
   } catch (error) {
     toast.error(error.response?.data?.error || 'Failed to save product details.');
   } finally {
@@ -1203,10 +1220,10 @@ const handleStep3Submit = async (e) => {
                       type="button"
                       className={`btn btn-sm ${app.bureau_fetched ? 'btn-secondary' : 'btn-primary'}`}
                       onClick={() => handleRunBureau(app.id)}
-                      disabled={saving || (!(app.otp_verified || (app.type === 'PRIMARY' && formData.mobile_verified)) && !(app.type === 'PRIMARY' && mode === 'MSME_SELF_SERVICE')) || app.bureau_fetched}
+                      disabled={bureauLoadingMap[app.id] || (!(app.otp_verified || (app.type === 'PRIMARY' && formData.mobile_verified)) && !(app.type === 'PRIMARY' && mode === 'MSME_SELF_SERVICE')) || app.bureau_fetched}
                       title={(!(app.otp_verified || (app.type === 'PRIMARY' && formData.mobile_verified)) && !(app.type === 'PRIMARY' && mode === 'MSME_SELF_SERVICE')) ? "OTP Verification required before pulling Bureau" : ""}
                     >
-                      {app.bureau_fetched ? 'Verified' : 'Run Bureau'}
+                      {bureauLoadingMap[app.id] ? 'Processing...' : (app.bureau_fetched ? 'Verified' : 'Run Bureau')}
                     </button>
                   </div>
                 </div>

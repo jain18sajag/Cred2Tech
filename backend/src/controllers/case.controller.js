@@ -458,6 +458,29 @@ async function getPullStatuses(req, res) {
   }
 }
 
+async function allocateDsaUser(req, res) {
+  try {
+    const { id } = req.params;
+    const { assigned_dsa_user_id } = req.body;
+    
+    if (!assigned_dsa_user_id) {
+      return res.status(400).json({ error: 'assigned_dsa_user_id is required' });
+    }
+
+    const updatedCase = await caseService.allocateDsaUser(
+      parseInt(id, 10),
+      req.user.tenant_id,
+      parseInt(assigned_dsa_user_id, 10),
+      req.user
+    );
+
+    res.json(updatedCase);
+  } catch (error) {
+    console.error('[allocateDsaUser] Error:', error);
+    res.status(400).json({ error: error.message || 'Failed to allocate case' });
+  }
+}
+
 module.exports = {
   createCase,
   createFromExisting,
@@ -477,5 +500,6 @@ module.exports = {
   downloadBulkTemplate,
   downloadLoanApplicationSummary,
   uploadBulkCases,
-  getPullStatuses
+  getPullStatuses,
+  allocateDsaUser
 };

@@ -32,7 +32,7 @@ async function getDirectCaseDetail(req, res) {
         esrs: {
           orderBy: { created_at: 'desc' },
           take: 1,
-          include: { lenders: { include: { lender: true, product: true } } }
+          include: { lenders: true }
         }
       }
     });
@@ -83,8 +83,7 @@ async function allocateDirectCase(req, res) {
         assigned_dsa_tenant_id: parseInt(dsa_tenant_id, 10),
         assigned_dsa_user_id: parseInt(dsa_user_id, 10),
         allocated_by_admin_id: req.user.id,
-        allocated_at: new Date(),
-        stage: 'DATA_COLLECTION' // Reset stage for DSA processing
+        allocated_at: new Date()
       }
     });
 

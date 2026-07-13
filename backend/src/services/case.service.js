@@ -201,6 +201,7 @@ async function addApplicant(case_id, applicantData, tenant_id) {
         data: {
           mobile: applicantData.mobile,
           email: applicantData.email,
+          pincode: applicantData.pincode,
           employment_type: applicantData.employment_type || undefined
         }
       });
@@ -417,10 +418,16 @@ async function getAllCases(tenant_id, currentUser) {
     }
   };
 
+  const msmeAllocationFilter = isBypassed 
+    ? { assigned_dsa_tenant_id: tenant_id } 
+    : { assigned_dsa_user_id: currentUser.id };
+
   return await prisma.case.findMany({
     where: { 
-      tenant_id,
-      ...hierarchyFilter
+      OR: [
+        { tenant_id, ...hierarchyFilter },
+        { assigned_dsa_tenant_id: tenant_id, ...msmeAllocationFilter }
+      ]
     },
     include: {
       customer: true,
@@ -1697,6 +1704,40 @@ async function removeApplicant(caseId, applicantId, tenantId) {
   });
 }
 
+async function allocateDsaUser(caseId, tenantId, targetUserId, currentUser) {
+  if (currentUser.role !== 'DSA_ADMIN') {
+    throw new Error('Only DSA Admins can allocate cases.');
+  }
+
+  const caseRecord = await prisma.case.findFirst({
+    where: { id: caseId }
+  });
+
+  if (!caseRecord) {
+    throw new Error('Case not found');
+  }
+
+  if (caseRecord.assigned_dsa_tenant_id !== tenantId) {
+    throw new Error('Case is not assigned to your DSA.');
+  }
+
+  // Verify target user belongs to the same tenant
+  const targetUser = await prisma.user.findFirst({
+    where: { id: targetUserId, tenant_id: tenantId }
+  });
+
+  if (!targetUser) {
+    throw new Error('Target user not found in your tenant.');
+  }
+
+  return await prisma.case.update({
+    where: { id: caseId },
+    data: {
+      assigned_dsa_user_id: targetUserId
+    }
+  });
+}
+
 module.exports = {
   createCase,
   createSalariedCase,
@@ -1712,5 +1753,6 @@ module.exports = {
   updateStage,
   advanceStage,
   rollbackStage,
-  syncCustomerSnapshots
+  syncCustomerSnapshots,
+  allocateDsaUser
 };
