@@ -12,14 +12,20 @@ async function processDisbursementCommission(tenantId, caseId, disbursement, san
         return null;
     }
 
-    // 1. Look up the active commission rule for this lender & product
+    // 1. Look up the active commission rule for this lender & product at the time of disbursement
     const rule = await tx.lenderCommissionRule.findFirst({
         where: {
             tenant_id: tenantId,
             tenant_lender_id: sanction.tenant_lender_id,
             product_type: sanction.product_type,
-            is_active: true
+            status: { in: ['ACTIVE', 'ARCHIVED'] },
+            effective_from: { lte: disbursement.disbursement_date },
+            OR: [
+                { effective_to: null },
+                { effective_to: { gte: disbursement.disbursement_date } }
+            ]
         },
+        orderBy: { id: 'desc' },
         include: {
             volume_slabs: { orderBy: { from_amount: 'asc' } },
             case_count_slabs: { orderBy: { from_cases: 'asc' } },
@@ -32,8 +38,17 @@ async function processDisbursementCommission(tenantId, caseId, disbursement, san
         return null;
     }
 
+    const existingLedgers = await tx.commissionLedger.findMany({
+        where: { tenant_id: tenantId, case_id: caseId, entry_type: 'BASE_COMMISSION' }
+    });
+
     // 2. Calculate Commission and create Snapshots
-    const calculationResult = calculateCommission(disbursement, sanction, rule);
+    const calculationResult = calculateCommission(disbursement, sanction, rule, existingLedgers);
+
+    if (!calculationResult) {
+        console.log(`[COMMISSION] Skipping ledger generation for case ${caseId} (likely already paid GROSS_SANCTIONED).`);
+        return null;
+    }
 
     // 3. Insert Commission Ledger Entry (Append-only BASE_COMMISSION)
     const ledgerEntry = await tx.commissionLedger.create({

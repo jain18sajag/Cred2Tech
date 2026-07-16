@@ -180,8 +180,11 @@ function ledgerDto(row) {
 
 async function listRules(tenantId) {
   return prisma.salesIncentiveRule.findMany({
-    where: { tenant_id: tenantId },
-    include: { lender: true },
+    where: { 
+      tenant_id: tenantId,
+      status: 'ACTIVE'
+    },
+    include: { lender: true, volume_slabs: true, case_count_slabs: true },
     orderBy: [{ status: 'asc' }, { created_at: 'desc' }]
   });
 }
@@ -190,16 +193,70 @@ async function createRule(tenantId, userId, body) {
   const rule = normalizeRuleInput(body);
   rule.tenant_lender_id = await ensureTenantLender(tenantId, rule.tenant_lender_id);
   await rejectOverlappingRule(tenantId, rule);
-  return prisma.salesIncentiveRule.create({ data: { ...rule, tenant_id: tenantId, created_by: userId } });
+  return prisma.salesIncentiveRule.create({ 
+    data: { 
+      ...rule, 
+      tenant_id: tenantId, 
+      created_by: userId,
+      volume_slabs: {
+        create: (body.volume_slabs || []).map(s => ({
+          from_amount: parseFloat(s.from_amount),
+          to_amount: s.to_amount ? parseFloat(s.to_amount) : null,
+          percent_rate: parseFloat(s.percent_rate)
+        }))
+      },
+      case_count_slabs: {
+        create: (body.case_count_slabs || []).map(s => ({
+          from_cases: parseInt(s.from_cases),
+          to_cases: s.to_cases ? parseInt(s.to_cases) : null,
+          payout_per_case: parseFloat(s.payout_per_case)
+        }))
+      }
+    } 
+  });
 }
 
 async function updateRule(tenantId, ruleId, userId, body) {
   const existing = await prisma.salesIncentiveRule.findFirst({ where: { id: ruleId, tenant_id: tenantId } });
   if (!existing) fail('Rule not found', 404);
+  
   const rule = normalizeRuleInput(body, existing);
   rule.tenant_lender_id = await ensureTenantLender(tenantId, rule.tenant_lender_id);
-  await rejectOverlappingRule(tenantId, rule, ruleId);
-  return prisma.salesIncentiveRule.update({ where: { id: ruleId }, data: { ...rule, updated_by: userId } });
+  
+  // Archive existing rule
+  await prisma.salesIncentiveRule.update({
+    where: { id: ruleId },
+    data: { status: 'ARCHIVED', effective_to: new Date(), updated_by: userId }
+  });
+
+  // Remove ID and create new active rule
+  delete rule.id;
+  rule.effective_from = new Date();
+  rule.status = 'ACTIVE';
+  
+  await rejectOverlappingRule(tenantId, rule);
+  
+  return prisma.salesIncentiveRule.create({ 
+    data: { 
+      ...rule, 
+      tenant_id: tenantId, 
+      created_by: userId,
+      volume_slabs: {
+        create: (body.volume_slabs || []).map(s => ({
+          from_amount: parseFloat(s.from_amount),
+          to_amount: s.to_amount ? parseFloat(s.to_amount) : null,
+          percent_rate: parseFloat(s.percent_rate)
+        }))
+      },
+      case_count_slabs: {
+        create: (body.case_count_slabs || []).map(s => ({
+          from_cases: parseInt(s.from_cases),
+          to_cases: s.to_cases ? parseInt(s.to_cases) : null,
+          payout_per_case: parseFloat(s.payout_per_case)
+        }))
+      }
+    } 
+  });
 }
 
 async function deleteRule(tenantId, ruleId, userId) {
@@ -273,7 +330,8 @@ async function calculateIncentives(tenantId, body) {
     }
 
     const rules = await prisma.salesIncentiveRule.findMany({
-      where: { tenant_id: tenantId, hierarchy_level: employee.hierarchy_level, status: ACTIVE }
+      where: { tenant_id: tenantId, hierarchy_level: employee.hierarchy_level, status: { in: ['ACTIVE', 'ARCHIVED'] } },
+      include: { volume_slabs: true, case_count_slabs: true }
     });
     if (!rules.length) {
       results.push({ case_id: caseId, status: 'RULE_NOT_CONFIGURED', reason: 'No active rules for hierarchy' });
@@ -290,7 +348,50 @@ async function calculateIncentives(tenantId, body) {
         (rule.calculation_base === 'FIXED_PER_CASE' && event.source_type !== 'CASE')) continue;
 
       const baseAmount = rule.calculation_base === 'FIXED_PER_CASE' ? new Prisma.Decimal(1) : new Prisma.Decimal(event.amount);
-      const incentive = calculateAmount(rule, baseAmount);
+      let incentive = calculateAmount(rule, baseAmount);
+
+      // --- ADDITIVE SLABS LOGIC ---
+      const period = event.date.toISOString().substring(0, 7); // YYYY-MM
+      const startOfMonth = new Date(event.date.getFullYear(), event.date.getMonth(), 1);
+      const endOfMonth = new Date(event.date.getFullYear(), event.date.getMonth() + 1, 0, 23, 59, 59);
+
+      if (rule.case_count_slabs?.length > 0) {
+        const previousCases = await prisma.salesIncentiveLedger.findMany({
+          where: { tenant_id: tenantId, hierarchy_level: employee.hierarchy_level, status: { notIn: ['REJECTED', 'CANCELLED'] }, created_at: { gte: startOfMonth, lte: endOfMonth } },
+          select: { case_id: true }
+        });
+        const distinct = new Set(previousCases.map(r => r.case_id));
+        distinct.add(caseId);
+        const thisMonthCaseNumber = distinct.size;
+
+        let slabBonus = new Prisma.Decimal(0);
+        for (const slab of rule.case_count_slabs) {
+          if (thisMonthCaseNumber >= slab.from_cases && (slab.to_cases === null || thisMonthCaseNumber <= slab.to_cases)) {
+            slabBonus = new Prisma.Decimal(slab.payout_per_case);
+            break;
+          }
+        }
+        // Only apply case bonus on CASE source events to avoid double counting per disbursement
+        if (event.source_type === 'CASE') {
+          incentive = incentive.plus(slabBonus);
+        }
+      }
+
+      if (rule.volume_slabs?.length > 0 && event.source_type === 'DISBURSEMENT') {
+        let volumeBonusRate = new Prisma.Decimal(0);
+        for (const slab of rule.volume_slabs) {
+          if (baseAmount.toNumber() >= slab.from_amount && (slab.to_amount === null || baseAmount.toNumber() <= slab.to_amount)) {
+            volumeBonusRate = new Prisma.Decimal(slab.percent_rate);
+            break;
+          }
+        }
+        const volumeBonus = baseAmount.mul(volumeBonusRate).div(100);
+        incentive = incentive.plus(volumeBonus);
+      }
+      
+      incentive = incentive.toDecimalPlaces(2);
+      // ----------------------------
+
       const idempotencyKey = `INCENTIVE:${tenantId}:${employee.id}:${caseId}:${event.source_type}:${event.source_id}`;
       const metadata = {
         source_type: event.source_type,
@@ -365,12 +466,32 @@ async function listPayouts(tenantId, filters = {}, currentUser = {}) {
   const { user_id, status, hierarchy_level, month, product, lender, search, page = 1, limit = 50 } = filters;
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const take = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
-  const where = { tenant_id: tenantId };
-  if (currentUser.role === 'DSA_MEMBER') where.user_id = currentUser.id;
-  else if (user_id) where.user_id = Number(user_id);
+  const baseWhere = { tenant_id: tenantId };
+  if (currentUser.role === 'DSA_MEMBER') baseWhere.user_id = currentUser.id;
+  else if (user_id) baseWhere.user_id = Number(user_id);
+  if (hierarchy_level) baseWhere.hierarchy_level = hierarchy_level;
+
+  const monthRecords = await prisma.salesIncentiveLedger.findMany({
+    where: baseWhere,
+    select: { payout_period: true },
+    distinct: ['payout_period']
+  });
+
+  const availableMonthsSet = new Set(monthRecords.map(r => r.payout_period).filter(Boolean));
+  const nowForMonths = new Date();
+  for (let i = 0; i < 6; i++) {
+    availableMonthsSet.add(monthKey(new Date(nowForMonths.getFullYear(), nowForMonths.getMonth() - i, 1)));
+  }
+  const availableMonths = Array.from(availableMonthsSet).sort().reverse();
+
+  const selectedMonth = month === 'all' ? null : (month || availableMonths[0]);
+
+  const where = { ...baseWhere };
   if (status) where.status = status;
-  if (hierarchy_level) where.hierarchy_level = hierarchy_level;
-  if (month) where.payout_period = month;
+  
+  if (selectedMonth) {
+    where.payout_period = selectedMonth;
+  }
   if (product) where.case_entity = { product_type: productValue(product) };
   if (lender) where.case_entity = { ...(where.case_entity || {}), tenant_lender_id: Number(lender) };
   if (search) {
@@ -418,7 +539,8 @@ async function listPayouts(tenantId, filters = {}, currentUser = {}) {
       current_month: summarize(all.filter(r => r.payout_period === current)),
       previous_month: summarize(all.filter(r => r.payout_period === previous)),
       older: summarize(all.filter(r => r.payout_period && r.payout_period < previous))
-    }
+    },
+    availableMonths
   };
 }
 

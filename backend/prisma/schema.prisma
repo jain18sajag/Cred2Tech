@@ -131,7 +131,7 @@ model User {
   activity_logs             ActivityLog[]
   audit_logs                AuditLog[]
   stage_history             CaseStageHistory[]
-  sub_dsa_payout_rule       SubDsaPayoutRule?
+  sub_dsa_payout_rules      SubDsaPayoutRule[]
   SubDsaPayoutLedger        SubDsaPayoutLedger[]
   SubDsaInvoice             SubDsaInvoice[]
   SubDsaPayoutHistory       SubDsaPayoutHistory[]
@@ -1566,7 +1566,9 @@ model LenderCommissionRule {
   product_type     LenderProductType
   payout_basis     PayoutBasis
   commission_type  CommissionType
-  is_active        Boolean           @default(true)
+  status           String            @default("ACTIVE") // ACTIVE | ARCHIVED
+  effective_from   DateTime          @default(now())
+  effective_to     DateTime?
   created_at       DateTime          @default(now())
   updated_at       DateTime          @updatedAt
 
@@ -1577,7 +1579,7 @@ model LenderCommissionRule {
   case_count_slabs CommissionCaseCountSlab[]
   special_schemes  CommissionSpecialScheme[]
 
-  @@unique([tenant_id, tenant_lender_id, product_type])
+  @@index([tenant_id, tenant_lender_id, product_type])
   @@map("lender_commission_rules")
 }
 
@@ -1982,10 +1984,14 @@ model CommissionLedger {
 model SubDsaPayoutRule {
   id                  Int     @id @default(autoincrement())
   tenant_id           Int
-  sub_dsa_user_id     Int     @unique
+  sub_dsa_user_id     Int
   default_payout_rate Float
+  calculation_base    String  @default("DISBURSED_AMOUNT") // DISBURSED_AMOUNT | LENDER_COMMISSION
   payout_trigger      String
   tds_applicable      Boolean @default(true)
+  status              String  @default("ACTIVE") // ACTIVE | ARCHIVED
+  effective_from      DateTime @default(now())
+  effective_to        DateTime?
 
   overrides        SubDsaLenderOverride[]
   case_count_slabs SubDsaCaseCountSlab[]
@@ -1994,6 +2000,7 @@ model SubDsaPayoutRule {
   user   User   @relation(fields: [sub_dsa_user_id], references: [id])
   tenant Tenant @relation(fields: [tenant_id], references: [id])
 
+  @@index([sub_dsa_user_id])
   @@map("sub_dsa_payout_rules")
 }
 
@@ -2003,6 +2010,7 @@ model SubDsaLenderOverride {
   tenant_lender_id Int
   products         String
   override_rate    Float
+  calculation_base String    @default("DISBURSED_AMOUNT") // DISBURSED_AMOUNT | LENDER_COMMISSION
   effective_from   DateTime?
   effective_to     DateTime?
 
@@ -2216,7 +2224,36 @@ model SalesIncentiveRule {
   lender  TenantLender?          @relation(fields: [tenant_lender_id], references: [id])
   ledgers SalesIncentiveLedger[]
 
+  volume_slabs     SalesIncentiveVolumeSlab[]
+  case_count_slabs SalesIncentiveCaseCountSlab[]
+
   @@map("sales_incentive_rules")
+}
+
+model SalesIncentiveVolumeSlab {
+  id           Int    @id @default(autoincrement())
+  rule_id      Int
+  from_amount  Float
+  to_amount    Float?
+  percent_rate Float
+
+  rule SalesIncentiveRule @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+
+  @@index([rule_id])
+  @@map("sales_incentive_volume_slabs")
+}
+
+model SalesIncentiveCaseCountSlab {
+  id              Int    @id @default(autoincrement())
+  rule_id         Int
+  from_cases      Int
+  to_cases        Int?
+  payout_per_case Float
+
+  rule SalesIncentiveRule @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+
+  @@index([rule_id])
+  @@map("sales_incentive_case_slabs")
 }
 
 model SalesIncentiveLedger {

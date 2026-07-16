@@ -138,9 +138,16 @@ async function getMtdStats(tenantId, subDsaUserId) {
 
 async function getPayoutConfig(tenantId, subDsaUserId) {
   await ensureSubDsaUser(tenantId, subDsaUserId);
-  return prisma.subDsaPayoutRule.findUnique({
-    where: { sub_dsa_user_id: Number(subDsaUserId) },
-    include: { overrides: true, case_count_slabs: { orderBy: { from_cases: 'asc' } }, special_schemes: { orderBy: { valid_from: 'asc' } } }
+  return prisma.subDsaPayoutRule.findFirst({
+    where: { 
+      sub_dsa_user_id: Number(subDsaUserId),
+      status: 'ACTIVE'
+    },
+    include: {
+      overrides: { include: { lender: { select: { bank_name: true } } } },
+      case_count_slabs: { orderBy: { from_cases: 'asc' } },
+      special_schemes: { orderBy: { valid_from: 'asc' } }
+    }
   });
 }
 
@@ -149,6 +156,7 @@ function validateConfig(body) {
   if (defaultRate.gt(100)) fail('default_payout_rate cannot exceed 100');
   const payoutTrigger = body.payout_trigger || 'ON_DSA_RECEIPT';
   if (!PAYOUT_TRIGGERS.has(payoutTrigger)) fail('Invalid payout_trigger');
+  const calculationBase = body.calculation_base || 'DISBURSED_AMOUNT';
 
   const overrides = (body.overrides || []).map((o, idx) => {
     const rate = dec(o.override_rate, `overrides[${idx}].override_rate`, true);
@@ -160,6 +168,7 @@ function validateConfig(body) {
       tenant_lender_id: intVal(o.tenant_lender_id, `overrides[${idx}].tenant_lender_id`, true),
       products: normalizeProducts(o.products),
       override_rate: rate,
+      calculation_base: o.calculation_base || 'DISBURSED_AMOUNT',
       effective_from: from,
       effective_to: to
     };
@@ -215,7 +224,10 @@ function validateConfig(body) {
     if (!['Cases', 'Volume'].includes(s.basis)) fail(`schemes[${idx}].basis must be Cases or Volume`);
   });
 
-  return { defaultRate, payoutTrigger, tdsApplicable: body.tds_applicable === undefined ? true : boolVal(body.tds_applicable), overrides, slabs, schemes };
+  return {
+    defaultRate, payoutTrigger, tdsApplicable: boolVal(body.tds_applicable), calculationBase,
+    overrides, slabs, schemes
+  };
 }
 
 async function upsertPayoutConfig(tenantId, subDsaUserId, body) {
@@ -223,22 +235,37 @@ async function upsertPayoutConfig(tenantId, subDsaUserId, body) {
   return prisma.$transaction(async tx => {
     await ensureSubDsaUser(tenantId, subDsaUserId, tx);
     await ensureTenantLenders(tenantId, [...parsed.overrides.map(o => o.tenant_lender_id), ...parsed.schemes.map(s => s.tenant_lender_id)], tx);
-    const existing = await tx.subDsaPayoutRule.findUnique({ where: { sub_dsa_user_id: Number(subDsaUserId) } });
+    const existing = await tx.subDsaPayoutRule.findFirst({ 
+      where: { 
+        sub_dsa_user_id: Number(subDsaUserId),
+        status: 'ACTIVE'
+      } 
+    });
+    
+    if (existing) {
+      await tx.subDsaPayoutRule.update({
+        where: { id: existing.id },
+        data: { status: 'ARCHIVED', effective_to: new Date() }
+      });
+    }
+
     const parentData = {
       default_payout_rate: parsed.defaultRate.toNumber(),
       payout_trigger: parsed.payoutTrigger,
-      tds_applicable: parsed.tdsApplicable
+      tds_applicable: parsed.tdsApplicable,
+      calculation_base: parsed.calculationBase,
+      status: 'ACTIVE',
+      effective_from: new Date()
     };
-    const rule = existing
-      ? await tx.subDsaPayoutRule.update({ where: { id: existing.id }, data: parentData })
-      : await tx.subDsaPayoutRule.create({ data: { tenant_id: tenantId, sub_dsa_user_id: Number(subDsaUserId), ...parentData } });
-    await tx.subDsaLenderOverride.deleteMany({ where: { rule_id: rule.id } });
-    await tx.subDsaCaseCountSlab.deleteMany({ where: { rule_id: rule.id } });
-    await tx.subDsaSpecialScheme.deleteMany({ where: { rule_id: rule.id } });
+    
+    const rule = await tx.subDsaPayoutRule.create({ 
+      data: { tenant_id: tenantId, sub_dsa_user_id: Number(subDsaUserId), ...parentData } 
+    });
+
     if (parsed.overrides.length) await tx.subDsaLenderOverride.createMany({ data: parsed.overrides.map(o => ({ ...o, override_rate: o.override_rate.toNumber(), rule_id: rule.id })) });
     if (parsed.slabs.length) await tx.subDsaCaseCountSlab.createMany({ data: parsed.slabs.map(s => ({ ...s, payout_per_case: s.payout_per_case.toNumber(), rule_id: rule.id })) });
     if (parsed.schemes.length) await tx.subDsaSpecialScheme.createMany({ data: parsed.schemes.map(s => ({ ...s, bonus_per_case: s.bonus_per_case?.toNumber() ?? null, bonus_percent: s.bonus_percent?.toNumber() ?? null, rule_id: rule.id })) });
-    return tx.subDsaPayoutRule.findUnique({ where: { id: rule.id }, include: { overrides: true, case_count_slabs: true, special_schemes: true } });
+    return tx.subDsaPayoutRule.findFirst({ where: { id: rule.id }, include: { overrides: true, case_count_slabs: true, special_schemes: true } });
   });
 }
 
@@ -260,15 +287,25 @@ async function calculatePayout(tenantId, subDsaUserId, commissionLedgerId, clien
     fail('Commission ledger is not eligible for Sub-DSA payout');
   }
 
-  const rule = await client.subDsaPayoutRule.findUnique({
-    where: { sub_dsa_user_id: Number(subDsaUserId) },
+  const eventDate = sourceDateFor(commLedger);
+
+  const rule = await client.subDsaPayoutRule.findFirst({
+    where: { 
+      sub_dsa_user_id: Number(subDsaUserId),
+      status: { in: ['ACTIVE', 'ARCHIVED'] },
+      effective_from: { lte: eventDate },
+      OR: [
+        { effective_to: null },
+        { effective_to: { gte: eventDate } }
+      ]
+    },
+    orderBy: { id: 'desc' },
     include: { overrides: true, case_count_slabs: { orderBy: { from_cases: 'asc' } }, special_schemes: true }
   });
   if (!rule) fail('No payout configuration found for this Sub-DSA');
   if (mode === 'AUTO' && rule.payout_trigger === 'MANUAL') fail('Payout trigger is MANUAL');
   if (mode === 'AUTO' && rule.payout_trigger === 'ON_DSA_RECEIPT' && commLedger.status !== 'PAID') fail('Payout requires DSA receipt/paid commission status');
 
-  const eventDate = sourceDateFor(commLedger);
   const dsaEarned = new Prisma.Decimal(commLedger.calculated_commission).toDecimalPlaces(2);
   const disbursedAmount = new Prisma.Decimal(commLedger.disbursed_amount || 0).toDecimalPlaces(2);
   const product = commLedger.product_type;
@@ -280,7 +317,9 @@ async function calculatePayout(tenantId, subDsaUserId, commissionLedgerId, clien
     .sort((a, b) => (b.effective_from || new Date(0)) - (a.effective_from || new Date(0)) || a.id - b.id);
   const appliedOverride = applicableOverrides[0] || null;
   const applicableRate = new Prisma.Decimal(appliedOverride?.override_rate ?? rule.default_payout_rate);
-  let subDsaPayout = disbursedAmount.mul(applicableRate).div(100).toDecimalPlaces(2);
+  const appliedBase = (appliedOverride?.calculation_base ?? rule.calculation_base) === 'LENDER_COMMISSION' ? dsaEarned : disbursedAmount;
+  
+  let subDsaPayout = appliedBase.mul(applicableRate).div(100).toDecimalPlaces(2);
 
   const period = monthKey(eventDate);
   const { start, end } = monthRange(period);
@@ -401,13 +440,36 @@ async function listPayouts(tenantId, filters, currentUser) {
   const { month, sub_dsa_user_id, status, product, search, page = 1, limit = 50 } = filters;
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const take = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
-  const where = { tenant_id: tenantId };
-  if (currentUser.role === 'SUB_DSA') where.sub_dsa_user_id = currentUser.id;
-  else if (sub_dsa_user_id) where.sub_dsa_user_id = Number(sub_dsa_user_id);
+  const baseWhere = { tenant_id: tenantId };
+  if (currentUser.role === 'SUB_DSA') baseWhere.sub_dsa_user_id = currentUser.id;
+  else if (sub_dsa_user_id) baseWhere.sub_dsa_user_id = Number(sub_dsa_user_id);
+
+  // Extract available months from records matching user/tenant
+  const monthRecords = await prisma.subDsaPayoutLedger.findMany({
+    where: baseWhere,
+    select: { calculation_metadata: true, created_at: true }
+  });
+
+  const uniqueMonths = new Set();
+  const nowForMonths = new Date();
+  for (let i = 0; i < 6; i++) {
+    uniqueMonths.add(monthKey(new Date(nowForMonths.getFullYear(), nowForMonths.getMonth() - i, 1)));
+  }
+  for (const r of monthRecords) {
+    uniqueMonths.add(r.calculation_metadata?.payout_period || monthKey(r.created_at));
+  }
+  
+  const availableMonths = Array.from(uniqueMonths).filter(Boolean).sort().reverse();
+  if (availableMonths.length === 0) availableMonths.push(monthKey(new Date()));
+
+  const selectedMonth = month === 'all' ? null : (month || availableMonths[0]);
+
+  const where = { ...baseWhere };
   if (status) where.status = status;
-  if (month) {
-    monthRange(month);
-    where.calculation_metadata = { path: ['payout_period'], equals: month };
+  
+  if (selectedMonth) {
+    monthRange(selectedMonth);
+    where.calculation_metadata = { path: ['payout_period'], equals: selectedMonth };
   }
   if (product) where.calculation_metadata = { path: ['product_type'], equals: String(product).toUpperCase() };
   if (search) {
@@ -453,7 +515,8 @@ async function listPayouts(tenantId, filters, currentUser) {
       current_month: summarize(all.filter(r => (r.calculation_metadata?.payout_period || monthKey(r.created_at)) === currentPeriod)),
       previous_month: summarize(all.filter(r => (r.calculation_metadata?.payout_period || monthKey(r.created_at)) === previousPeriod)),
       older: summarize(all.filter(r => (r.calculation_metadata?.payout_period || monthKey(r.created_at)) < previousPeriod))
-    }
+    },
+    availableMonths
   };
 }
 

@@ -42,6 +42,7 @@ function SubDsaPayoutSetup({ userId, lenders }) {
   const [syncing, setSyncing] = useState(false);
 
   const [defaultRate, setDefaultRate] = useState(30);
+  const [calculationBase, setCalculationBase] = useState('DISBURSED_AMOUNT');
   const [payoutTrigger, setPayoutTrigger] = useState('ON_DSA_RECEIPT');
   const [tdsApplicable, setTdsApplicable] = useState(true);
   const [overrides, setOverrides] = useState([]);
@@ -57,6 +58,7 @@ function SubDsaPayoutSetup({ userId, lenders }) {
       .then(cfg => {
         if (cfg) {
           setDefaultRate(cfg.default_payout_rate || 30);
+          setCalculationBase(cfg.calculation_base || 'DISBURSED_AMOUNT');
           setPayoutTrigger(cfg.payout_trigger || 'ON_DSA_RECEIPT');
           setTdsApplicable(cfg.tds_applicable !== false);
           setOverrides((cfg.overrides || []).map(o => ({ ...o, products: o.products || '' })));
@@ -84,6 +86,7 @@ function SubDsaPayoutSetup({ userId, lenders }) {
     try {
       await savePayoutConfig(userId, {
         default_payout_rate: defaultRate,
+        calculation_base: calculationBase,
         payout_trigger: payoutTrigger,
         tds_applicable: tdsApplicable,
         overrides,
@@ -137,7 +140,14 @@ function SubDsaPayoutSetup({ userId, lenders }) {
               onChange={e => setDefaultRate(parseFloat(e.target.value))}
               style={{ ...inputStyle, width: 80 }}
             />
-            <span style={{ fontSize: 13, color: '#6B7280' }}>% of DSA commission</span>
+            <span style={{ fontSize: 13, color: '#6B7280' }}>%</span>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <label style={{...labelStyle, fontSize: 11, marginBottom: 4}}>APPLIED ON</label>
+            <select value={calculationBase} onChange={e => setCalculationBase(e.target.value)} style={{...inputStyle, padding: '4px 8px', fontSize: 12}}>
+              <option value="DISBURSED_AMOUNT">Disbursed Amount</option>
+              <option value="LENDER_COMMISSION">Lender Commission</option>
+            </select>
           </div>
           <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 4 }}>Applied to all lenders unless overridden below</div>
         </div>
