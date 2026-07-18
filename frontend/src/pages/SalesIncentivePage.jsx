@@ -212,6 +212,7 @@ export default function SalesIncentivePage() {
   const [loading, setLoading] = useState(true);
   const [ledgers, setLedgers] = useState([]);
   const [summary, setSummary] = useState({ current_month: {}, previous_month: {}, older: {} });
+  const [availableMonths, setAvailableMonths] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [rules, setRules] = useState([]);
   const [syncingLevel, setSyncingLevel] = useState(null);
@@ -223,7 +224,9 @@ export default function SalesIncentivePage() {
     hierarchy_level: 'L1',
     commission_type: 'PERCENTAGE',
     commission_value: '',
-    calculation_base: 'DISBURSED_AMOUNT'
+    calculation_base: 'DISBURSED_AMOUNT',
+    volume_slabs: [],
+    case_count_slabs: []
   });
 
   const fetchData = useCallback(async () => {
@@ -238,6 +241,13 @@ export default function SalesIncentivePage() {
       const resPayouts = await salesIncentiveService.getPayouts(params);
       setLedgers(resPayouts.ledgers || resPayouts.data || []);
       setSummary(resPayouts.summary || { current_month: {}, previous_month: {}, older: {} });
+      const months = resPayouts.availableMonths || [];
+      setAvailableMonths(months);
+      
+      if (!filters.month && months.length > 0) {
+        setFilters(prev => ({ ...prev, month: months[0] }));
+      }
+      
       if (isAdmin) {
         const [resEmployees, resRules] = await Promise.all([
           salesIncentiveService.getEmployeesConfig(),
@@ -266,7 +276,7 @@ export default function SalesIncentivePage() {
       } else {
         await salesIncentiveService.createRule(ruleForm);
       }
-      setRuleForm({ hierarchy_level: 'L1', commission_type: 'PERCENTAGE', commission_value: '', calculation_base: 'DISBURSED_AMOUNT' });
+      setRuleForm({ hierarchy_level: 'L1', commission_type: 'PERCENTAGE', commission_value: '', calculation_base: 'DISBURSED_AMOUNT', volume_slabs: [], case_count_slabs: [] });
       setEditingRuleId(null);
       fetchData();
     } catch (err) {
@@ -345,7 +355,20 @@ export default function SalesIncentivePage() {
       <div style={{ padding: '16px', background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, marginBottom: 20, display: 'flex', gap: 16 }}>
         <div style={{ flex: 1 }}>
           <label style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Month</label>
-          <input type="month" value={filters.month} onChange={e => setFilters({...filters, month: e.target.value})} style={inputStyle} />
+          <select 
+            value={filters.month || 'all'} 
+            onChange={e => setFilters({...filters, month: e.target.value === 'all' ? 'all' : e.target.value})} 
+            style={inputStyle}
+            disabled={availableMonths.length === 0}
+          >
+            {availableMonths.length === 0 && <option value="">No data available</option>}
+            {availableMonths.length > 0 && <option value="all">All Months</option>}
+            {availableMonths.map(m => (
+              <option key={m} value={m}>
+                {new Date(m + '-01').toLocaleString('default', { month: 'long', year: 'numeric' })}
+              </option>
+            ))}
+          </select>
         </div>
         {isAdmin && (
           <div style={{ flex: 1 }}>
@@ -389,8 +412,8 @@ export default function SalesIncentivePage() {
             </div>
             
             <div style={{ padding: 24, overflowY: 'auto', flex: 1 }}>
-              <form onSubmit={handleRuleSubmit} style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 24, background: '#F9FAFB', padding: 16, borderRadius: 8, border: '1px solid #E5E7EB' }}>
-                <div style={{ flex: 1 }}>
+              <form onSubmit={handleRuleSubmit} style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: 24, background: '#F9FAFB', padding: 16, borderRadius: 8, border: '1px solid #E5E7EB' }}>
+                <div style={{ flex: '1 1 20%' }}>
                   <label style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Level</label>
                   <select required value={ruleForm.hierarchy_level} onChange={e => setRuleForm({...ruleForm, hierarchy_level: e.target.value})} style={inputStyle}>
                     <option value="L1">L1</option>
@@ -414,10 +437,14 @@ export default function SalesIncentivePage() {
                   <label style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Base</label>
                   <select value={ruleForm.calculation_base} onChange={e => setRuleForm({...ruleForm, calculation_base: e.target.value})} style={inputStyle}>
                     <option value="DISBURSED_AMOUNT">Disbursed Amount</option>
+                    <option value="LENDER_COMMISSION">Lender Commission</option>
+                    <option value="DSA_NET_COMMISSION">DSA Net Commission</option>
+                    <option value="PROCESSING_FEE">Processing Fee</option>
                     <option value="FIXED_PER_CASE">Fixed Per Case</option>
                   </select>
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
+
+                <div style={{ flexBasis: '100%', display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
                   {editingRuleId && (
                     <button type="button" onClick={handleCancelEdit} style={{ padding: '8px 16px', background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, fontWeight: 600, cursor: 'pointer', color: '#374151' }}>Cancel</button>
                   )}
@@ -452,7 +479,9 @@ export default function SalesIncentivePage() {
                               hierarchy_level: r.hierarchy_level,
                               commission_type: r.commission_type,
                               commission_value: r.commission_value,
-                              calculation_base: r.calculation_base
+                              calculation_base: r.calculation_base,
+                              volume_slabs: r.volume_slabs || [],
+                              case_count_slabs: r.case_count_slabs || []
                             });
                           }}
                           style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#4F46E5', display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600 }}

@@ -57,11 +57,12 @@ export default function LenderCommissionFilters({ filters, setFilters, available
         <label style={labelStyle}>MONTH</label>
         <select 
           style={inputStyle} 
-          value={filters.month || ''}
-          onChange={(e) => setFilters({...filters, month: e.target.value})}
+          value={filters.month || 'all'}
+          onChange={(e) => setFilters({...filters, month: e.target.value === 'all' ? 'all' : e.target.value})}
           disabled={availableMonths.length === 0}
         >
           {availableMonths.length === 0 && <option value="">No data available</option>}
+          {availableMonths.length > 0 && <option value="all">All Months</option>}
           {availableMonths.map(m => (
              <option key={m} value={m}>{m}</option>
           ))}

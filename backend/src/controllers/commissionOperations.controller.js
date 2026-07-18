@@ -8,6 +8,10 @@ function getMonthYearString(date) {
     return date.toLocaleString('default', { month: 'long', year: 'numeric' });
 }
 
+function getLedgerDate(l) {
+    return l.disbursement?.disbursement_date || l.created_at;
+}
+
 /**
  * Helper to get period label based on a reference date
  */
@@ -53,6 +57,7 @@ exports.getSalesIncentives = async (req, res) => {
         const allLedgers = await prisma.commissionLedger.findMany({
             where: baseWhere,
             include: {
+                disbursement: { select: { disbursement_date: true } },
                 case_entity: {
                     include: {
                         created_by: true,
@@ -69,7 +74,7 @@ exports.getSalesIncentives = async (req, res) => {
         const availableMembersMap = new Map();
         
         allLedgers.forEach(ledger => {
-            availableMonthsSet.add(getMonthYearString(ledger.created_at));
+            availableMonthsSet.add(getMonthYearString(getLedgerDate(ledger)));
             if (ledger.case_entity?.created_by) {
                 const creator = ledger.case_entity.created_by;
                 availableMembersMap.set(creator.id, creator.name);
@@ -85,18 +90,18 @@ exports.getSalesIncentives = async (req, res) => {
         const availableTeamMembers = Array.from(availableMembersMap.entries()).map(([id, name]) => ({ id, name }));
 
         // 4. Determine Reference Month for filtering/summary
-        const selectedMonthStr = month || availableMonths[0];
+        const selectedMonthStr = (month && month !== 'all') ? month : (availableMonths[0] || getMonthYearString(new Date()));
         // Parse the selected month back to a date for relative comparison
         const referenceDate = new Date(selectedMonthStr + " 1"); // e.g., "March 2026 1"
 
         // 5. Apply explicit filters to the dataset for the list view
         let filteredLedgers = allLedgers;
 
-        if (month) {
-            filteredLedgers = filteredLedgers.filter(l => getMonthYearString(l.created_at) === month);
-        } else {
+        if (month && month !== 'all') {
+            filteredLedgers = filteredLedgers.filter(l => getMonthYearString(getLedgerDate(l)) === month);
+        } else if (!month) {
             // Default to most recent available month if none specified
-            filteredLedgers = filteredLedgers.filter(l => getMonthYearString(l.created_at) === availableMonths[0]);
+            filteredLedgers = filteredLedgers.filter(l => getMonthYearString(getLedgerDate(l)) === availableMonths[0]);
         }
 
         if (team_member_id && team_member_id !== 'all') {
@@ -134,7 +139,7 @@ exports.getSalesIncentives = async (req, res) => {
         };
 
         summarySourceLedgers.forEach(l => {
-            const period = getPeriodLabel(l.created_at, referenceDate);
+            const period = getPeriodLabel(getLedgerDate(l), referenceDate);
             const bucket = summaryBuckets[period];
             
             bucket.cases.add(l.case_id);
@@ -282,15 +287,20 @@ exports.getLenderCommissions = async (req, res) => {
 
         const allLedgers = await prisma.commissionLedger.findMany({
             where: { tenant_id },
-            include: { case_entity: { include: { customer: true } } },
+            include: { disbursement: { select: { disbursement_date: true } }, case_entity: { include: { customer: true } } },
             orderBy: { created_at: 'desc' }
         });
 
         const availableMonthsSet = new Set();
         const availableLendersSet = new Set();
         
+        const nowForMonths = new Date();
+        for (let i = 0; i < 6; i++) {
+            availableMonthsSet.add(getMonthYearString(new Date(nowForMonths.getFullYear(), nowForMonths.getMonth() - i, 1)));
+        }
+        
         allLedgers.forEach(l => {
-            availableMonthsSet.add(getMonthYearString(l.created_at));
+            availableMonthsSet.add(getMonthYearString(getLedgerDate(l)));
             if (l.lender_name) availableLendersSet.add(l.lender_name);
         });
 
@@ -306,12 +316,12 @@ exports.getLenderCommissions = async (req, res) => {
         if (availableMonths.length === 0) availableMonths.push(getMonthYearString(new Date()));
         const availableLenders = Array.from(availableLendersSet);
 
-        const selectedMonthStr = month || availableMonths[0];
+        const selectedMonthStr = (month && month !== 'all') ? month : availableMonths[0];
         const referenceDate = new Date(selectedMonthStr + " 1");
 
         let filteredLedgers = allLedgers;
-        if (month) filteredLedgers = filteredLedgers.filter(l => getMonthYearString(l.created_at) === month);
-        else filteredLedgers = filteredLedgers.filter(l => getMonthYearString(l.created_at) === availableMonths[0]);
+        if (month && month !== 'all') filteredLedgers = filteredLedgers.filter(l => getMonthYearString(getLedgerDate(l)) === month);
+        else if (!month) filteredLedgers = filteredLedgers.filter(l => getMonthYearString(getLedgerDate(l)) === availableMonths[0]);
 
         if (lender_name && lender_name !== 'all') {
             filteredLedgers = filteredLedgers.filter(l => l.lender_name === lender_name);
@@ -339,7 +349,7 @@ exports.getLenderCommissions = async (req, res) => {
         };
 
         summarySourceLedgers.forEach(l => {
-            const period = getPeriodLabel(l.created_at, referenceDate);
+            const period = getPeriodLabel(getLedgerDate(l), referenceDate);
             const bucket = summaryBuckets[period];
             
             bucket.cases.add(l.case_id);
@@ -434,11 +444,11 @@ exports.getInvoiceCandidates = async (req, res) => {
 
         const allPendingLedgers = await prisma.commissionLedger.findMany({
             where: { tenant_id, status: 'PENDING' },
-            include: { case_entity: { include: { customer: true } } }
+            include: { disbursement: { select: { disbursement_date: true } }, case_entity: { include: { customer: true } } }
         });
 
         let candidates = allPendingLedgers;
-        if (month) candidates = candidates.filter(l => getMonthYearString(l.created_at) === month);
+        if (month) candidates = candidates.filter(l => getMonthYearString(getLedgerDate(l)) === month);
         if (lender_name && lender_name !== 'all') candidates = candidates.filter(l => l.lender_name === lender_name);
         if (product_type && product_type !== 'all') candidates = candidates.filter(l => l.product_type === product_type);
 

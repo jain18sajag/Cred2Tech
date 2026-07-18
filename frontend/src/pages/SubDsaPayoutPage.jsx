@@ -393,6 +393,7 @@ export default function SubDsaPayoutPage() {
   const [loading, setLoading] = useState(true);
   const [ledgers, setLedgers] = useState([]);
   const [summary, setSummary] = useState({ current_month: {}, previous_month: {}, older: {} });
+  const [availableMonths, setAvailableMonths] = useState([]);
   const [subDsaUsers, setSubDsaUsers] = useState([]);
   const [filters, setFilters] = useState({ month: '', sub_dsa_user_id: '', status: '', product: '', search: '' });
   const [selectedIds, setSelectedIds] = useState([]);
@@ -413,6 +414,12 @@ export default function SubDsaPayoutPage() {
       setLedgers(res.ledgers || []);
       setSelectedIds(prev => prev.filter(id => (res.ledgers || []).some(l => l.id === id && l.status === 'DRAFT')));
       setSummary(res.summary || { current_month: {}, previous_month: {}, older: {} });
+      const months = res.availableMonths || [];
+      setAvailableMonths(months);
+
+      if (!filters.month && months.length > 0) {
+        setFilters(prev => ({ ...prev, month: months[0] }));
+      }
     } catch (e) {
       console.error('Failed to load payouts:', e);
     } finally {
@@ -493,7 +500,20 @@ export default function SubDsaPayoutPage() {
       <div style={{ ...filterBarStyle, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <label style={{ fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase' }}>Month</label>
-          <input type="month" value={filters.month} onChange={e => setFilters(p => ({ ...p, month: e.target.value }))} style={inputStyle} />
+          <select 
+            value={filters.month || 'all'} 
+            onChange={e => setFilters(p => ({ ...p, month: e.target.value === 'all' ? 'all' : e.target.value }))} 
+            style={inputStyle}
+            disabled={availableMonths.length === 0}
+          >
+            {availableMonths.length === 0 && <option value="">No data available</option>}
+            {availableMonths.length > 0 && <option value="all">All Months</option>}
+            {availableMonths.map(m => (
+              <option key={m} value={m}>
+                {new Date(m + '-01').toLocaleString('default', { month: 'long', year: 'numeric' })}
+              </option>
+            ))}
+          </select>
         </div>
         {isAdmin && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
