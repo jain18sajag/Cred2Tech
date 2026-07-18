@@ -299,6 +299,7 @@ function buildMethodEligibilitySummary(lenderResults = []) {
                 isEligible: !!ev.is_eligible,
                 monthlyIncomeUsed: ev.monthly_income_used || null,
                 primaryMonthlyIncomeUsed: ev.primary_monthly_income_used || null,
+                eligibleIncomeBreakdown: ev.eligible_income_breakdown || [],
                 weightedOtherIncome: ev.weighted_other_income || null,
                 netObligations: ev.foir_breakdown?.net_obligations ?? null,
                 maximumEligibleEmi: ev.maximum_eligible_emi || ev.foir_breakdown?.maximum_eligible_emi || null,
@@ -721,6 +722,22 @@ function buildIncomeCalculationLog(esr, lenderResults = []) {
     const propertyCollateral = buildPropertyCollateralLog(esr, lenderResults);
     const obligationAudit = buildObligationAuditLog(esr);
     const methodEligibilitySummary = buildMethodEligibilitySummary(lenderResults);
+    const evaluatedMethodNames = new Set(
+        (lenderResults || []).flatMap((lender) => (lender.scheme_evaluations || []))
+            .map((evaluation) => String(evaluation.scheme_name || '').toUpperCase())
+            .filter(Boolean)
+    );
+    const hasMethod = (matcher) => Array.from(evaluatedMethodNames).some((name) => matcher.test(name));
+    const visibleMethods = {
+        ...(hasMethod(/SALARIED/) ? { salaried: buildSalariedLog(esr) } : {}),
+        ...(hasMethod(/BANKING|\bABB\b/) ? { bankingAbb: buildBankingAbbLog(esr) } : {}),
+        ...(hasMethod(/\bGST\b|GROSS\s+MARGIN/) ? { gst: buildGstLog(esr) } : {}),
+        ...(hasMethod(/ITR|NET\s+PROFIT|CASH\s+PROFIT|\bNPM\b/) ? { itrNpm: buildItrNpmLog(esr) } : {}),
+        ...(hasMethod(/\bGRP\b|GROSS\s+RECEIPT/) ? { grp: buildGrpLog(esr) } : {}),
+        ...(hasMethod(/\bDSCR\b|\bDCSR\b/) ? { dscr: buildDscrLog(esr, lenderResults) } : {}),
+        ...(hasMethod(/BUSINESS\s+MARGIN/) ? { businessMargin: buildBusinessMarginLog(esr) } : {}),
+        ...(hasMethod(/NET\s+WORTH|\bNWM\b/) ? { netWorth: buildNetWorthLog(esr) } : {})
+    };
 
     return {
         selectedMethod,
@@ -729,16 +746,8 @@ function buildIncomeCalculationLog(esr, lenderResults = []) {
         manualIncomeImpact,
         obligationAudit,
         methodEligibilitySummary,
-        methods: {
-            salaried: buildSalariedLog(esr),
-            bankingAbb: buildBankingAbbLog(esr),
-            gst: buildGstLog(esr),
-            itrNpm: buildItrNpmLog(esr),
-            grp: buildGrpLog(esr),
-            dscr: buildDscrLog(esr, lenderResults),
-            businessMargin: buildBusinessMarginLog(esr),
-            netWorth: buildNetWorthLog(esr)
-        },
+        visibleEvaluatedMethods: Array.from(evaluatedMethodNames),
+        methods: visibleMethods,
         aggregatedWarnings: [
             ...collectWarnings(lenderResults),
             ...manualIncomeImpact.warnings,

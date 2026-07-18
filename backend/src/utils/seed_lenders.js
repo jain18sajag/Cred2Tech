@@ -2,7 +2,10 @@ const prisma = require('../../config/db');
 
 const LENDERS = [
   { name: 'ICICI Bank', code: 'ICICI' },
-  { name: 'HDFC Bank', code: 'HDFC' }
+  { name: 'HDFC Bank', code: 'HDFC' },
+  { name: 'India Shelters', code: 'INDIA_SHELTERS' },
+  { name: 'Piramal', code: 'PIRAMAL' },
+  { name: 'Tata Capital Housing Finance Ltd', code: 'TATA_HOUSING', legacyCodes: ['TATACAPITAL'] }
 ];
 
 const PRODUCTS = ['HL', 'LAP'];
@@ -18,17 +21,33 @@ const SCHEMES = [
   'Net Worth Method'
 ];
 
-async function seedLendersIfMissing() {
+const LENDER_SCHEMES = {
+  INDIA_SHELTERS: ['Salaried', 'ITR Based', 'Assessed Income Program'],
+  PIRAMAL: ['Salaried', 'Cash Profit Method', 'Banking', 'GRP', 'LIP', 'Low LTV', 'Gross Margin Method', 'Assessed Income Program'],
+  TATA_HOUSING: ['Salaried', 'Net Profit Method', 'Banking', 'GST', 'GRP', 'LIP', 'Low LTV']
+};
+
+const LENDER_EXCLUDED_SCHEMES = {
+  INDIA_SHELTERS: ['Banking', 'GRP', 'LIP', 'Low LTV', 'Gross Margin Method'],
+  TATA_HOUSING: ['Net Worth Method', 'Any other method']
+};
+
+async function seedLendersIfMissing(options = {}) {
   try {
-    for (const lenderData of LENDERS) {
-      let lender = await prisma.lender.findUnique({ where: { code: lenderData.code } });
+    const lenderCodes = Array.isArray(options.lenderCodes) ? new Set(options.lenderCodes) : null;
+    for (const lenderData of LENDERS.filter(item => !lenderCodes || lenderCodes.has(item.code))) {
+      let lender = await prisma.lender.findFirst({
+        where: { code: { in: [lenderData.code, ...(lenderData.legacyCodes || [])] } }
+      });
       if (!lender) {
-        lender = await prisma.lender.create({ data: lenderData });
+        lender = await prisma.lender.create({
+          data: { name: lenderData.name, code: lenderData.code }
+        });
         console.log(`[startup] Created lender: ${lender.name}`);
       } else {
         lender = await prisma.lender.update({
-          where: { code: lenderData.code },
-          data: { name: lenderData.name } 
+          where: { id: lender.id },
+          data: { name: lenderData.name, code: lenderData.code }
         });
       }
 
@@ -52,7 +71,19 @@ async function seedLendersIfMissing() {
           console.log(`[startup] Created product: ${productType} for ${lender.name}`);
         }
 
-        for (const schemeName of SCHEMES) {
+        const excludedSchemes = LENDER_EXCLUDED_SCHEMES[lenderData.code] || [];
+        if (excludedSchemes.length > 0) {
+          await prisma.scheme.updateMany({
+            where: {
+              product_id: product.id,
+              scheme_name: { in: excludedSchemes },
+              status: 'ACTIVE'
+            },
+            data: { status: 'INACTIVE' }
+          });
+        }
+
+        for (const schemeName of (LENDER_SCHEMES[lenderData.code] || SCHEMES)) {
           let scheme = await prisma.scheme.findFirst({
             where: {
               product_id: product.id,
@@ -75,6 +106,7 @@ async function seedLendersIfMissing() {
     console.log('[startup] Lender Configuration verified.');
   } catch (error) {
     console.error('[startup] Failed to seed lenders configuration:', error);
+    throw error;
   }
 }
 

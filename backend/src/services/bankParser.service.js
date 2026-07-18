@@ -31,6 +31,7 @@ function normalizeSamplingDays(sampleDays) {
 
 function extractBankFySnapshot(rawPayload, options = {}) {
     const targetDays = normalizeSamplingDays(options.sampleDays);
+    const useVendorDailyAbb = options.useVendorDailyAbb === true;
     const result = {
         latest: null,
         previous: null,
@@ -117,19 +118,23 @@ function extractBankFySnapshot(rawPayload, options = {}) {
         }
     }
 
-    // Capture vendor ADB only for audit/debug. ICICI Banking method must use
-    // strict daily-balance sampling on 5th/10th/15th/25th, so vendor ADB is
-    // never used as `result.latest`.
+    // ICICI must use strict sampled balances, but lenders such as Tata define
+    // ABB as the vendor's daily average balance. Keep both policies isolated.
     const vendorAdbLatest = result.latest !== null
         ? result.latest
         : (toNum(overview?.averageDailyBalance) ?? toNum(rawBank?.summary?.avgEodBalance) ?? null);
     result._trace.vendor_adb_latest = vendorAdbLatest;
 
-    // Reset vendor-derived values. They may be shown in trace but must not feed ESR.
-    result.latest = null;
-    result.previous = null;
-    result.fy_latest = null;
-    result.fy_previous = null;
+    if (useVendorDailyAbb && vendorAdbLatest !== null) {
+        result.latest = vendorAdbLatest;
+        result._trace.vendor_adb_used = true;
+    } else {
+        // Strict-sampling lenders may show vendor ADB in trace, but it must not feed ESR.
+        result.latest = null;
+        result.previous = null;
+        result.fy_latest = null;
+        result.fy_previous = null;
+    }
 
     // Extract average monthly credit and total credits from overview or account level
     const accountLevel = rawBank?.accountLevelAnalysis ?? rawBank?.result?.[0]?.accountLevelAnalysis ?? rawBank?.result?.accountLevelAnalysis ?? [];
@@ -244,7 +249,7 @@ function extractBankFySnapshot(rawPayload, options = {}) {
     }
 
     // Override the vendor average with our strict sampled average if available
-    if (sampledLatestAbb !== null) {
+    if (sampledLatestAbb !== null && (!useVendorDailyAbb || result.latest === null)) {
         result.latest = sampledLatestAbb;
         result._trace.vendor_adb_used = false;
         result._trace.strict_abb_available = true;

@@ -16,7 +16,10 @@ function getLocalEsrLogsDir() {
     if (process.env.LOGS_DIR) {
         return path.resolve(process.env.LOGS_DIR, 'esr');
     }
-    return path.join(require('os').tmpdir(), 'cred2tech', 'logs', 'esr');
+    // Local development and a standard release both expect traces under the
+    // backend log tree. Environment overrides above still take precedence for
+    // PM2/shared-volume deployments.
+    return path.join(BACKEND_ROOT, 'logs', 'esr');
 }
 
 function shouldUploadTraceToStorage() {
@@ -282,3 +285,4 @@ class EsrTraceLogger {
 }
 
 module.exports = EsrTraceLogger;
+module.exports.getLocalEsrLogsDir = getLocalEsrLogsDir;

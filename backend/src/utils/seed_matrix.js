@@ -106,11 +106,69 @@ const parameterMasterConfig = [
 const schemeMapping = {
   Salaried: 'SAL',
   'Net Profit Method': 'NPM',
+  'NET PROFIT METHOD': 'NPM',
+  'Cash Profit Method': 'NPM',
+  'ITR Based': 'NPM',
   Banking: 'BANK',
+  BANKING: 'BANK',
+  'ABB Method': 'BANK',
   GST: 'GST',
+  'GST Method': 'GST',
+  'gross Margin Method': 'GST',
+  'Gross Margin Method': 'GST',
   GRP: 'GRP',
-  'Net Worth Method': 'NWM'
+  LIP: 'LIP',
+  'Low LTV': 'LOW_LTV',
+  'LOW LTV': 'LOW_LTV',
+  'Net Worth Method': 'NWM',
+  'Assessed income program(AIP)': 'AIP',
+  'Assessed Income Program': 'AIP',
+  'Any other method': 'ANY'
 };
+
+// Source: lender requirement workbooks supplied for the 2026-07 policy rollout.
+// Only explicit numeric/text policy values are seeded. Tata is the exception:
+// per the business instruction, blank cells in its workbook are stored as 0.
+const lenderPolicyValues = {
+  INDIA_SHELTERS: {
+    HL: { hl_min_loan: '500000', hl_max_loan: { SAL: '7000000', NPM: '7000000', BANK: '30000000', GRP: '100000000', LIP: '15000000', LOW_LTV: '15000000', GST: '100000000', AIP: '3500000' }, hl_roi_min: '13%', hl_roi_max: '18%', hl_pf_min: '2%', hl_pf_max: '3%', hl_max_tenure: '240 Months', age_maturity_income: { SAL: '60', NPM: '75', AIP: '75', default: '70' }, age_maturity_non_income: '90', bureau_cutoff: null, bureau_name: 'CIBIL, CRIF', hl_dbr_foir: { SAL: '70%', NPM: '100% if ABB is at least 1x proposed EMI, else 80%', BANK: '67%', GRP: '100%', LIP: '100% if ABB is at least 1x proposed EMI, else 80%', LOW_LTV: null, GST: '100% if ABB is at least 1x proposed EMI, else 80%', AIP: '70%' }, elig_rental_bank: { BANK: 'NO', LOW_LTV: null, default: 'YES' }, elig_rental_cash: { BANK: 'NO', LOW_LTV: null, default: 'YES' }, elig_agri_itr: 'NO', dbr_rental_bank: { BANK: 'NO', default: '100%' }, dbr_rental_cash: { SAL: '50%', NPM: '50%', BANK: 'NO', AIP: '50%', default: '100%' }, dbr_agri_itr: 'NO', existing_obligation: { BANK: 'Loan availed in last 6 months: EMI reduced from ABB; same-statement EMI not obligated; other-bank EMI obligated', LOW_LTV: 'No obligation', default: 'All obligations considered except those closing in next 12 months' }, hl_ltv_upto_30: { SAL: '75%', NPM: '75%', LOW_LTV: null, AIP: '75%', default: '90%' }, hl_ltv_30_75: { SAL: '75%', NPM: '75%', LOW_LTV: null, AIP: '75%', default: '80%' }, hl_ltv_above_75: { LOW_LTV: null, default: '75%' }, hl_ltv_commercial: null, hl_ltv_industrial: null, hl_ltv_plot: null },
+    LAP: { lap_min_loan: '500000', lap_max_loan: { AIP: '2000000', default: '5000000' }, lap_roi_min: '15%', lap_roi_max: '21%', lap_pf_min: '4%', lap_pf_max: '5%', lap_max_tenure: '180 Months', age_maturity_income: { SAL: '60', NPM: '75', AIP: '75', default: '70' }, age_maturity_non_income: '90', bureau_cutoff: null, bureau_name: 'CIBIL, CRIF', lap_dbr_foir: { SAL: '70%', NPM: '100% if ABB is at least 1x proposed EMI, else 80%', BANK: '67%', GRP: '100%', LIP: '100% if ABB is at least 1x proposed EMI, else 80%', LOW_LTV: null, GST: '100% if ABB is at least 1x proposed EMI, else 80%', AIP: '60%' }, elig_rental_bank: { BANK: 'NO', LOW_LTV: null, default: 'YES' }, elig_rental_cash: { BANK: 'NO', LOW_LTV: null, default: 'YES' }, elig_agri_itr: 'NO', dbr_rental_bank: { BANK: 'NO', default: '100%' }, dbr_rental_cash: { SAL: '50%', NPM: '50%', BANK: 'NO', AIP: '50%', default: '100%' }, dbr_agri_itr: 'NO', existing_obligation: { BANK: 'Loan availed in last 6 months: EMI reduced from ABB; same-statement EMI not obligated; other-bank EMI obligated', LOW_LTV: 'No obligation', default: 'All obligations considered except those closing in next 12 months' }, lap_ltv_res_self: { SAL: '50%', NPM: '50%', LOW_LTV: '50%', AIP: '50%', default: '70%' }, lap_ltv_res_rented: '50%', lap_ltv_res_vacant: { LOW_LTV: null, default: '50%' }, lap_ltv_com_self: null, lap_ltv_com_rented: null, lap_ltv_com_vacant: null, lap_ltv_ind_self: null, lap_ltv_ind_rented: null, lap_ltv_ind_vacant: null, lap_ltv_mix_self: { SAL: '50%', NPM: '50%', LOW_LTV: null, AIP: '50%', default: '65%' }, lap_ltv_mix_rented: { SAL: '50%', NPM: '50%', LOW_LTV: null, AIP: '50%', default: '55%' }, lap_ltv_mix_vacant: { SAL: '50%', NPM: '50%', LOW_LTV: null, AIP: '50%', default: '45%' }, lap_ltv_plot_self: null, lap_ltv_plot_rented: null, lap_ltv_plot_vacant: null, lap_ltv_special: { BANK: '50%', GRP: '50%', LIP: '50%', default: null } }
+  },
+  PIRAMAL: {
+    HL: { hl_min_loan: '500000', hl_max_loan: { SAL: '30000000', BANK: '30000000', AIP: '2500000', LIP: '15000000', LOW_LTV: '15000000', default: '100000000' }, hl_roi_min: '9.99%', hl_roi_max: '14%', hl_pf_min: '1%', hl_pf_max: '2%', hl_max_tenure: '300 Months', age_maturity_income: { SAL: '60', default: '70' }, age_maturity_non_income: { SAL: '70', default: '90' }, bureau_name: 'CIBIL', hl_dbr_foir: { SAL: '<40000 - 50%, <50000 - 65%, >=50000 - 70%', BANK: '67%', NPM: '80%', GRP: '100%', GST: '80%', AIP: '50%' }, hl_ltv_upto_30: '90%', hl_ltv_30_75: '80%', hl_ltv_above_75: '75%', hl_ltv_commercial: '70%', hl_ltv_industrial: '50%', hl_ltv_plot: '65%' },
+    LAP: { lap_min_loan: '500000', lap_max_loan: { SAL: '75000000', BANK: '30000000', AIP: '2500000', LIP: '15000000', LOW_LTV: '15000000', default: '100000000' }, lap_roi_min: '11.75%', lap_roi_max: '14%', lap_pf_min: '1.25%', lap_pf_max: '2%', lap_max_tenure: '180 Months', age_maturity_income: { SAL: '60', default: '70' }, age_maturity_non_income: { SAL: '70', default: '90' }, bureau_cutoff: null, bureau_name: { LOW_LTV: null, GST: null, AIP: null, default: 'CIBIL' }, lap_dbr_foir: { SAL: '<40000 - 50%, <50000 - 65%, >=50000 - 70%', NPM: '100% if ABB is at least 1x proposed EMI, else 80%', BANK: '67%', GRP: '100%', LIP: '100% if ABB is at least 1x proposed EMI, else 80%', LOW_LTV: null, GST: '100% if ABB is at least 1x proposed EMI, else 80%', AIP: '50%' }, elig_rental_bank: { SAL: 'NO', BANK: 'NO', LOW_LTV: null, default: 'YES' }, elig_rental_cash: { SAL: 'NO', BANK: 'NO', LOW_LTV: null, default: 'YES' }, elig_agri_itr: 'NO', dbr_rental_bank: { SAL: 'NO', BANK: 'NO', default: '100%' }, dbr_rental_cash: { SAL: 'NO', BANK: 'NO', default: '100%' }, dbr_agri_itr: 'NO', existing_obligation: { BANK: 'Loan availed in last 6 months: EMI reduced from ABB; same-statement EMI not obligated; other-bank EMI obligated', LOW_LTV: 'No obligation', default: 'All obligations considered except those closing in next 12 months' }, lap_ltv_res_self: { LOW_LTV: '50%', default: '70%' }, lap_ltv_res_rented: { LOW_LTV: null, default: '60%' }, lap_ltv_res_vacant: { LOW_LTV: null, default: '50%' }, lap_ltv_com_self: { SAL: null, LOW_LTV: '50%', default: '70%' }, lap_ltv_com_rented: { SAL: null, LOW_LTV: null, default: '60%' }, lap_ltv_com_vacant: { SAL: null, LOW_LTV: null, default: '50%' }, lap_ltv_ind_self: { SAL: null, LOW_LTV: null, default: '60%' }, lap_ltv_ind_rented: { SAL: null, LOW_LTV: null, default: '60%' }, lap_ltv_ind_vacant: { SAL: null, LOW_LTV: null, default: '50% (GP limit 45%)' }, lap_ltv_mix_self: { SAL: null, LOW_LTV: null, default: '65%' }, lap_ltv_mix_rented: { SAL: null, LOW_LTV: null, default: '55%' }, lap_ltv_mix_vacant: { SAL: null, LOW_LTV: null, default: '45%' }, lap_ltv_plot_self: { SAL: null, LOW_LTV: null, default: '50% (GP limit 45%)' }, lap_ltv_plot_rented: { SAL: null, LOW_LTV: null, default: 'NOT_ALLOWED' }, lap_ltv_plot_vacant: { SAL: null, LOW_LTV: null, default: 'NOT_ALLOWED' }, lap_ltv_special: { SAL: null, LOW_LTV: null, GST: null, AIP: null, default: '50%' } }
+  },
+  TATA_HOUSING: {
+    HL: { hl_min_loan: { SAL: '500000', NPM: '500000', BANK: '1000000', GST: '3000000', GRP: '2000000', LIP: '5000000', LOW_LTV: '1000000' }, hl_max_loan: { LIP: '25000000', LOW_LTV: '30000000', default: '75000000' }, hl_roi_min: '7.5%', hl_roi_max: '8.5%', hl_pf_min: null, hl_pf_max: null, hl_max_tenure: { SAL: '360 Months', default: '240 Months' }, age_maturity_income: { SAL: '60', default: '70' }, age_maturity_non_income: '75', bureau_cutoff: '700', bureau_name: 'CIBIL', hl_dbr_foir: { SAL: '<70000 - 60%, <150000 - 65%, >=150000 - 70%', BANK: '55%', NPM: '80%', GST: '80%', GRP: '70%', LIP: '65%', LOW_LTV: null }, existing_obligation: { BANK: 'Loan availed in last 6 months: EMI reduced from ABB; loans closed in the last 12 months or closing shortly are added back to ABB; cash-out uses the last balance before loan credit for ABB', LOW_LTV: 'No obligation', NWM: null, ANY: null, default: 'All obligations considered except those closing in next 12 months' }, hl_ltv_upto_30: { LOW_LTV: '50%', default: '90%' }, hl_ltv_30_75: { LOW_LTV: '50%', default: '80%' }, hl_ltv_above_75: { LOW_LTV: '50%', default: '75%' }, hl_ltv_commercial: { LOW_LTV: null, default: '70%' }, hl_ltv_industrial: { LOW_LTV: null, default: '70%' }, hl_ltv_plot: { LOW_LTV: null, default: '70%' } },
+    LAP: { lap_min_loan: { SAL: '500000', NPM: '500000', BANK: '1000000', GST: '3000000', GRP: '2000000', LIP: '5000000', LOW_LTV: '1000000' }, lap_max_loan: { LIP: '25000000', LOW_LTV: '30000000', default: '75000000' }, lap_roi_min: '9%', lap_roi_max: '10.5%', lap_pf_min: '0%', lap_pf_max: '1.5%', lap_max_tenure: '180 Months', age_maturity_income: { SAL: '60', default: '70' }, age_maturity_non_income: '75', bureau_cutoff: '700', bureau_name: 'CIBIL', lap_dbr_foir: { SAL: '<70000 - 60%, <150000 - 65%, >=150000 - 70%', BANK: '55%', NPM: '80%', GST: '80%', GRP: '70%', LIP: '65%', LOW_LTV: null }, existing_obligation: { BANK: 'Loan availed in last 6 months: EMI reduced from ABB; loans closed in the last 12 months or closing shortly are added back to ABB; cash-out uses the last balance before loan credit for ABB', LOW_LTV: 'No obligation', NWM: null, ANY: null, default: 'All obligations considered except those closing in next 12 months' }, lap_ltv_res_self: { LOW_LTV: '50%', default: '70%' }, lap_ltv_res_rented: { SAL: null, LOW_LTV: '40%', default: '65%' }, lap_ltv_res_vacant: { SAL: null, LIP: 'NOT_ALLOWED', LOW_LTV: 'NOT_ALLOWED', default: '60%' }, lap_ltv_com_self: { SAL: null, LOW_LTV: '50%', default: '60%' }, lap_ltv_com_rented: { SAL: null, LOW_LTV: '40%', default: '55%' }, lap_ltv_com_vacant: { SAL: null, LIP: 'NOT_ALLOWED', LOW_LTV: 'NOT_ALLOWED', default: '50%' }, lap_ltv_ind_self: { SAL: null, default: '45%' }, lap_ltv_ind_rented: { SAL: null, default: '45%' }, lap_ltv_ind_vacant: { SAL: null, default: 'NOT_ALLOWED' }, lap_ltv_mix_self: null, lap_ltv_mix_rented: null, lap_ltv_mix_vacant: null, lap_ltv_plot_self: null, lap_ltv_plot_rented: null, lap_ltv_plot_vacant: null, lap_ltv_special: { SAL: null, LOW_LTV: null, default: '50%' } }
+  }
+};
+
+// Explicit business override: these three lenders do not block ESR on a
+// minimum bureau score. Keep ICICI and HDFC configuration untouched.
+for (const lenderCode of ['INDIA_SHELTERS', 'PIRAMAL', 'TATA_HOUSING']) {
+  for (const productType of ['HL', 'LAP']) {
+    lenderPolicyValues[lenderCode][productType].bureau_cutoff = '0';
+  }
+}
+
+function resolvePolicySeedValue(lenderCode, productType, paramKey, schemePrefix, fallbackRule) {
+  const lenderPolicy = lenderPolicyValues[lenderCode]?.[productType];
+  const configured = lenderPolicy?.[paramKey];
+  const rule = lenderPolicy ? configured : fallbackRule;
+  const resolved = rule && typeof rule === 'object'
+    ? (rule[schemePrefix] !== undefined ? rule[schemePrefix] : rule.default)
+    : rule;
+
+  if (lenderCode === 'TATA_HOUSING' && (resolved === null || resolved === undefined || resolved === '')) {
+    return '0';
+  }
+  return resolved;
+}
+
+function hasExplicitLenderPolicyParam(lenderCode, productType, paramKey) {
+  return Object.prototype.hasOwnProperty.call(lenderPolicyValues[lenderCode]?.[productType] || {}, paramKey);
+}
 
 const valueData = {
   HL: {
@@ -214,17 +272,27 @@ const valueData = {
 };
 
 async function cleanInvalidSeedValues() {
-  await prisma.$executeRaw`
-    UPDATE scheme_parameter_values spv
-    JOIN parameter_master pm ON pm.id = spv.parameter_id
-    SET spv.value = ${JSON.stringify('No Capping')}
-    WHERE pm.parameter_key IN ('hl_max_loan', 'lap_max_loan')
-      AND (
-        LOWER(JSON_UNQUOTE(spv.value)) LIKE '%greter%'
-        OR LOWER(JSON_UNQUOTE(spv.value)) LIKE '%greater%'
-        OR LOWER(JSON_UNQUOTE(spv.value)) LIKE '%then%'
-      )
-  `;
+  // Keep this cleanup database-portable. The previous UPDATE ... JOIN and
+  // JSON_UNQUOTE form was MySQL-only and failed on the project's PostgreSQL DB.
+  const candidates = await prisma.schemeParameterValue.findMany({
+    where: {
+      parameter: {
+        parameter_key: { in: ['hl_max_loan', 'lap_max_loan'] }
+      }
+    },
+    select: { id: true, value: true }
+  });
+
+  const invalidIds = candidates
+    .filter(({ value }) => /\b(greter|greater|then)\b/i.test(String(value ?? '')))
+    .map(({ id }) => id);
+
+  if (invalidIds.length > 0) {
+    await prisma.schemeParameterValue.updateMany({
+      where: { id: { in: invalidIds } },
+      data: { value: 'No Capping' }
+    });
+  }
 }
 
 async function seedDataMatrix() {
@@ -258,7 +326,43 @@ async function seedDataMatrix() {
       paramKeyMap[p.parameter_key] = p.id;
     }
 
-    const lenders = ['ICICI', 'HDFC'];
+    // Apply the approved zero-cutoff override to every active method, including
+    // legacy-named Tata schemes that may predate the canonical scheme names.
+    const bureauCutoffParameterId = paramKeyMap.bureau_cutoff;
+    if (bureauCutoffParameterId) {
+      const zeroCutoffSchemes = await prisma.scheme.findMany({
+        where: {
+          status: 'ACTIVE',
+          product: {
+            status: 'ACTIVE',
+            product_type: { in: ['HL', 'LAP'] },
+            lender: { code: { in: ['INDIA_SHELTERS', 'PIRAMAL', 'TATA_HOUSING'] } }
+          }
+        },
+        select: { id: true }
+      });
+
+      for (const scheme of zeroCutoffSchemes) {
+        await prisma.schemeParameterValue.upsert({
+          where: {
+            scheme_id_parameter_id: {
+              scheme_id: scheme.id,
+              parameter_id: bureauCutoffParameterId
+            }
+          },
+          update: { value: '0' },
+          create: {
+            scheme_id: scheme.id,
+            parameter_id: bureauCutoffParameterId,
+            value: '0'
+          }
+        });
+      }
+    }
+
+    // This workbook runner is isolated to the three lenders in this rollout.
+    // ICICI/HDFC retain their existing database configuration and calculation paths.
+    const lenders = ['INDIA_SHELTERS', 'PIRAMAL', 'TATA_HOUSING'];
     const products = ['HL', 'LAP'];
 
     for (const lCode of lenders) {
@@ -291,19 +395,35 @@ async function seedDataMatrix() {
 
           const existingRows = await prisma.schemeParameterValue.findMany({
             where: { scheme_id: schemeObj.id },
-            select: { parameter_id: true }
+            select: { id: true, parameter_id: true, value: true }
           });
 
-          const existingParamIds = new Set(existingRows.map((row) => row.parameter_id));
+          const existingByParamId = new Map(existingRows.map((row) => [row.parameter_id, row]));
           const mappedPrefix = schemeMapping[schemeName];
 
           for (const [paramKey, rule] of Object.entries(dataSet)) {
-            const val = rule[mappedPrefix] !== undefined ? rule[mappedPrefix] : rule.default;
-            if (!val || val === '') continue;
-
+            const val = resolvePolicySeedValue(lCode, prodType, paramKey, mappedPrefix, rule);
             const pId = paramKeyMap[paramKey];
             if (!pId) continue;
-            if (existingParamIds.has(pId)) continue;
+            const existing = existingByParamId.get(pId);
+            const isWorkbookManaged = hasExplicitLenderPolicyParam(lCode, prodType, paramKey);
+
+            if (val === null || val === undefined || val === '') {
+              if (isWorkbookManaged && existing) {
+                await prisma.schemeParameterValue.delete({ where: { id: existing.id } });
+              }
+              continue;
+            }
+
+            if (existing) {
+              if (isWorkbookManaged && JSON.stringify(existing.value) !== JSON.stringify(val)) {
+                await prisma.schemeParameterValue.update({
+                  where: { id: existing.id },
+                  data: { value: val }
+                });
+              }
+              continue;
+            }
 
             await prisma.schemeParameterValue.create({
               data: {
@@ -320,6 +440,7 @@ async function seedDataMatrix() {
     console.log('[seed] Matrix Data values updated successfully.');
   } catch (error) {
     console.error('Migration Matrix error:', error);
+    throw error;
   }
 }
 

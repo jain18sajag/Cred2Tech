@@ -6,7 +6,8 @@ const crypto = require('crypto');
 const XLSX = require('xlsx');
 const prisma = require('../../../config/db');
 const { getStorageProvider } = require('../storage');
-const LOG_DIR = path.join(require('os').tmpdir(), 'cred2tech', 'logs', 'esr');
+const { getLocalEsrLogsDir } = require('./esrTraceLogger');
+const LOG_DIR = getLocalEsrLogsDir();
 const CALCULATION_VERSION = 'ESR_DYNAMIC_V1';
 
 async function persistEsrCalculationLog({
