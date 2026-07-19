@@ -2780,6 +2780,51 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         }
     }
 
+    // A Salaried scheme is applicable only when the primary applicant is
+    // explicitly salaried. A salaried co-applicant may contribute to other
+    // lender methods, but must not activate the standalone Salaried method.
+    const primaryApplicant = (applicants || []).find((app, index) => isPrimaryApplicant(app, index)) || null;
+    const primaryEmploymentType = String(primaryApplicant?.employment_type || esr.employment_type || 'NA').toUpperCase();
+    if (isSalariedMethod && primaryEmploymentType !== 'SALARIED') {
+        const reason = `PRIMARY_APPLICANT_NOT_SALARIED: employment type is ${primaryEmploymentType || 'NA'}`;
+        logger?.traceStep('SALARIED METHOD NOT APPLICABLE', [
+            `Primary Applicant: ${primaryApplicant?.name || primaryApplicant?.id || 'N/A'}`,
+            `Primary Employment Type: ${primaryEmploymentType || 'NA'}`,
+            'Decision: Salaried method calculation skipped.',
+            'A salaried co-applicant does not activate the standalone Salaried method.'
+        ].join('\n'));
+        return {
+            lender_id: lender?.id || scheme.lender_id,
+            lender_name: lender?.name || esr.lender_name,
+            lender_policy_key: lenderPolicy.key,
+            lender_policy_name: lenderPolicy.displayName,
+            scheme_id: scheme.id,
+            scheme_name: scheme.scheme_name,
+            income_method_matched,
+            status: 'NOT_ELIGIBLE',
+            is_eligible: false,
+            final_eligible_loan_amount: 0,
+            eligible_loan_amount: 0,
+            monthly_income_used: null,
+            primary_monthly_income_used: null,
+            maximum_eligible_emi: null,
+            max_eligible_emi: null,
+            foir_based_eligible_loan_amount: null,
+            ltv_based_eligible_loan_amount: null,
+            applicable_ltv_percent: null,
+            foir_allowed_percent: null,
+            foir_actual_percent: null,
+            foir_breakdown: null,
+            eligible_income_breakdown: [],
+            failure_reasons: [reason],
+            warnings: [],
+            manual_review_required: false,
+            configuration_status: 'NOT_APPLICABLE_FOR_PRIMARY_PROFILE',
+            reason_code: 'PRIMARY_APPLICANT_NOT_SALARIED',
+            ineligibility_reason: 'Salaried method is available only when the primary applicant is salaried.'
+        };
+    }
+
     const pref = pType === 'hl' ? 'hl' : 'lap';
 
     // Generic parsing evaluator helper
@@ -2844,6 +2889,10 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const isNwmMethod = (scheme.scheme_name || '').toUpperCase().includes('NET WORTH') || (scheme.scheme_name || '').toUpperCase().includes('NWM');
     const isGrpMethod = (scheme.scheme_name || '').toUpperCase().includes('GRP') || (scheme.scheme_name || '').toUpperCase().includes('GROSS RECEIPT');
     const isDscrMethod = (scheme.scheme_name || '').toUpperCase().includes('DSCR');
+    const isIciciNpmMethod = lenderPolicy.key === 'ICICI'
+        && /NET\s+PROFIT|CASH\s+PROFIT|\bNPM\b/i.test(scheme.scheme_name || '');
+    const isIciciGstMethod = lenderPolicy.key === 'ICICI'
+        && /GST|GROSS\s+MARGIN/i.test(scheme.scheme_name || '');
     const isTataLipMethod = lenderPolicy.key === 'TATA_HOUSING' && /\bLIP\b/i.test(scheme.scheme_name || '');
     const isManualOnlyMethod = (!isTataLipMethod && /\bLIP\b/i.test(scheme.scheme_name || ''))
         || /\b(LOW\s+LTV|MANUAL)\b/i.test(scheme.scheme_name || '')
@@ -3036,6 +3085,65 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         incomeComposition = calculateComposedIncome({ scheme, esr, incomeEntries, paramMap, warnings, logger, lenderPolicy });
         composedIncome = incomeComposition.total_eligible_income;
 
+        // ICICI NPM includes 100% of co-applicant monthly salary in eligible
+        // monthly income. Do not convert it into a separate 60%/70% EMI add-on.
+        if (isIciciNpmMethod) {
+            const coApplicantSalary = getCoApplicantSalaryMonthly({ esr, incomeEntries, applicants });
+            if (coApplicantSalary.monthlySalary > 0) {
+                const baseNpmMonthlyIncome = composedIncome;
+                composedIncome += coApplicantSalary.monthlySalary;
+                incomeComposition.total_eligible_income = composedIncome;
+                incomeComposition.co_applicant_salary_100_percent = coApplicantSalary.monthlySalary;
+                incomeComposition.breakdown = [
+                    ...(incomeComposition.breakdown || []),
+                    {
+                        type: 'Co-applicant Salary Included in ICICI NPM Income',
+                        raw_monthly: coApplicantSalary.monthlySalary,
+                        eligible_monthly: coApplicantSalary.monthlySalary,
+                        percentage: 1,
+                        source: coApplicantSalary.source,
+                        rule: 'ICICI NPM: include 100% co-applicant monthly salary in monthly NPM income; no separate salary EMI add-on.'
+                    }
+                ];
+                logger?.traceFormula(
+                    'ICICI NPM MONTHLY INCOME INCLUDING CO-APPLICANT SALARY',
+                    'Base eligible NPM monthly income + 100% co-applicant monthly salary',
+                    `${baseNpmMonthlyIncome.toLocaleString()} + ${coApplicantSalary.monthlySalary.toLocaleString()} x 100%`,
+                    `Combined monthly NPM income ${composedIncome.toLocaleString()}`
+                );
+            }
+        }
+
+        // ICICI GST follows the same single-counting rule: 100% of the
+        // co-applicant net salary is part of eligible monthly income. It is not
+        // converted into a separate salaried FOIR/EMI/loan add-on.
+        if (isIciciGstMethod) {
+            const coApplicantSalary = getCoApplicantSalaryMonthly({ esr, incomeEntries, applicants });
+            if (coApplicantSalary.monthlySalary > 0) {
+                const baseGstMonthlyIncome = composedIncome;
+                composedIncome += coApplicantSalary.monthlySalary;
+                incomeComposition.total_eligible_income = composedIncome;
+                incomeComposition.co_applicant_salary_100_percent = coApplicantSalary.monthlySalary;
+                incomeComposition.breakdown = [
+                    ...(incomeComposition.breakdown || []),
+                    {
+                        type: 'Co-applicant Net Salary Included in ICICI GST Income',
+                        raw_monthly: coApplicantSalary.monthlySalary,
+                        eligible_monthly: coApplicantSalary.monthlySalary,
+                        percentage: 1,
+                        source: coApplicantSalary.source,
+                        rule: 'ICICI GST: include 100% co-applicant net salary in eligible monthly income; no separate salary FOIR or EMI add-on.'
+                    }
+                ];
+                logger?.traceFormula(
+                    'ICICI GST ELIGIBLE INCOME INCLUDING CO-APPLICANT NET SALARY',
+                    'GST eligible monthly income + 100% co-applicant net salary',
+                    `${baseGstMonthlyIncome.toLocaleString()} + ${coApplicantSalary.monthlySalary.toLocaleString()} x 100%`,
+                    `Total eligible monthly income ${composedIncome.toLocaleString()}`
+                );
+            }
+        }
+
         logger?.traceStep('STEP 1-2 — INCOME COMPOSITION', [
             `Primary Income:       ₹${(incomeComposition.primary_income || 0).toLocaleString()}`,
             `Rental (Bank):        ₹${(incomeComposition.rental_bank || 0).toLocaleString()}`,
@@ -3158,6 +3266,8 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const methodAllowsCoApplicantSalaryAddon =
         !isSalariedMethod
         && !isGrpMethod
+        && !isIciciNpmMethod
+        && !isIciciGstMethod
         && (
             isDscrMethod
             || (lenderPolicy.key === 'HDFC' && isBankingMethod)
@@ -3170,7 +3280,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         incomeEntries,
         applicants,
         isSalariedMethod,
-        methodAllowsCoApplicantSalaryAddon
+        methodAllowsCoApplicantSalaryAddon: methodAllowsCoApplicantSalaryAddon || isIciciNpmMethod || isIciciGstMethod
     });
     const coApplicantSalaryForTenure = salaryTenureScope.coApplicantSalary || { monthlySalary: 0, source: 'NONE' };
     const includeCoApplicantAgeForTenure = salaryTenureScope.includeCoApplicants;
@@ -3624,7 +3734,11 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         && !skip_foir_check
         && composedIncome > 0
     ) {
-        const coApplicantOtherEmiCapacity = coApplicantSalaryAddon?.eligibleEmi > 0 ? coApplicantSalaryAddon.eligibleEmi : 0;
+        // ICICI NPM salary is already included at 100% in composedIncome.
+        // Combined Double Whammy must not add a second salary EMI capacity.
+        const coApplicantOtherEmiCapacity = (isIciciNpmMethod || isIciciGstMethod)
+            ? 0
+            : (coApplicantSalaryAddon?.eligibleEmi > 0 ? coApplicantSalaryAddon.eligibleEmi : 0);
         const combinedDoubleWhammy = calculateCombinedDoubleWhammyEligibility({
             primaryMonthlyIncome: composedIncome,
             otherEmiCapacity: coApplicantOtherEmiCapacity,
@@ -3890,6 +4004,9 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         ltv_based_eligible_loan_amount,
         final_eligible_loan_amount,
         eligible_loan_amount: final_eligible_loan_amount, // for backwards compatibility
+        product_cap: maxLoan,
+        requested_loan_cap: requested_loan,
+        property_value: Number(esr.property_value) || null,
         dscr_eligible_loan_amount: isDscrMethod ? foir_based_eligible_loan_amount : null,
         dscr_actual_ratio: isDscrMethod && dscrBreakdown ? dscrBreakdown.actualDscrRatio : null,
         dscr_min_ratio: isDscrMethod && dscrBreakdown ? dscrBreakdown.minRatio : null,
