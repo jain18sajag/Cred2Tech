@@ -231,6 +231,45 @@ const LENDER_POLICY_REGISTRY = {
             defaultObligationMultiplier: 12,
             calculationRuleParamKey: 'dscr_calculation_rule'
         }
+    },
+    INDIA_SHELTERS: {
+        key: 'INDIA_SHELTERS', displayName: 'India Shelters Policy',
+        aliases: ['INDIA SHELTERS FINANCE CORPORATION', 'INDIA SHELTERS FINANCE', 'INDIA SHELTERS', 'INDIA SHELTER', 'ISFC'],
+        banking: { mode: 'ABB_MULTIPLIER', multiplier: 0.67, sampleDays: [5, 15, 25, 30] },
+        gstMargins: { wholesale: 0.05, manufacturing: 0.12, retail: 0.10, service: 0.15 },
+        npm: { defaultGrowthThreshold: 0.50, includeRemuneration: false, includeDirectorInterest: false },
+        grpMultiplierByProfession: { DOCTOR: 4 },
+        exposureFields: ['india_shelters_exposure', 'lender_exposure'],
+        foir: { SALARIED: 0.70, BANKING: 0.67, GRP: 1.00, GROSS_MARGIN: 1.00, AIP_HL: 0.70, AIP_LAP: 0.60 }
+    },
+    PIRAMAL: {
+        key: 'PIRAMAL', displayName: 'Piramal Policy',
+        aliases: ['PIRAMAL CAPITAL AND HOUSING FINANCE', 'PIRAMAL HOUSING', 'PIRAMAL CAPITAL', 'PIRAMAL FINANCE', 'PIRAMAL'],
+        banking: { mode: 'ABB_MULTIPLIER', multiplier: 0.67, sampleDays: [5, 15, 25, 30] },
+        gstMargins: { wholesale: 0.05, manufacturing: 0.12, retail: 0.10, service: 0.15 },
+        npm: { defaultGrowthThreshold: 0.30, includeRemuneration: true, includeDirectorInterest: true },
+        grpMultiplierByProfession: { DOCTOR: 4 },
+        exposureFields: ['piramal_exposure', 'lender_exposure'],
+        foir: { SALARIED_SLABS: [{ max: 40000, value: 0.50 }, { max: 50000, value: 0.65 }, { value: 0.70 }], BANKING: 0.67, NPM: 0.80, GRP: 1.00, GROSS_MARGIN: 0.80, AIP: 0.50 }
+    },
+    TATA_HOUSING: {
+        key: 'TATA_HOUSING', displayName: 'Tata Capital Housing Finance Policy',
+        aliases: ['TATA_HOUSING', 'TATA CAPITAL HOUSING FINANCE LTD', 'TATA CAPITAL HOUSING FINANCE', 'TATA CAPITAL HOUSING', 'TATA CAPITAL', 'TCHFL'],
+        banking: { mode: 'ABB_MULTIPLIER', multiplier: 0.55, abbField: 'bank_daily_avg_balance', requiresDailyAbb: true, useVendorDailyAbb: true },
+        // Business-approved fallback: Tata uses the same GST industry-margin
+        // buckets as ICICI until a Tata-specific margin matrix is supplied.
+        gstMargins: {
+            factory: 0.07,
+            manufacturing: 0.07,
+            wholesale: 0.04,
+            retail: 0.05,
+            specialized: 0.03,
+            service: 0.15
+        },
+        npm: { defaultGrowthThreshold: 0.50, includeRemuneration: true, includeDirectorInterest: true },
+        grpMultiplierByProfession: { DOCTOR: 3, ARCHITECT: 2 },
+        exposureFields: ['tata_housing_exposure', 'lender_exposure'],
+        foir: { SALARIED_SLABS: [{ max: 70000, value: 0.60 }, { max: 150000, value: 0.65 }, { value: 0.70 }], BANKING: 0.55, NPM: 0.80, GRP: 0.70, LIP: 0.65 }
     }
 };
 
@@ -362,9 +401,13 @@ function calculateDscrMonthlyObligations(obligationsList = []) {
 
 function resolveLenderPolicy(lender = {}) {
     const raw = `${lender.code || ''} ${lender.name || ''}`.toUpperCase();
+    const normalizedRaw = raw.replace(/[^A-Z0-9]+/g, ' ').trim();
     for (const policy of Object.values(LENDER_POLICY_REGISTRY)) {
         if (!policy.aliases) continue;
-        if (policy.aliases.some(alias => raw.includes(alias))) return policy;
+        if (policy.aliases.some(alias => {
+            const normalizedAlias = String(alias).toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+            return normalizedAlias && normalizedRaw.includes(normalizedAlias);
+        })) return policy;
     }
     return LENDER_POLICY_REGISTRY.DEFAULT;
 }
@@ -404,10 +447,11 @@ function normalizeProfessionForGrp(esr = {}) {
         esr.employment_type
     ].filter(Boolean).join(' ').toLowerCase();
 
-    const isDoctor = /\b(dr|doctor|md|medical doctor|physician|mbbs|medical practitioner)\b/i.test(profileText);
+    const isDoctor = /\b(dr|doctor|docture|md|medical doctor|physician|mbbs|medical practitioner)\b/i.test(profileText);
+    const isArchitect = /\barchitect\b/i.test(profileText);
     return {
         profileText,
-        bucket: isDoctor ? 'DOCTOR' : 'DEFAULT'
+        bucket: isDoctor ? 'DOCTOR' : (isArchitect ? 'ARCHITECT' : (profileText ? 'OTHERS' : 'MISSING'))
     };
 }
 
@@ -434,6 +478,11 @@ function resolveGstIndustryMargin({ esr, paramMap, lenderPolicy }) {
     // Lender-specific margin wins for configured lenders like ICICI/HDFC.
     if (policyMargin && policyMargin > 0) return policyMargin;
     if (paramMargin && paramMargin > 0) return paramMargin > 1 ? paramMargin / 100 : paramMargin;
+
+    // Tata's uploaded policy does not define an industry-margin matrix. An
+    // extracted/generic margin is not an approved Tata policy value; only an
+    // explicit admin scheme parameter may enable automatic GST underwriting.
+    if (lenderPolicy.gstMarginsRequireConfirmation) return 0;
 
     const storedMargin = toSafeNumber(esr.gst_industry_margin);
     return storedMargin > 1 ? storedMargin / 100 : storedMargin;
@@ -465,10 +514,29 @@ function resolveExposureForLender(esr, lenderPolicy, obligationsList = []) {
 }
 
 function resolveBankingAbbIncome({ esr, paramMap, lenderPolicy }) {
-    const abb = toSafeNumber(esr.bank_avg_balance);
     const bankingPolicy = lenderPolicy.banking || LENDER_POLICY_REGISTRY.DEFAULT.banking;
+    const configuredDailyAbb = getNumericParam(paramMap, ['banking_daily_abb', 'daily_abb'], 0);
+    const abb = bankingPolicy.requiresDailyAbb
+        ? (toSafeNumber(esr[bankingPolicy.abbField]) || toSafeNumber(esr.daily_abb) || toSafeNumber(esr.bank_avg_balance) || configuredDailyAbb)
+        : toSafeNumber(esr.bank_avg_balance);
     if (abb <= 0) {
-        return { abb, monthlyIncome: 0, divisor: null, divisorSourceKey: null, basis: 'MISSING_ABB', threshold: null, loanReference: null };
+        return { abb, monthlyIncome: 0, divisor: null, multiplier: null, divisorSourceKey: null, basis: bankingPolicy.requiresDailyAbb ? 'DAILY_ABB_REQUIRED' : 'MISSING_ABB', threshold: null, loanReference: null };
+    }
+
+    if (bankingPolicy.mode === 'ABB_MULTIPLIER') {
+        const configured = resolveFirstConfiguredParam(paramMap, ['banking_dbr_multiplier', 'banking_foir', 'banking_abb_multiplier']);
+        let multiplier = configured?.value || bankingPolicy.multiplier || 0;
+        if (multiplier > 1) multiplier /= 100;
+        return {
+            abb,
+            monthlyIncome: multiplier > 0 ? abb * multiplier : 0,
+            divisor: null,
+            multiplier,
+            divisorSourceKey: configured?.key || null,
+            basis: bankingPolicy.requiresDailyAbb ? 'DAILY_ABB_MULTIPLIED_BY_DBR' : 'ABB_MULTIPLIED_BY_DBR',
+            threshold: null,
+            loanReference: null
+        };
     }
 
     if (bankingPolicy.mode === 'ABB_DIVISOR_BY_LOAN_AMOUNT') {
@@ -667,10 +735,130 @@ function resolveHdfcNpmAnnualIncome({ esr, paramMap = {}, depreciationFraction =
     };
 }
 
+function resolveNpmIncomeByPolicy(lenderPolicy, esr, paramMap = {}) {
+    const policy = lenderPolicy.npm || {};
+    const includeRemuneration = !!policy.includeRemuneration;
+    const includeDirectorInterest = !!policy.includeDirectorInterest;
+    const latestPat = toSafeNumber(esr.itr_pat);
+    const latest = latestPat + toSafeNumber(esr.itr_depreciation) + toSafeNumber(esr.itr_finance_cost)
+        + (includeRemuneration ? toSafeNumber(esr.itr_remuneration) : 0)
+        + (includeDirectorInterest ? toSafeNumber(esr.director_interest_on_loan) : 0);
+    const previousPat = getHdfcPreviousYearNumber(esr, ['itr_pat_previous_year', 'itr_previous_year_pat', 'itr_prev_pat', 'previous_itr_pat']);
+    const previous = previousPat
+        + getHdfcPreviousYearNumber(esr, ['itr_depreciation_previous_year', 'itr_previous_year_depreciation', 'itr_prev_depreciation'])
+        + getHdfcPreviousYearNumber(esr, ['itr_finance_cost_previous_year', 'itr_previous_year_finance_cost', 'itr_prev_finance_cost'])
+        + (includeRemuneration ? getHdfcPreviousYearNumber(esr, ['itr_remuneration_previous_year', 'itr_previous_year_remuneration', 'itr_prev_remuneration']) : 0)
+        + (includeDirectorInterest ? getHdfcPreviousYearNumber(esr, ['director_interest_on_loan_previous_year', 'previous_director_interest_on_loan']) : 0);
+    const thresholdRaw = getNumericParam(paramMap, ['npm_growth_threshold'], policy.defaultGrowthThreshold || 0.50);
+    const threshold = thresholdRaw > 1 ? thresholdRaw / 100 : thresholdRaw;
+    const growthRate = previousPat > 0 ? (latestPat - previousPat) / Math.abs(previousPat) : null;
+    const useAverage = previousPat > 0 && growthRate > threshold;
+    const warnings = [];
+    if (previousPat <= 0) warnings.push('PREVIOUS_YEAR_ITR_MISSING_GROWTH_TEST_SKIPPED');
+    if (includeDirectorInterest && !toSafeNumber(esr.director_interest_on_loan)) warnings.push('DIRECTOR_INTEREST_MISSING_TREATED_ZERO');
+    const baseAnnualIncome = useAverage ? (latest + previous) / 2 : latest;
+    const loanReference = toSafeNumber(esr.requested_loan_amount) || toSafeNumber(esr.loan_amount) || 0;
+    const explicitFilingGapMonths = getNumericParam(esr, [
+        'itr_filing_gap_months', 'itr_return_filing_gap_months', 'two_itr_gap_months'
+    ], 0);
+    // The current ESR snapshot stores separate latest/previous annual ITR
+    // financials but not filing dates. Two annual returns imply a 12-month
+    // reporting gap unless an explicit filing-gap value is supplied.
+    const filingGapMonths = explicitFilingGapMonths > 0
+        ? explicitFilingGapMonths
+        : (previousPat > 0 ? 12 : 0);
+    const indiaSheltersHighLoanRuleRequested = lenderPolicy.key === 'INDIA_SHELTERS' && loanReference > 4000000;
+    const indiaSheltersHighLoanRuleApplied = indiaSheltersHighLoanRuleRequested
+        && previousPat > 0
+        && filingGapMonths >= 6;
+    if (indiaSheltersHighLoanRuleRequested && previousPat <= 0) warnings.push('INDIA_SHELTERS_ABOVE_40L_REQUIRES_TWO_YEAR_ITR');
+    if (indiaSheltersHighLoanRuleRequested && previousPat > 0 && filingGapMonths < 6) warnings.push('INDIA_SHELTERS_ABOVE_40L_REQUIRES_MINIMUM_6_MONTH_ITR_FILING_GAP');
+    const annualIncome = indiaSheltersHighLoanRuleApplied ? baseAnnualIncome * 2 : baseAnnualIncome;
+    return {
+        annualIncome: Math.max(0, annualIncome),
+        monthlyIncome: Math.max(0, annualIncome / 12),
+        baseAnnualIncome,
+        latestAnnual: latest,
+        previousAnnual: previous,
+        growthRate,
+        growthThreshold: threshold,
+        useTwoYearAverage: useAverage,
+        loanReference,
+        filingGapMonths,
+        filingGapSource: explicitFilingGapMonths > 0 ? 'EXPLICIT_ITR_FILING_GAP' : (previousPat > 0 ? 'LATEST_AND_PREVIOUS_ANNUAL_ITR' : 'MISSING'),
+        indiaSheltersHighLoanRuleRequested,
+        indiaSheltersHighLoanRuleApplied,
+        incomeMultiplier: indiaSheltersHighLoanRuleApplied ? 2 : 1,
+        warnings
+    };
+}
+
+function resolveTataLipEligibility(esr = {}) {
+    const latestNetProfit = toSafeNumber(esr.itr_pat);
+    const previousNetProfit = getHdfcPreviousYearNumber(esr, [
+        'itr_pat_previous_year', 'itr_previous_year_pat', 'itr_prev_pat', 'previous_itr_pat'
+    ]);
+    const growthRate = previousNetProfit > 0
+        ? (latestNetProfit - previousNetProfit) / Math.abs(previousNetProfit)
+        : null;
+    const useTwoYearAverage = previousNetProfit > 0 && growthRate > 0.50;
+    const annualNetProfitBasis = useTwoYearAverage
+        ? (latestNetProfit + previousNetProfit) / 2
+        : latestNetProfit;
+    const netProfitMultipleAmount = Math.max(0, annualNetProfitBasis * 3);
+    // The existing manual eligible amount field is the UI/database input used
+    // for Tata's CA-assessed eligible amount cap.
+    const caAssessedEligibleAmount = toSafeNumber(esr.manual_eligible_loan_amount);
+    const finalEligibleAmount = caAssessedEligibleAmount > 0
+        ? Math.min(netProfitMultipleAmount, caAssessedEligibleAmount)
+        : 0;
+
+    return {
+        latestNetProfit,
+        previousNetProfit,
+        growthRate,
+        growthThreshold: 0.50,
+        useTwoYearAverage,
+        annualNetProfitBasis,
+        multiplier: 3,
+        netProfitMultipleAmount,
+        caAssessedEligibleAmount,
+        finalEligibleAmount,
+        caAssessedAmountRequired: caAssessedEligibleAmount <= 0
+    };
+}
+
+function resolveFoirByPolicy(lenderPolicy, method, income, esr, paramMap = {}, productType = 'LAP') {
+    const name = String(method || '').toUpperCase();
+    const policy = lenderPolicy.foir || {};
+    const slabs = name.includes('SALARIED') ? policy.SALARIED_SLABS : null;
+    if (slabs) return slabs.find(s => s.max === undefined || income < s.max)?.value ?? null;
+    if (name.includes('SALARIED')) return policy.SALARIED ?? null;
+    if (name.includes('BANK')) return policy.BANKING ?? null;
+    if (name.includes('NET PROFIT') || name.includes('CASH PROFIT') || name.includes('ITR')) {
+        if (lenderPolicy.key === 'INDIA_SHELTERS') {
+            const abb = toSafeNumber(esr.bank_avg_balance);
+            const proposedEmi = toSafeNumber(esr.manual_proposed_emi) || toSafeNumber(esr.proposed_emi);
+            return abb > 0 && proposedEmi > 0 && abb >= proposedEmi ? 1.00 : 0.80;
+        }
+        return policy.NPM ?? null;
+    }
+    if (name.includes('GRP') || name.includes('GROSS RECEIPT')) return policy.GRP ?? null;
+    if (name.includes('GROSS MARGIN') || name.includes('GST')) return policy.GROSS_MARGIN ?? null;
+    if (name.includes('AIP') || name.includes('ASSESSED INCOME')) return policy[`AIP_${String(productType).toUpperCase()}`] ?? policy.AIP ?? null;
+    if (name.includes('LIP')) return policy.LIP ?? null;
+    return null;
+}
+
 function resolveGrpMultiplierForPolicy({ esr, paramMap = {}, lenderPolicy }) {
     const profession = normalizeProfessionForGrp(esr);
     const doctorMultiplier = getNumericParam(paramMap, ['grpMultiplierByProfession.DOCTOR', 'grp_doctor_multiplier', 'grp_md_multiplier', 'grp_medical_doctor_multiplier'], 4);
-    const defaultMultiplier = getNumericParam(paramMap, ['grpMultiplierByProfession.DEFAULT', 'grp_other_professional_multiplier', 'grp_default_multiplier'], 3);
+    const preservesLegacyGrpFallback = lenderPolicy.key === 'ICICI' || lenderPolicy.key === 'HDFC' || lenderPolicy.key === 'DEFAULT';
+    const defaultMultiplier = getNumericParam(
+        paramMap,
+        ['grpMultiplierByProfession.DEFAULT', 'grp_other_professional_multiplier', 'grp_default_multiplier'],
+        preservesLegacyGrpFallback ? 3 : 0
+    );
     const rawGrpMult = paramMap['grp_annual_receipts_multiplier'] || paramMap['grp_industry_margin'];
     const parsedMult = parseFloat(resolveRawParamValue(rawGrpMult));
 
@@ -683,9 +871,10 @@ function resolveGrpMultiplierForPolicy({ esr, paramMap = {}, lenderPolicy }) {
         };
     }
 
+    const policyMultiplier = lenderPolicy.grpMultiplierByProfession?.[profession.bucket];
     return {
-        multiplier: profession.bucket === 'DOCTOR' ? doctorMultiplier : defaultMultiplier,
-        source: profession.bucket === 'DOCTOR' ? 'GRP_DOCTOR_MD_MULTIPLIER' : 'GRP_DEFAULT_NON_DOCTOR_MULTIPLIER',
+        multiplier: policyMultiplier || (profession.bucket === 'DOCTOR' ? doctorMultiplier : defaultMultiplier),
+        source: policyMultiplier ? `LENDER_POLICY_GRP_${profession.bucket}_MULTIPLIER` : (profession.bucket === 'DOCTOR' ? 'GRP_DOCTOR_MD_MULTIPLIER' : 'GRP_DEFAULT_NON_DOCTOR_MULTIPLIER'),
         profileText: profession.profileText,
         professionBucket: profession.bucket
     };
@@ -1547,7 +1736,10 @@ function resolveLenderSpecificBankSnapshot(rawBankData, lenderPolicy) {
     if (!rawBankData) return null;
     const sampleDays = lenderPolicy?.banking?.sampleDays || [5, 10, 15, 25];
     try {
-        return extractBankFySnapshot(rawBankData, { sampleDays });
+        return extractBankFySnapshot(rawBankData, {
+            sampleDays,
+            useVendorDailyAbb: lenderPolicy?.banking?.useVendorDailyAbb === true
+        });
     } catch (err) {
         return { error: err.message, latest: null, _trace: { sampling_days: sampleDays.join(', ') } };
     }
@@ -1598,6 +1790,16 @@ function resolveApplicableLtvKey(productType, propertyType, occupancyType, candi
     return null;
 }
 
+function resolveLtvByPolicy(lenderPolicy, productType, propertyType, occupancyType, loanAmount, method, paramMap = {}) {
+    const key = resolveApplicableLtvKey(productType, propertyType, occupancyType, loanAmount);
+    if (!key) return { key: null, percent: null, requiresConfirmation: true, reasonCode: 'POLICY_VALUE_REQUIRES_CONFIRMATION' };
+    const parsed = getParamPercent(paramMap, key);
+    if (!parsed.ok || parsed.value === null) {
+        return { key, percent: null, requiresConfirmation: true, reasonCode: 'POLICY_VALUE_REQUIRES_CONFIRMATION', parseResult: parsed };
+    }
+    return { key, percent: parsed.value, requiresConfirmation: false, reasonCode: null, parseResult: parsed };
+}
+
 // ------ FOIR PARSER ------
 function parseDynamicFoir(valString, monthlyIncome) {
     const res = parseFoirRuleSafe(valString);
@@ -1642,23 +1844,35 @@ function getSchemePrimaryIncome(esr, scheme, paramMap, warnings, logger, lenderP
     }
     if (name.includes('BANKING') || name.includes('ABB')) {
         const banking = resolveBankingAbbIncome({ esr, paramMap, lenderPolicy });
+        const usesMultiplier = banking.multiplier !== null && banking.multiplier !== undefined;
+        const multiplierPercent = usesMultiplier ? banking.multiplier * 100 : null;
+        const abbForLog = Number((banking.abb || 0).toFixed(2));
+        const incomeForLog = Number((banking.monthlyIncome || 0).toFixed(2));
+        const formula = usesMultiplier
+            ? `Monthly Income Used = ABB × DBR (${abbForLog} × ${multiplierPercent}% = ${incomeForLog})`
+            : `Monthly Income Used = ABB / divisor (${abbForLog} / ${banking.divisor || 0} = ${incomeForLog})`;
 
         logger?.traceExtraction?.('BANKING POLICY', {
             'Lender Policy': lenderPolicy.displayName,
             'Selected Policy': banking.basis,
-            'Bank Avg Balance / ABB': banking.abb,
+            'Bank Avg Balance / ABB': abbForLog,
+            'ABB DBR Multiplier': usesMultiplier ? `${multiplierPercent}%` : 'N/A',
+            'ABB Multiplier Source Key': usesMultiplier ? (banking.divisorSourceKey || 'POLICY_DEFAULT') : 'N/A',
             'ABB Divisor': banking.divisor,
-            'ABB Divisor Source Key': banking.divisorSourceKey || 'POLICY_DEFAULT',
+            'ABB Divisor Source Key': usesMultiplier ? 'N/A' : (banking.divisorSourceKey || 'POLICY_DEFAULT'),
             'Loan Reference': banking.loanReference,
             'Threshold': banking.threshold,
-            'Formula': 'Monthly Income Used = ABB / divisor',
-            'Calculated Banking Income': banking.monthlyIncome
+            'Formula': formula,
+            'Calculation': usesMultiplier
+                ? `${abbForLog} × ${multiplierPercent}% = ${incomeForLog}`
+                : `${abbForLog} / ${banking.divisor || 0} = ${incomeForLog}`,
+            'Calculated Banking Income': incomeForLog
         });
 
         if (banking.monthlyIncome > 0) return banking.monthlyIncome;
         return failMissing('Banking', 'STRICT_ABB_DAILY_BALANCE');
     }
-    if (name.includes('GST')) {
+    if (name.includes('GST') || name.includes('GROSS MARGIN')) {
         // ICICI policy: GST income = Average Monthly Sales from Monthly Sales&Purchase
         // × mapped industry margin. No default 10% fallback.
         const turnover = Number(esr.gst_avg_monthly_sales) || 0;
@@ -1674,10 +1888,13 @@ function getSchemePrimaryIncome(esr, scheme, paramMap, warnings, logger, lenderP
         });
 
         if (turnover <= 0) return failMissing('GST', 'gst_avg_monthly_sales_from_Monthly_Sales_Purchase');
-        if (margin <= 0) return failMissing('GST', 'valid GST industry margin / manual industry type');
+        if (margin <= 0) {
+            if (lenderPolicy.gstMarginsRequireConfirmation) warnings.push('POLICY_VALUE_REQUIRES_CONFIRMATION: TATA_GST_INDUSTRY_MARGIN');
+            return failMissing('GST / Gross Margin', 'valid GST industry margin / manual industry type');
+        }
         return turnover * margin;
     }
-    if (name.includes('NET PROFIT') || name.includes('NPM')) {
+    if (name.includes('NET PROFIT') || name.includes('CASH PROFIT') || name.includes('ITR BASED') || name.includes('NPM')) {
         if (lenderPolicy.key === 'HDFC') {
             const hdfcNpm = resolveHdfcNpmAnnualIncome({ esr, paramMap, depreciationFraction: null, includeDirectorInterest: false });
             logger?.traceExtraction?.('HDFC NET PROFIT METHOD (NPM) CALCULATION', {
@@ -1692,6 +1909,14 @@ function getSchemePrimaryIncome(esr, scheme, paramMap, warnings, logger, lenderP
             });
             if (hdfcNpm.monthlyIncome > 0) return hdfcNpm.monthlyIncome;
             return failMissing('Net Profit', 'HDFC ITR Data');
+        }
+
+        if (lenderPolicy.npm) {
+            const resolved = resolveNpmIncomeByPolicy(lenderPolicy, esr, paramMap);
+            warnings.push(...resolved.warnings);
+            logger?.traceExtraction?.(`${lenderPolicy.key} NPM / ITR CALCULATION`, resolved);
+            if (resolved.monthlyIncome > 0) return resolved.monthlyIncome;
+            return failMissing('NPM / ITR', 'current-year ITR financials');
         }
 
         const pat = Number(esr.itr_pat) || 0;
@@ -1975,6 +2200,27 @@ function calculateComposedIncome({ scheme, esr, incomeEntries, paramMap, warning
 
     const totalEligibleIncome = primaryIncome + rentalIncomeBank + rentalIncomeCash + agriIncome + otherIncome;
 
+    if (methodName.includes('BANKING') || methodName.includes('ABB')) {
+        const banking = resolveBankingAbbIncome({ esr, paramMap, lenderPolicy });
+        const multiplierPercent = banking.multiplier !== null && banking.multiplier !== undefined
+            ? banking.multiplier * 100
+            : null;
+        const abbForLog = Number((banking.abb || 0).toFixed(2));
+        const incomeForLog = Number((banking.monthlyIncome || 0).toFixed(2));
+        breakdownItems.unshift({
+            type: `${lenderPolicy.displayName} ABB Calculation`,
+            policy: banking.basis,
+            raw_abb: abbForLog,
+            dbr_multiplier_percent: multiplierPercent,
+            divisor: banking.divisor,
+            parameter_source_key: banking.divisorSourceKey || 'POLICY_DEFAULT',
+            eligible_monthly: incomeForLog,
+            formula: multiplierPercent !== null
+                ? `${abbForLog} × ${multiplierPercent}% = ${incomeForLog}`
+                : `${abbForLog} / ${banking.divisor || 0} = ${incomeForLog}`
+        });
+    }
+
     return {
         total_eligible_income: totalEligibleIncome,
         primary_income: primaryIncome,
@@ -1990,7 +2236,7 @@ function calculateComposedIncome({ scheme, esr, incomeEntries, paramMap, warning
 function parseObligationExclusionMonths(ruleString) {
     if (!ruleString) return 0;
     const str = String(ruleString).toLowerCase();
-    const match = str.match(/closed in next (\d+) months/);
+    const match = str.match(/(?:getting\s+)?clos(?:ed|ing)\s+in\s+(?:the\s+)?next\s+(\d+)\s+months?/);
     return match ? parseInt(match[1], 10) : 0;
 }
 
@@ -2025,7 +2271,9 @@ function calculateNetObligations(obligationsList, rawObligationRule, warnings, p
     const hdfcPosDeductionEntries = [];
 
     const ruleStr = String(rawObligationRule || '').toLowerCase();
-    const noObligation = ruleStr.includes('no need to obligate');
+    const noObligation = /^\s*0(?:\.0+)?\s*%?\s*$/.test(ruleStr)
+        || /\bno\s+obligations?\b/.test(ruleStr)
+        || ruleStr.includes('no need to obligate');
     const availedInLastMatch = ruleStr.match(/availed in last (\d+)/);
     const availedInLastMonths = availedInLastMatch ? parseInt(availedInLastMatch[1], 10) : 0;
 
@@ -2122,7 +2370,7 @@ function calculateNetObligations(obligationsList, rawObligationRule, warnings, p
                 }
             }
 
-            if (exclusionMonths > 0 && remainingMonths > 0 && remainingMonths < exclusionMonths) {
+            if (exclusionMonths > 0 && remainingMonths > 0 && remainingMonths <= exclusionMonths) {
                 excludedObligations.push(obl);
                 const note = `Excluded EMI ₹${emi.toLocaleString()} (${obl.lender_name || 'Lender'} - ${obl.loan_type || 'Loan'}) because it closes in ${remainingMonths.toFixed(1)} months (< ${exclusionMonths} months threshold).`;
                 obligationExclusionNotes.push(note);
@@ -2532,6 +2780,51 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         }
     }
 
+    // A Salaried scheme is applicable only when the primary applicant is
+    // explicitly salaried. A salaried co-applicant may contribute to other
+    // lender methods, but must not activate the standalone Salaried method.
+    const primaryApplicant = (applicants || []).find((app, index) => isPrimaryApplicant(app, index)) || null;
+    const primaryEmploymentType = String(primaryApplicant?.employment_type || esr.employment_type || 'NA').toUpperCase();
+    if (isSalariedMethod && primaryEmploymentType !== 'SALARIED') {
+        const reason = `PRIMARY_APPLICANT_NOT_SALARIED: employment type is ${primaryEmploymentType || 'NA'}`;
+        logger?.traceStep('SALARIED METHOD NOT APPLICABLE', [
+            `Primary Applicant: ${primaryApplicant?.name || primaryApplicant?.id || 'N/A'}`,
+            `Primary Employment Type: ${primaryEmploymentType || 'NA'}`,
+            'Decision: Salaried method calculation skipped.',
+            'A salaried co-applicant does not activate the standalone Salaried method.'
+        ].join('\n'));
+        return {
+            lender_id: lender?.id || scheme.lender_id,
+            lender_name: lender?.name || esr.lender_name,
+            lender_policy_key: lenderPolicy.key,
+            lender_policy_name: lenderPolicy.displayName,
+            scheme_id: scheme.id,
+            scheme_name: scheme.scheme_name,
+            income_method_matched,
+            status: 'NOT_ELIGIBLE',
+            is_eligible: false,
+            final_eligible_loan_amount: 0,
+            eligible_loan_amount: 0,
+            monthly_income_used: null,
+            primary_monthly_income_used: null,
+            maximum_eligible_emi: null,
+            max_eligible_emi: null,
+            foir_based_eligible_loan_amount: null,
+            ltv_based_eligible_loan_amount: null,
+            applicable_ltv_percent: null,
+            foir_allowed_percent: null,
+            foir_actual_percent: null,
+            foir_breakdown: null,
+            eligible_income_breakdown: [],
+            failure_reasons: [reason],
+            warnings: [],
+            manual_review_required: false,
+            configuration_status: 'NOT_APPLICABLE_FOR_PRIMARY_PROFILE',
+            reason_code: 'PRIMARY_APPLICANT_NOT_SALARIED',
+            ineligibility_reason: 'Salaried method is available only when the primary applicant is salaried.'
+        };
+    }
+
     const pref = pType === 'hl' ? 'hl' : 'lap';
 
     // Generic parsing evaluator helper
@@ -2596,10 +2889,23 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const isNwmMethod = (scheme.scheme_name || '').toUpperCase().includes('NET WORTH') || (scheme.scheme_name || '').toUpperCase().includes('NWM');
     const isGrpMethod = (scheme.scheme_name || '').toUpperCase().includes('GRP') || (scheme.scheme_name || '').toUpperCase().includes('GROSS RECEIPT');
     const isDscrMethod = (scheme.scheme_name || '').toUpperCase().includes('DSCR');
-    const isManualOnlyMethod = /\b(LIP|LOW\s+LTV|MANUAL)\b/i.test(scheme.scheme_name || '');
+    const isIciciNpmMethod = lenderPolicy.key === 'ICICI'
+        && /NET\s+PROFIT|CASH\s+PROFIT|\bNPM\b/i.test(scheme.scheme_name || '');
+    const isIciciGstMethod = lenderPolicy.key === 'ICICI'
+        && /GST|GROSS\s+MARGIN/i.test(scheme.scheme_name || '');
+    const isTataLipMethod = lenderPolicy.key === 'TATA_HOUSING' && /\bLIP\b/i.test(scheme.scheme_name || '');
+    const isManualOnlyMethod = (!isTataLipMethod && /\bLIP\b/i.test(scheme.scheme_name || ''))
+        || /\b(LOW\s+LTV|MANUAL)\b/i.test(scheme.scheme_name || '')
+        || (['INDIA_SHELTERS', 'PIRAMAL', 'TATA_HOUSING'].includes(lenderPolicy.key)
+            && /\b(AIP|ASSESSED\s+INCOME|NET\s+WORTH|NWM|ANY\s+OTHER)\b/i.test(scheme.scheme_name || ''));
 
     if (isManualOnlyMethod && !(Number(esr.manual_eligible_loan_amount) > 0)) {
         logger?.traceStep('MANUAL / POLICY METHOD', `${scheme.scheme_name} requires manual/deviation underwriting. Auto FOIR/DSCR calculation skipped; common policy/LTV parameters remain seeded for UI/audit.`);
+        const manualReasonCode = /LOW\s+LTV/i.test(scheme.scheme_name || '') ? 'LOW_LTV_REQUIRES_MANUAL_REVIEW'
+            : /AIP|ASSESSED\s+INCOME/i.test(scheme.scheme_name || '') ? 'AIP_REQUIRES_PD_BASED_APPROVAL'
+                : /NET\s+WORTH|NWM/i.test(scheme.scheme_name || '') ? 'NWM_REQUIRES_ASSET_DETAILS'
+                    : /ANY\s+OTHER/i.test(scheme.scheme_name || '') ? 'POLICY_VALUE_REQUIRES_CONFIRMATION'
+                    : 'LIP_REQUIRES_MANUAL_REVIEW';
         return {
             lender_id: lender?.id || scheme.lender_id,
             lender_name: lender?.name || esr.lender_name,
@@ -2613,9 +2919,11 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
             final_eligible_loan_amount: 0,
             eligible_loan_amount: 0,
             monthly_income_used: 0,
-            failure_reasons: [`${scheme.scheme_name} is a manual/deviation method. Enter manual eligible loan amount to evaluate/send.`],
+            failure_reasons: [manualReasonCode, `${scheme.scheme_name} is a manual/deviation method. Enter manual eligible loan amount and reason to evaluate/send.`],
             warnings: ['Manual method skipped from auto eligibility.'],
             manual_review_required: true,
+            configuration_status: 'REQUIRES_MANUAL_UNDERWRITING',
+            reason_code: manualReasonCode,
             ineligibility_reason: `${scheme.scheme_name} requires manual override.`
         };
     }
@@ -2777,6 +3085,65 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         incomeComposition = calculateComposedIncome({ scheme, esr, incomeEntries, paramMap, warnings, logger, lenderPolicy });
         composedIncome = incomeComposition.total_eligible_income;
 
+        // ICICI NPM includes 100% of co-applicant monthly salary in eligible
+        // monthly income. Do not convert it into a separate 60%/70% EMI add-on.
+        if (isIciciNpmMethod) {
+            const coApplicantSalary = getCoApplicantSalaryMonthly({ esr, incomeEntries, applicants });
+            if (coApplicantSalary.monthlySalary > 0) {
+                const baseNpmMonthlyIncome = composedIncome;
+                composedIncome += coApplicantSalary.monthlySalary;
+                incomeComposition.total_eligible_income = composedIncome;
+                incomeComposition.co_applicant_salary_100_percent = coApplicantSalary.monthlySalary;
+                incomeComposition.breakdown = [
+                    ...(incomeComposition.breakdown || []),
+                    {
+                        type: 'Co-applicant Salary Included in ICICI NPM Income',
+                        raw_monthly: coApplicantSalary.monthlySalary,
+                        eligible_monthly: coApplicantSalary.monthlySalary,
+                        percentage: 1,
+                        source: coApplicantSalary.source,
+                        rule: 'ICICI NPM: include 100% co-applicant monthly salary in monthly NPM income; no separate salary EMI add-on.'
+                    }
+                ];
+                logger?.traceFormula(
+                    'ICICI NPM MONTHLY INCOME INCLUDING CO-APPLICANT SALARY',
+                    'Base eligible NPM monthly income + 100% co-applicant monthly salary',
+                    `${baseNpmMonthlyIncome.toLocaleString()} + ${coApplicantSalary.monthlySalary.toLocaleString()} x 100%`,
+                    `Combined monthly NPM income ${composedIncome.toLocaleString()}`
+                );
+            }
+        }
+
+        // ICICI GST follows the same single-counting rule: 100% of the
+        // co-applicant net salary is part of eligible monthly income. It is not
+        // converted into a separate salaried FOIR/EMI/loan add-on.
+        if (isIciciGstMethod) {
+            const coApplicantSalary = getCoApplicantSalaryMonthly({ esr, incomeEntries, applicants });
+            if (coApplicantSalary.monthlySalary > 0) {
+                const baseGstMonthlyIncome = composedIncome;
+                composedIncome += coApplicantSalary.monthlySalary;
+                incomeComposition.total_eligible_income = composedIncome;
+                incomeComposition.co_applicant_salary_100_percent = coApplicantSalary.monthlySalary;
+                incomeComposition.breakdown = [
+                    ...(incomeComposition.breakdown || []),
+                    {
+                        type: 'Co-applicant Net Salary Included in ICICI GST Income',
+                        raw_monthly: coApplicantSalary.monthlySalary,
+                        eligible_monthly: coApplicantSalary.monthlySalary,
+                        percentage: 1,
+                        source: coApplicantSalary.source,
+                        rule: 'ICICI GST: include 100% co-applicant net salary in eligible monthly income; no separate salary FOIR or EMI add-on.'
+                    }
+                ];
+                logger?.traceFormula(
+                    'ICICI GST ELIGIBLE INCOME INCLUDING CO-APPLICANT NET SALARY',
+                    'GST eligible monthly income + 100% co-applicant net salary',
+                    `${baseGstMonthlyIncome.toLocaleString()} + ${coApplicantSalary.monthlySalary.toLocaleString()} x 100%`,
+                    `Total eligible monthly income ${composedIncome.toLocaleString()}`
+                );
+            }
+        }
+
         logger?.traceStep('STEP 1-2 — INCOME COMPOSITION', [
             `Primary Income:       ₹${(incomeComposition.primary_income || 0).toLocaleString()}`,
             `Rental (Bank):        ₹${(incomeComposition.rental_bank || 0).toLocaleString()}`,
@@ -2795,14 +3162,18 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
 
     // 2. Resolve Allowed FOIR limit
     const configuredRawFoir = paramMap[`${pref}_dbr_foir`];
+    const policyFoir = resolveFoirByPolicy(lenderPolicy, scheme.scheme_name, composedIncome, esr, paramMap, product.product_type);
     const isIciciLapGst = lenderPolicy.key === 'ICICI'
         && pType === 'lap'
         && String(scheme.scheme_name || '').toUpperCase().includes('GST');
     // Current ICICI LAP GST policy is a fixed 90% FOIR with no Double Whammy.
     // Keep the runtime deterministic while older database rows are being updated.
+    const policyFoirForParser = typeof policyFoir === 'number'
+        ? `${policyFoir * 100}%`
+        : policyFoir;
     const rawFoir = isIciciLapGst
         ? '90%'
-        : (configuredRawFoir ?? (isNoDoubleFoirSalariedMethod ? 'No DBR' : null));
+        : (policyFoirForParser ?? configuredRawFoir ?? (isNoDoubleFoirSalariedMethod ? 'No DBR' : null));
     if (isIciciLapGst && configuredRawFoir !== '90%') {
         warnings.push(`ICICI LAP GST FOIR runtime policy override applied: configured value "${configuredRawFoir ?? 'missing'}" replaced with fixed 90%; Double Whammy disabled.`);
         logger?.traceWarning(`ICICI LAP GST policy override: fixed FOIR 90%; ignored stale configured value "${configuredRawFoir ?? 'missing'}".`);
@@ -2895,6 +3266,8 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const methodAllowsCoApplicantSalaryAddon =
         !isSalariedMethod
         && !isGrpMethod
+        && !isIciciNpmMethod
+        && !isIciciGstMethod
         && (
             isDscrMethod
             || (lenderPolicy.key === 'HDFC' && isBankingMethod)
@@ -2907,7 +3280,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         incomeEntries,
         applicants,
         isSalariedMethod,
-        methodAllowsCoApplicantSalaryAddon
+        methodAllowsCoApplicantSalaryAddon: methodAllowsCoApplicantSalaryAddon || isIciciNpmMethod || isIciciGstMethod
     });
     const coApplicantSalaryForTenure = salaryTenureScope.coApplicantSalary || { monthlySalary: 0, source: 'NONE' };
     const includeCoApplicantAgeForTenure = salaryTenureScope.includeCoApplicants;
@@ -3173,7 +3546,38 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     // 7. Calculate FOIR-based Maximum Eligible Loan Amount (or Method-based direct loan amount)
     let foir_based_eligible_loan_amount = 0;
 
-    if (isGrpMethod) {
+    if (isTataLipMethod) {
+        const lip = resolveTataLipEligibility(esr);
+        if (lip.latestNetProfit <= 0) {
+            isEligible = false;
+            failure_reasons.push('TATA_LIP_CURRENT_YEAR_NET_PROFIT_REQUIRED');
+        }
+        if (lip.caAssessedAmountRequired) {
+            isEligible = false;
+            failure_reasons.push('CA_ASSESSED_ELIGIBLE_AMOUNT_REQUIRED_FOR_TATA_LIP');
+            policyWarnings.push('Enter the CA-assessed eligible amount in manual eligible loan amount for Tata LIP.');
+        }
+        foir_based_eligible_loan_amount = lip.finalEligibleAmount;
+        logger?.traceExtraction?.('TATA LIP ELIGIBILITY CALCULATION', {
+            'Latest Year Net Profit': lip.latestNetProfit,
+            'Previous Year Net Profit': lip.previousNetProfit || 'N/A',
+            'Growth Rate': lip.growthRate === null ? 'N/A' : `${(lip.growthRate * 100).toFixed(2)}%`,
+            'Growth Threshold': '50%',
+            'Income Basis Used': lip.useTwoYearAverage ? 'Average of latest and previous year' : 'Latest year',
+            'Annual Net Profit Basis': lip.annualNetProfitBasis,
+            'Net Profit Multiplier': '3x',
+            'Net Profit Based Amount': lip.netProfitMultipleAmount,
+            'CA Assessed Eligible Amount': lip.caAssessedEligibleAmount || 'REQUIRED',
+            'Formula': 'min(Annual Net Profit Basis × 3, CA Assessed Eligible Amount)',
+            'Calculated LIP Eligibility': lip.finalEligibleAmount
+        });
+        logger?.traceFormula(
+            'STEP 8 — TATA LIP DIRECT ELIGIBILITY',
+            'min(Net Profit Basis × 3, CA Assessed Eligible Amount)',
+            `min(${lip.annualNetProfitBasis.toLocaleString()} × 3, ${lip.caAssessedEligibleAmount.toLocaleString()})`,
+            lip.finalEligibleAmount.toLocaleString()
+        );
+    } else if (isGrpMethod) {
         const grossReceipts = Number(esr.itr_gross_receipts) || 0;
         const grpResolution = resolveGrpMultiplierForPolicy({ esr, paramMap, lenderPolicy });
         const grpMultiplier = grpResolution.multiplier;
@@ -3183,6 +3587,16 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         if (grossReceipts <= 0) {
             isEligible = false;
             failure_reasons.push('GRP gross receipt not available');
+        }
+        if (!grpResolution.profileText && ['INDIA_SHELTERS', 'PIRAMAL', 'TATA_HOUSING'].includes(lenderPolicy.key)) {
+            isEligible = false;
+            failure_reasons.push('PROFESSION_REQUIRED_FOR_GRP');
+            policyWarnings.push('PROFESSION_REQUIRED_FOR_GRP');
+        }
+        if (!(grpMultiplier > 0) && ['INDIA_SHELTERS', 'PIRAMAL', 'TATA_HOUSING'].includes(lenderPolicy.key)) {
+            isEligible = false;
+            failure_reasons.push('POLICY_VALUE_REQUIRES_CONFIRMATION: GRP multiplier');
+            policyWarnings.push('POLICY_VALUE_REQUIRES_CONFIRMATION');
         }
 
         foir_based_eligible_loan_amount = Math.max(0, (grossReceipts * grpMultiplier) - exposure.amount);
@@ -3251,19 +3665,31 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
 
     // 8. Resolve LTV and Max Loan by LTV based on estimated capacity before LTV cap
     const temp_loan_amt = foir_based_eligible_loan_amount || 0;
-    const applicable_ltv_key = resolveApplicableLtvKey(esr.product_type, esr.property_type, esr.occupancy_type, temp_loan_amt);
+    const ltvPolicyResolution = resolveLtvByPolicy(lenderPolicy, esr.product_type, esr.property_type, esr.occupancy_type, temp_loan_amt, scheme.scheme_name, paramMap);
+    const applicable_ltv_key = ltvPolicyResolution.key;
 
+    const lenderRequiresExplicitPolicyConfirmation = ['INDIA_SHELTERS', 'PIRAMAL', 'TATA_HOUSING'].includes(lenderPolicy.key)
+        && ltvPolicyResolution.requiresConfirmation;
     let applicable_ltv_percent = null;
-    if (applicable_ltv_key) {
-        const ltvRes = getParamPercent(paramMap, applicable_ltv_key);
+    if (applicable_ltv_key && !lenderRequiresExplicitPolicyConfirmation) {
+        const ltvRes = ltvPolicyResolution.parseResult || getParamPercent(paramMap, applicable_ltv_key);
         applicable_ltv_percent = handleParseResult(ltvRes, applicable_ltv_key);
         logger?.traceParser('parsePercentSafe', applicable_ltv_key, ltvRes.raw, ltvRes);
+    }
+
+    if (lenderRequiresExplicitPolicyConfirmation) {
+        const missingLtvPolicy = applicable_ltv_key || 'LTV';
+        const reason = `POLICY_VALUE_REQUIRES_CONFIRMATION: ${missingLtvPolicy}`;
+        isEligible = false;
+        failure_reasons.push(reason);
+        policyWarnings.push(reason);
+        logger?.traceStep('LTV POLICY CONFIRMATION REQUIRED', `${missingLtvPolicy} is blank in the lender policy; automatic eligibility is blocked until the lender value is confirmed.`);
     }
 
     let ltv_based_eligible_loan_amount = null;
     if (applicable_ltv_percent !== null && esr.property_value) {
         ltv_based_eligible_loan_amount = Math.round(esr.property_value * applicable_ltv_percent);
-    } else if (esr.product_type === 'HL' && esr.property_value) {
+    } else if (esr.product_type === 'HL' && esr.property_value && !['INDIA_SHELTERS', 'PIRAMAL', 'TATA_HOUSING'].includes(lenderPolicy.key)) {
         // Task 4: HL Slab LTV if no explicit key override
         const propLower = (esr.property_type || '').toLowerCase();
         let hl_ltv = 0.75; // default fallback for HL
@@ -3308,7 +3734,11 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         && !skip_foir_check
         && composedIncome > 0
     ) {
-        const coApplicantOtherEmiCapacity = coApplicantSalaryAddon?.eligibleEmi > 0 ? coApplicantSalaryAddon.eligibleEmi : 0;
+        // ICICI NPM salary is already included at 100% in composedIncome.
+        // Combined Double Whammy must not add a second salary EMI capacity.
+        const coApplicantOtherEmiCapacity = (isIciciNpmMethod || isIciciGstMethod)
+            ? 0
+            : (coApplicantSalaryAddon?.eligibleEmi > 0 ? coApplicantSalaryAddon.eligibleEmi : 0);
         const combinedDoubleWhammy = calculateCombinedDoubleWhammyEligibility({
             primaryMonthlyIncome: composedIncome,
             otherEmiCapacity: coApplicantOtherEmiCapacity,
@@ -3534,14 +3964,14 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const manual_eligible_loan_amount = Number(esr.manual_eligible_loan_amount) || null;
     const manual_proposed_emi = Number(esr.manual_proposed_emi) || null;
 
-    if (manual_eligible_loan_amount !== null && manual_eligible_loan_amount > 0) {
+    if (!isTataLipMethod && manual_eligible_loan_amount !== null && manual_eligible_loan_amount > 0) {
         isEligible = true;
         failure_reasons.length = 0; // Clear failures
         warnings.push(`Manual Eligibility Override applied: System calculation bypassed.`);
         final_eligible_loan_amount = manual_eligible_loan_amount;
         if (manual_proposed_emi !== null) proposed_emi = manual_proposed_emi;
         logger?.traceStep('MANUAL OVERRIDE', `Override applied. Loan: ₹${final_eligible_loan_amount}, EMI: ₹${proposed_emi}`);
-    } else if (scheme.scheme_name?.toUpperCase().includes('LIP') || scheme.scheme_name?.toUpperCase().includes('LOW LTV') || scheme.scheme_name?.toUpperCase().includes('MANUAL')) {
+    } else if (!isTataLipMethod && (scheme.scheme_name?.toUpperCase().includes('LIP') || scheme.scheme_name?.toUpperCase().includes('LOW LTV') || scheme.scheme_name?.toUpperCase().includes('MANUAL'))) {
         // Task 6: Skip LIP/Low LTV if not configured manually
         return {
             lender_id: scheme.lender_id,
@@ -3574,6 +4004,9 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         ltv_based_eligible_loan_amount,
         final_eligible_loan_amount,
         eligible_loan_amount: final_eligible_loan_amount, // for backwards compatibility
+        product_cap: maxLoan,
+        requested_loan_cap: requested_loan,
+        property_value: Number(esr.property_value) || null,
         dscr_eligible_loan_amount: isDscrMethod ? foir_based_eligible_loan_amount : null,
         dscr_actual_ratio: isDscrMethod && dscrBreakdown ? dscrBreakdown.actualDscrRatio : null,
         dscr_min_ratio: isDscrMethod && dscrBreakdown ? dscrBreakdown.minRatio : null,
@@ -4541,8 +4974,14 @@ module.exports = {
     evaluateDynamicSchemeEligibility,
     __testables: {
         LENDER_POLICY_REGISTRY,
+        resolveLenderPolicy,
+        resolveFoirByPolicy,
         resolveBankingAbbIncome,
+        resolveGstIndustryMargin,
         resolveGrpMultiplierForPolicy,
+        resolveNpmIncomeByPolicy,
+        resolveTataLipEligibility,
+        resolveLtvByPolicy,
         normalizeProfessionForGrp
     }
 };

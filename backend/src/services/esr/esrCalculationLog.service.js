@@ -6,7 +6,8 @@ const crypto = require('crypto');
 const XLSX = require('xlsx');
 const prisma = require('../../../config/db');
 const { getStorageProvider } = require('../storage');
-const LOG_DIR = path.join(require('os').tmpdir(), 'cred2tech', 'logs', 'esr');
+const { getLocalEsrLogsDir } = require('./esrTraceLogger');
+const LOG_DIR = getLocalEsrLogsDir();
 const CALCULATION_VERSION = 'ESR_DYNAMIC_V1';
 
 async function persistEsrCalculationLog({
@@ -573,7 +574,14 @@ function _dataTakenForEvaluation(methodName, evaluation, inputSnapshot) {
 function _incomeFormulaForEvaluation(methodName, evaluation, inputSnapshot, monthlyIncome, primaryIncome, coApplicantIncome, dscr) {
     const method = String(methodName || '').toUpperCase();
     if (method.includes('GST')) {
-        return `GST Avg Monthly Sales ${_money(inputSnapshot?.gst_avg_monthly_sales)} x Margin ${_percent(inputSnapshot?.gst_industry_margin)} = ${_money(primaryIncome ?? monthlyIncome)}`;
+        const baseFormula = `GST Avg Monthly Sales ${_money(inputSnapshot?.gst_avg_monthly_sales)} x Margin ${_percent(inputSnapshot?.gst_industry_margin)} = ${_money(primaryIncome ?? monthlyIncome)}`;
+        const isIciciGst = String(evaluation?.lender_policy_key || '').toUpperCase() === 'ICICI';
+        const includedCoApplicantSalary = isIciciGst && monthlyIncome !== null && primaryIncome !== null
+            ? Math.max(0, monthlyIncome - primaryIncome)
+            : 0;
+        return includedCoApplicantSalary > 0
+            ? `${baseFormula}; + 100% co-applicant net salary ${_money(includedCoApplicantSalary)} = total eligible monthly income ${_money(monthlyIncome)}`
+            : baseFormula;
     }
     if (method.includes('BANK')) {
         return `ABB/Banking policy income = ${_money(inputSnapshot?.bank_avg_balance)} based income ${_money(primaryIncome ?? monthlyIncome)}`;
@@ -644,7 +652,13 @@ function _loanFormulaForEvaluation(methodName, evaluation, incomeBasedLoan, prop
     const method = String(methodName || '').toUpperCase();
     if (evaluation.combined_double_whammy_breakdown) {
         const dw = evaluation.combined_double_whammy_breakdown;
-        return `Combined Double Whammy: K ${Number(dw.emiMultiplier || 0).toFixed(4)} x (Primary income ${_money(dw.primaryMonthlyIncome ?? dw.netProfitMonthly)} x DW ${_percent(dw.doubleWhammyPercent)} + Other EMI ${_money(dw.otherEmiCapacity)}) / (1 + K x Primary income / Property ${_money(dw.propertyValue)}) = ${_money(dw.doubleWhammyEligibleLoan)}; FOIR cap <= ${_percent(dw.maxFoirPercent)} gives ${_money(dw.foirCapEligibleLoan)}; Income eligible = ${_money(dw.incomeEligibleLoan)}`;
+        const isIciciNpm = String(evaluation.lender_policy_key || '').toUpperCase() === 'ICICI'
+            && (method.includes('NET PROFIT') || method.includes('NPM'));
+        const incomeLabel = isIciciNpm ? 'Combined NPM income' : 'Primary income';
+        const otherEmiTerm = Number(dw.otherEmiCapacity || 0) > 0
+            ? ` + Other EMI ${_money(dw.otherEmiCapacity)}`
+            : '';
+        return `Combined Double Whammy: K ${Number(dw.emiMultiplier || 0).toFixed(4)} x (${incomeLabel} ${_money(dw.primaryMonthlyIncome ?? dw.netProfitMonthly)} x DW ${_percent(dw.doubleWhammyPercent)}${otherEmiTerm}) / (1 + K x ${incomeLabel} / Property ${_money(dw.propertyValue)}) = ${_money(dw.doubleWhammyEligibleLoan)}; FOIR cap <= ${_percent(dw.maxFoirPercent)} gives ${_money(dw.foirCapEligibleLoan)}; Income eligible = ${_money(dw.incomeEligibleLoan)}`;
     }
     if (method.includes('GRP') || method.includes('GROSS RECEIPT')) {
         return `Gross Receipts x lender multiplier - exposure = ${_money(incomeBasedLoan)}`;

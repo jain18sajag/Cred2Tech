@@ -239,6 +239,14 @@ const formatDynamicTenure = (months) => {
 };
 
 const fmtPct = (v) => v != null ? `${(Number(v) * 100).toFixed(1)}%` : '—';
+const fmtPct2 = (v) => v != null ? `${(Number(v) * 100).toFixed(2)}%` : '—';
+const formatExactCurrency = (n, fractionDigits = 3) => {
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return '—';
+  return `₹${Number(n).toLocaleString('en-IN', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: fractionDigits
+  })}`;
+};
 
 
 const firstPresent = (...values) => values.find(v => v !== null && v !== undefined && v !== '');
@@ -472,7 +480,7 @@ function ProposalBadge({ status }) {
 }
 
 // ─── Calculation Breakdown Panel ──────────────────────────────────────────────
-const CalcBreakdownPanel = ({ evaluations, lender, monthlyIncome, selectedSchemeName }) => {
+const CalcBreakdownPanel = ({ evaluations, lender, monthlyIncome, selectedSchemeName, propertyValue, requestedLoanAmount }) => {
   const [open, setOpen] = useState(false);
 
   const orderedEvaluations = useMemo(
@@ -521,27 +529,57 @@ const CalcBreakdownPanel = ({ evaluations, lender, monthlyIncome, selectedScheme
   const dscrFinalAnnualDebtService = getDscrMetric(dscrBreakdown, 'finalAnnualDebtService', 'final_annual_debt_service', null);
 
   const schemeMonthlyIncome = ev?.monthly_income_used ?? ev?.foir_breakdown?.composed_income ?? (dscrAnnualIncome ? Number(dscrAnnualIncome) / 12 : monthlyIncome);
+  const methodName = normalizeSchemeName(ev?.scheme_name || ev?.best_scheme_name || '');
+  const isGrpScheme = methodName.includes('GRP') || methodName.includes('GROSS RECEIPT');
+  const isManualScheme = methodName.includes('LOW LTV') || methodName.includes('LIP') || methodName.includes('MANUAL');
+  const failureReasons = Array.isArray(ev?.failure_reasons) ? ev.failure_reasons : [];
+  const isPrimaryApplicantNotSalaried = failureReasons.some(reason => String(reason).includes('PRIMARY_APPLICANT_NOT_SALARIED'))
+    || ev?.reason_code === 'PRIMARY_APPLICANT_NOT_SALARIED';
+  const netObligations = firstPresent(ev?.foir_breakdown?.net_obligations, 0);
+  const eligibleEmi = firstPresent(ev?.maximum_eligible_emi, ev?.max_eligible_emi, ev?.foir_breakdown?.maximum_eligible_emi);
+  const incomeBasedLoan = firstPresent(ev?.foir_based_eligible_loan_amount, ev?.dscr_eligible_loan_amount);
+  const ltvBasedLoan = firstPresent(ev?.ltv_based_eligible_loan_amount, ev?.max_loan_by_ltv);
+  const effectivePropertyValue = firstPresent(ev?.property_value, propertyValue);
+  const productCap = firstPresent(ev?.product_cap, ev?.max_loan_amount);
+  const requestedCap = firstPresent(ev?.requested_loan_cap, requestedLoanAmount);
+  const incomeBreakdown = Array.isArray(ev?.eligible_income_breakdown) ? ev.eligible_income_breakdown : [];
+  const coApplicantSalaryRow = incomeBreakdown.find(row => /CO-APPLICANT.*SALARY/i.test(String(row?.type || row?.source || '')));
+  const coApplicantSalaryIncluded = firstPresent(coApplicantSalaryRow?.eligible_monthly, coApplicantSalaryRow?.amount, 0);
+  const primaryMonthlyIncome = firstPresent(ev?.primary_monthly_income_used, ev?.foir_breakdown?.primary_composed_income, Number(schemeMonthlyIncome || 0) - Number(coApplicantSalaryIncluded || 0));
+  const underwritingRoi = firstPresent(ev?.underwriting_roi_used, ev?.roi_max, ev?.roi_min);
+  const finalTenureMonths = firstPresent(ev?.final_tenure_used, ev?.max_tenure_months);
+  const coreCandidates = [incomeBasedLoan, ltvBasedLoan]
+    .filter(value => value !== null && value !== undefined && Number(value) > 0)
+    .map(Number);
+  const coreMinimum = coreCandidates.length ? Math.min(...coreCandidates) : Infinity;
+  const finalCandidates = [
+    ['FOIR/Income', incomeBasedLoan],
+    ['LTV', ltvBasedLoan],
+    ['Product Cap', Number(productCap) > 0 && Number(productCap) < coreMinimum ? productCap : null],
+    ['Requested Cap', Number(requestedCap) > 0 && Number(requestedCap) < coreMinimum ? requestedCap : null]
+  ].filter(([, value]) => value !== null && value !== undefined && Number(value) > 0);
+  const finalCandidateText = finalCandidates.map(([, value]) => formatExactCurrency(value, 0)).join(', ');
 
   const ltvCards = (ev.applicable_ltv_percent != null || ev.ltv_based_eligible_loan_amount != null || ev.max_loan_by_ltv != null)
     ? [
-      { label: 'LTV Applied', value: ev.applicable_ltv_percent != null ? `${(ev.applicable_ltv_percent * 100).toFixed(0)}%` : '—', icon: '🏠', color: '#553C9A', bg: '#FAF5FF', note: `Key: ${ev.applicable_ltv_key || '—'}` },
-      { label: 'LTV Allowed', value: ev.ltv_based_eligible_loan_amount != null ? formatDynamicCurrency(ev.ltv_based_eligible_loan_amount) : (ev.max_loan_by_ltv != null ? formatDynamicCurrency(ev.max_loan_by_ltv) : '—'), icon: '🔢', color: '#2C7A7B', bg: '#E6FFFA', note: 'Property Value × LTV%' },
+      { label: 'Applicable LTV', value: fmtPct2(ev.applicable_ltv_percent), icon: '🏠', color: '#553C9A', bg: '#FAF5FF', note: `Policy key: ${ev.applicable_ltv_key || '—'}` },
+      { label: 'LTV-Based Loan Eligibility', value: ltvBasedLoan != null ? formatDynamicCurrency(ltvBasedLoan) : '—', icon: '🔢', color: '#2C7A7B', bg: '#E6FFFA', note: 'Property Value × Applicable LTV' },
     ]
     : [];
 
   const steps = [
-    { label: isDscrScheme ? 'Monthly Income Equivalent' : 'Monthly Income Used', value: formatDynamicCurrency(schemeMonthlyIncome), icon: '💰', color: '#2B6CB0', bg: '#EBF8FF', note: isDscrScheme ? 'Annual income ÷ 12 for display only' : 'Scheme-specific monthly income figure' },
-    { label: isDscrScheme ? 'DSCR Required' : 'FOIR Allowed', value: isDscrScheme ? (dscrMinimum ? `${Number(dscrMinimum).toFixed(2)}x` : '—') : (ev.foir_breakdown?.skip_foir_check ? 'No DBR' : fmtPct(ev.foir_allowed_percent)), icon: '📊', color: '#276749', bg: '#F0FFF4', note: isDscrScheme ? 'Minimum DSCR ratio' : (ev.foir_breakdown?.skip_foir_check ? 'FOIR Validation Skipped' : 'Max permissible obligation %') },
+    { label: isDscrScheme ? 'Monthly Income Equivalent' : 'Eligible Monthly Income', value: isPrimaryApplicantNotSalaried ? 'Not Calculated' : (isDscrScheme ? formatDynamicCurrency(schemeMonthlyIncome) : `${formatDynamicCurrency(schemeMonthlyIncome)}/month`), icon: '💰', color: '#2B6CB0', bg: '#EBF8FF', note: isPrimaryApplicantNotSalaried ? 'Primary applicant is not salaried' : (isDscrScheme ? 'Annual income ÷ 12 for display only' : 'Method-specific eligible monthly income') },
+    { label: isDscrScheme ? 'Minimum DSCR Required' : (isGrpScheme || isManualScheme ? 'Eligibility Method' : 'Maximum FOIR Allowed'), value: isPrimaryApplicantNotSalaried ? 'Not Applicable' : (isDscrScheme ? (dscrMinimum ? `${Number(dscrMinimum).toFixed(2)}x` : '—') : (isGrpScheme ? 'Direct GRP' : isManualScheme ? 'Manual' : (ev.foir_breakdown?.skip_foir_check ? 'No DBR' : fmtPct2(ev.foir_allowed_percent)))), icon: '📊', color: '#276749', bg: '#F0FFF4', note: isPrimaryApplicantNotSalaried ? 'Salaried method skipped' : (isDscrScheme ? 'Minimum DSCR ratio' : (ev.foir_breakdown?.skip_foir_check ? 'FOIR validation skipped by policy' : 'Maximum permissible obligation percentage')) },
     {
-      label: isDscrScheme ? 'DSCR Actual' : 'FOIR Actual', value: isDscrScheme ? (dscrActual != null ? `${Number(dscrActual).toFixed(2)}x` : '—') : fmtPct(ev.foir_actual_percent), icon: '📉',
+      label: isDscrScheme ? 'Actual DSCR' : 'Actual FOIR', value: isPrimaryApplicantNotSalaried ? 'N/A' : (isDscrScheme ? (dscrActual != null ? `${Number(dscrActual).toFixed(2)}x` : '—') : ((isGrpScheme || isManualScheme) ? 'N/A' : fmtPct2(ev.foir_actual_percent))), icon: '📉',
       color: isDscrScheme ? ((dscrActual != null && dscrMinimum != null && dscrActual < dscrMinimum) ? '#C53030' : '#276749') : ((!ev.foir_breakdown?.skip_foir_check && ev.foir_actual_percent > ev.foir_allowed_percent) ? '#C53030' : '#276749'),
       bg: isDscrScheme ? ((dscrActual != null && dscrMinimum != null && dscrActual < dscrMinimum) ? '#FFF5F5' : '#F0FFF4') : ((!ev.foir_breakdown?.skip_foir_check && ev.foir_actual_percent > ev.foir_allowed_percent) ? '#FFF5F5' : '#F0FFF4'),
-      note: isDscrScheme ? 'Annual income ÷ annual debt service' : 'Current EMI ÷ income'
+      note: isDscrScheme ? 'Annual income ÷ annual debt service' : '(Obligations + proposed EMI) ÷ eligible income'
     },
-    { label: isDscrScheme ? 'DSCR Capacity' : 'Underwriting Capacity', value: ev.foir_based_eligible_loan_amount != null ? formatDynamicCurrency(ev.foir_based_eligible_loan_amount) : (ev.foir_breakdown?.skip_foir_check ? 'No Cap' : '—'), icon: '🏦', color: '#744210', bg: '#FFFBF0', note: isDscrScheme ? 'Based on DSCR EMI capacity' : 'Based on FOIR & Obligations' },
+    { label: isDscrScheme ? 'DSCR-Based Loan Eligibility' : (isGrpScheme ? 'GRP-Based Loan Eligibility' : isManualScheme ? 'Manual Loan Eligibility' : 'FOIR-Based Loan Eligibility'), value: isPrimaryApplicantNotSalaried ? 'Not Calculated' : (incomeBasedLoan != null ? formatDynamicCurrency(incomeBasedLoan) : (ev.foir_breakdown?.skip_foir_check ? 'No Cap' : '—')), icon: '🏦', color: '#744210', bg: '#FFFBF0', note: isPrimaryApplicantNotSalaried ? 'Primary applicant is not salaried' : (isDscrScheme ? 'Based on DSCR debt-service capacity' : isGrpScheme ? 'Gross receipts × lender multiplier − exposure' : 'Reverse EMI from eligible EMI capacity') },
     ...ltvCards,
     {
-      label: 'Final Eligible Loan', value: ev.final_eligible_loan_amount != null ? formatDynamicCurrency(ev.final_eligible_loan_amount) : '—', icon: '✅',
+      label: 'Final Eligible Loan Amount', value: isPrimaryApplicantNotSalaried ? 'Not Eligible' : (ev.final_eligible_loan_amount != null ? formatDynamicCurrency(ev.final_eligible_loan_amount) : '—'), icon: '✅',
       color: ev.is_eligible ? '#276749' : '#C53030', bg: ev.is_eligible ? '#F0FFF4' : '#FFF5F5',
       note: ev.is_eligible ? 'Min(Capacity, LTV, Max Loan)' : 'Failed eligibility', highlight: true
     },
@@ -628,7 +666,14 @@ const CalcBreakdownPanel = ({ evaluations, lender, monthlyIncome, selectedScheme
               fontSize: 10, color: '#A0AEC0', fontFamily: 'monospace', lineHeight: 1.8, wordBreak: 'break-word', whiteSpace: 'normal'
             }}>
               <div style={{ color: '#68D391', fontWeight: 700, marginBottom: 4 }}>📐 Calculation Trace</div>
-              {isDscrScheme ? (
+              {isPrimaryApplicantNotSalaried ? (
+                <>
+                  <div style={{ color: '#FC8181', fontWeight: 700 }}>Salaried Method: Not Eligible</div>
+                  <div>Primary applicant employment type is not SALARIED.</div>
+                  <div>Salaried income, FOIR, EMI capacity, LTV and loan eligibility calculations were skipped.</div>
+                  <div>A salaried co-applicant does not activate the standalone Salaried method.</div>
+                </>
+              ) : isDscrScheme ? (
                 <>
                   <div>DSCR = Annual Income / (Existing Annual Obligations + Proposed Annual EMI)</div>
                   <div>Annual Income = {dscrAnnualIncome != null ? formatDynamicCurrency(dscrAnnualIncome) : '—'}</div>
@@ -637,11 +682,55 @@ const CalcBreakdownPanel = ({ evaluations, lender, monthlyIncome, selectedScheme
                   <div>Max Monthly EMI = {dscrMaxMonthlyEmi != null ? formatDynamicCurrency(Math.max(0, Number(dscrMaxMonthlyEmi))) : (ev.max_eligible_emi != null ? formatDynamicCurrency(Math.max(0, ev.max_eligible_emi)) : '—')}</div>
                   <div>Final Annual Debt Service = {dscrFinalAnnualDebtService != null ? formatDynamicCurrency(dscrFinalAnnualDebtService) : '—'}</div>
                 </>
+              ) : isGrpScheme ? (
+                <>
+                  <div>GRP-Based Loan Eligibility = Gross Receipts × Lender Multiplier − Exposure</div>
+                  <div>Direct GRP Eligibility = {incomeBasedLoan != null ? formatExactCurrency(incomeBasedLoan, 0) : '—'}</div>
+                </>
+              ) : isManualScheme ? (
+                <>
+                  <div>This method uses the approved manual/policy eligibility amount.</div>
+                  <div>Manual Loan Eligibility = {incomeBasedLoan != null ? formatExactCurrency(incomeBasedLoan, 0) : '—'}</div>
+                </>
               ) : (
-                <div>Max EMI = Income ({formatDynamicCurrency(schemeMonthlyIncome)}) × FOIR ({fmtPct(ev.foir_allowed_percent)}) − Obligations = {ev.max_eligible_emi != null ? formatDynamicCurrency(Math.max(0, ev.max_eligible_emi)) : '—'}</div>
+                <>
+                  {methodName.includes('GST') && coApplicantSalaryIncluded > 0 ? (
+                    <>
+                      <div>Eligible Monthly Income = GST Income + Co-applicant Net Salary</div>
+                      <div>= {formatExactCurrency(primaryMonthlyIncome)} + {formatExactCurrency(coApplicantSalaryIncluded)}</div>
+                      <div>= {formatExactCurrency(schemeMonthlyIncome)}</div>
+                    </>
+                  ) : methodName.includes('NET PROFIT') || methodName.includes('NPM') ? (
+                    <>
+                      <div>Eligible Monthly Income = NPM Income{coApplicantSalaryIncluded > 0 ? ' + Co-applicant Net Salary' : ''}</div>
+                      <div>= {formatExactCurrency(primaryMonthlyIncome)}{coApplicantSalaryIncluded > 0 ? ` + ${formatExactCurrency(coApplicantSalaryIncluded)}` : ''}</div>
+                      <div>= {formatExactCurrency(schemeMonthlyIncome)}</div>
+                    </>
+                  ) : (
+                    <div>Eligible Monthly Income = {formatExactCurrency(schemeMonthlyIncome)}</div>
+                  )}
+                  <div style={{ marginTop: 4 }}>Eligible EMI Capacity = (Eligible Income × FOIR) − Obligations</div>
+                  <div>= ({formatExactCurrency(schemeMonthlyIncome)} × {fmtPct2(ev.foir_allowed_percent)}) − {formatExactCurrency(netObligations)}</div>
+                  <div>= {eligibleEmi != null ? formatExactCurrency(Math.max(0, Number(eligibleEmi))) : '—'}</div>
+                  <div style={{ marginTop: 4 }}>FOIR-Based Loan Eligibility = Reverse EMI at {underwritingRoi != null ? `${Number(underwritingRoi).toFixed(2)}%` : '—'} for {finalTenureMonths ?? '—'} months</div>
+                  <div>= {incomeBasedLoan != null ? formatExactCurrency(incomeBasedLoan, 0) : '—'}</div>
+                </>
               )}
-              <div>Max Loan LTV = {ev.max_loan_by_ltv != null ? formatDynamicCurrency(ev.max_loan_by_ltv) : '—'}</div>
-              <div style={{ color: '#68D391' }}>Final = {ev.final_eligible_loan_amount != null ? formatDynamicCurrency(ev.final_eligible_loan_amount) : '—'}</div>
+              {!isPrimaryApplicantNotSalaried && ltvBasedLoan != null && (
+                <>
+                  <div style={{ marginTop: 4 }}>LTV-Based Loan Eligibility = Property Value × Applicable LTV</div>
+                  <div>= {formatExactCurrency(effectivePropertyValue, 0)} × {fmtPct2(ev.applicable_ltv_percent)}</div>
+                  <div>= {formatExactCurrency(ltvBasedLoan, 0)}</div>
+                </>
+              )}
+              {isPrimaryApplicantNotSalaried ? (
+                <div style={{ color: '#FC8181', marginTop: 4 }}>Final Eligible Loan Amount = Not Eligible</div>
+              ) : (
+                <>
+                  <div style={{ color: '#68D391', marginTop: 4 }}>Final Eligible Loan = MIN({finalCandidateText || 'available policy limits'})</div>
+                  <div style={{ color: '#68D391' }}>= {ev.final_eligible_loan_amount != null ? formatExactCurrency(ev.final_eligible_loan_amount, 0) : '—'}</div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1101,7 +1190,7 @@ export default function EsrPage() {
                     ))}
                   </div>
 
-                  <CalcBreakdownPanel evaluations={lender.scheme_evaluations} lender={lender} monthlyIncome={monthlyIncome} selectedSchemeName={lender.best_scheme_name} />
+                  <CalcBreakdownPanel evaluations={lender.scheme_evaluations} lender={lender} monthlyIncome={monthlyIncome} selectedSchemeName={lender.best_scheme_name} propertyValue={esr.property_value} requestedLoanAmount={esr.requested_loan_amount} />
                   <SchemeDiagnosticsPanel evaluations={lender.scheme_evaluations} lender={lender} />
 
                   {/* Proposal Actions */}
@@ -1170,7 +1259,7 @@ export default function EsrPage() {
                       ❌ {lender.remarks}
                     </div>
                   )}
-                  <CalcBreakdownPanel evaluations={lender.scheme_evaluations} lender={lender} monthlyIncome={monthlyIncome} selectedSchemeName={lender.best_scheme_name} />
+                  <CalcBreakdownPanel evaluations={lender.scheme_evaluations} lender={lender} monthlyIncome={monthlyIncome} selectedSchemeName={lender.best_scheme_name} propertyValue={esr.property_value} requestedLoanAmount={esr.requested_loan_amount} />
                   <SchemeDiagnosticsPanel evaluations={lender.scheme_evaluations} lender={lender} />
 
                   {/* Proposal Actions (Manual Override) */}
