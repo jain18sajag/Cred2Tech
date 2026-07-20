@@ -12,7 +12,7 @@ async function listRules(tenantId) {
     },
     include: {
       tenant_lender: {
-        select: { bank_name: true }
+        select: { lender_name: true }
       },
       volume_slabs: { orderBy: { from_amount: 'asc' } },
       case_count_slabs: { orderBy: { from_cases: 'asc' } },
@@ -38,7 +38,7 @@ async function getRule(id, tenantId) {
 
 async function createRule(tenantId, data) {
   const {
-    tenant_lender_id, product_type, payout_basis, commission_type, is_active,
+    tenant_lender_id, product_type, payout_basis, commission_type, status,
     volume_slabs, case_count_slabs, special_schemes
   } = data;
 
@@ -68,7 +68,7 @@ async function createRule(tenantId, data) {
       product_type,
       payout_basis,
       commission_type,
-      status: 'ACTIVE',
+      status: status || 'ACTIVE',
       volume_slabs: {
         create: (volume_slabs || []).map(s => ({
           from_amount: parseFloat(s.from_amount),

@@ -43,6 +43,7 @@ function LenderModal({ isOpen, onClose, onSave, platformLenders = [], initialDat
   const [lenderName, setLenderName] = useState('');
   const [platformLenderId, setPlatformLenderId] = useState('');
   const [isEsrEnabled, setIsEsrEnabled] = useState(false);
+  const [maxCapAmount, setMaxCapAmount] = useState('');
   const [saving, setSaving]         = useState(false);
 
   useEffect(() => {
@@ -50,6 +51,7 @@ function LenderModal({ isOpen, onClose, onSave, platformLenders = [], initialDat
       setLenderName(initialData?.lender_name || '');
       setPlatformLenderId(initialData?.platform_lender_id || '');
       setIsEsrEnabled(initialData?.is_esr_enabled || false);
+      setMaxCapAmount(initialData?.max_cap_amount || '');
     }
   }, [isOpen, initialData]);
 
@@ -61,8 +63,9 @@ function LenderModal({ isOpen, onClose, onSave, platformLenders = [], initialDat
     try {
       await onSave({ 
         lender_name: lenderName, 
-        platform_lender_id: platformLenderId || null,
-        is_esr_enabled: isEsrEnabled,
+        platform_lender_id: null,
+        is_esr_enabled: false,
+        max_cap_amount: maxCapAmount,
         is_active: true 
       });
       onClose();
@@ -86,52 +89,15 @@ function LenderModal({ isOpen, onClose, onSave, platformLenders = [], initialDat
               style={inputStyle} onKeyDown={e => e.key === 'Enter' && handleSave()} />
           </div>
 
-          <div style={{ padding: '16px', background: '#F9FAFB', borderRadius: 12, border: '1px solid #E5E7EB' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-              <Briefcase size={16} color="#6366F1" />
-              <span style={{ fontSize: 13, fontWeight: 700, color: '#374151' }}>ESR CONFIGURATION</span>
-            </div>
-            
-            <div style={{ marginBottom: 16 }}>
-              <label style={labelStyle}>LINK TO PLATFORM LENDER</label>
-              <select 
-                value={platformLenderId} 
-                onChange={e => setPlatformLenderId(e.target.value)}
-                style={inputStyle}
-              >
-                <option value="">-- Manual Lender (No ESR Matrix) --</option>
-                {platformLenders.map(p => (
-                  <option key={p.id} value={p.id}>{p.name} ({p.code})</option>
-                ))}
-              </select>
-              <div style={{ fontSize: 11, color: '#6B7280', marginTop: 6 }}>
-                Link this lender to evaluate cases against the platform's automated eligibility rules.
-              </div>
-            </div>
-
-            {platformLenderId && (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Enable in ESR</div>
-                  <div style={{ fontSize: 11, color: '#6B7280' }}>Include this lender in ESR generation</div>
-                </div>
-                <div 
-                  onClick={() => setIsEsrEnabled(!isEsrEnabled)}
-                  style={{
-                    width: 44, height: 24, borderRadius: 12, padding: 2, cursor: 'pointer',
-                    background: isEsrEnabled ? '#6366F1' : '#E5E7EB',
-                    transition: 'all 0.2s', position: 'relative'
-                  }}
-                >
-                  <div style={{
-                    width: 20, height: 20, background: 'white', borderRadius: '50%',
-                    transform: isEsrEnabled ? 'translateX(20px)' : 'translateX(0)',
-                    transition: 'all 0.2s'
-                  }} />
-                </div>
-              </div>
-            )}
+          <div>
+            <label style={labelStyle}>UPPER CAP (₹) - Global for Lender</label>
+            <input type="number" value={maxCapAmount} onChange={e => setMaxCapAmount(e.target.value)}
+              placeholder="No limit"
+              style={inputStyle} onKeyDown={e => e.key === 'Enter' && handleSave()} />
+            <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 4 }}>Maximum total payout allowed across all products for this lender.</div>
           </div>
+
+
         </div>
         <div style={modalFooter}>
           <button onClick={onClose} style={btnOutline}>Cancel</button>
@@ -338,6 +304,7 @@ export default function DSALenderContactsPage() {
     return {
       payout_basis: 'NET_DISBURSED',
       commission_type: 'HYBRID',
+      max_cap_amount: '',
       volume_slabs: [],
       case_count_slabs: [],
       special_schemes: []
@@ -362,6 +329,7 @@ export default function DSALenderContactsPage() {
         product_type: productType,
         payout_basis: stateToSave.payout_basis,
         commission_type: stateToSave.commission_type || 'HYBRID',
+        max_cap_amount: stateToSave.max_cap_amount ? parseFloat(stateToSave.max_cap_amount) : null,
         is_active: true,
         volume_slabs: stateToSave.volume_slabs || [],
         case_count_slabs: stateToSave.case_count_slabs || [],
@@ -585,6 +553,7 @@ export default function DSALenderContactsPage() {
                             Gross Sanctioned
                           </label>
                         </div>
+                        
                       </div>
 
                       {/* Product Tabs */}

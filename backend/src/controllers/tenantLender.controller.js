@@ -18,7 +18,7 @@ async function list(req, res) {
 // POST /api/tenant/lenders
 async function create(req, res) {
   try {
-    const { lender_name, platform_lender_id, is_esr_enabled } = req.body;
+    const { lender_name, platform_lender_id, is_esr_enabled, max_cap_amount } = req.body;
     if (!lender_name?.trim()) return res.status(400).json({ error: 'lender_name is required' });
 
     const data = await svc.createTenantLender({
@@ -26,6 +26,7 @@ async function create(req, res) {
       lenderName: lender_name,
       platformLenderId: platform_lender_id,
       isEsrEnabled: is_esr_enabled,
+      maxCapAmount: max_cap_amount ? parseFloat(max_cap_amount) : null,
       userId: req.user.id,
     });
     res.status(201).json(data);
@@ -39,12 +40,13 @@ async function create(req, res) {
 async function update(req, res) {
   try {
     const id = parseInt(req.params.id);
-    const { lender_name, is_active, platform_lender_id, is_esr_enabled } = req.body;
+    const { lender_name, is_active, platform_lender_id, is_esr_enabled, max_cap_amount } = req.body;
     const data = await svc.updateTenantLender(id, req.user.tenant_id, {
       lenderName: lender_name,
       isActive:   is_active,
       platformLenderId: platform_lender_id,
       isEsrEnabled: is_esr_enabled,
+      maxCapAmount: max_cap_amount !== undefined ? (max_cap_amount ? parseFloat(max_cap_amount) : null) : undefined,
     });
     res.json(data);
   } catch (e) {

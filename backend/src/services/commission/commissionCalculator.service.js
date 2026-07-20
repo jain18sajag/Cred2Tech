@@ -37,7 +37,14 @@ function calculateCommission(disbursement, sanction, rule, existingLedgers = [])
     
     // 2. Calculate the commission
     // Formula: (baseAmount * baseRate) / 100
-    const calculatedCommission = baseAmount.mul(baseRate).div(100);
+    let calculatedCommission = baseAmount.mul(baseRate).div(100);
+    let cappedAmount = null;
+    
+    // Check for upper cap (max_cap_amount)
+    if (rule.tenant_lender?.max_cap_amount && calculatedCommission.toNumber() > rule.tenant_lender.max_cap_amount) {
+        cappedAmount = calculatedCommission.toNumber();
+        calculatedCommission = new Decimal(rule.tenant_lender.max_cap_amount);
+    }
     
     // 3. Create Snapshots
     // We freeze the exact rule configuration that existed at this precise moment
@@ -58,6 +65,7 @@ function calculateCommission(disbursement, sanction, rule, existingLedgers = [])
         base_amount: baseAmount.toNumber(),
         applied_rate: baseRate.toNumber(),
         calculated_amount: calculatedCommission.toNumber(),
+        capped_at: cappedAmount !== null ? rule.tenant_lender.max_cap_amount : null,
         slab_used: rule.volume_slabs && rule.volume_slabs.length > 0 ? rule.volume_slabs[0] : null
     };
 

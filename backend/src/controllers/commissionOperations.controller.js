@@ -361,7 +361,7 @@ exports.getLenderCommissions = async (req, res) => {
             if (l.status !== 'CANCELLED' || l.entry_type === 'REVERSAL') bucket.eligible += comm;
         });
 
-        const summaryData = ['Current Month', 'Previous Month', 'Older'].map(period => ({
+        const summaryData = [currentMonthStr, prevMonthStr, 'Older'].map(period => ({
             period,
             cases: summaryBuckets[period].cases.size,
             volume: summaryBuckets[period].volume,

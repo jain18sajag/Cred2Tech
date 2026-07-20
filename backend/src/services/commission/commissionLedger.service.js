@@ -27,6 +27,7 @@ async function processDisbursementCommission(tenantId, caseId, disbursement, san
         },
         orderBy: { id: 'desc' },
         include: {
+            tenant_lender: true,
             volume_slabs: { orderBy: { from_amount: 'asc' } },
             case_count_slabs: { orderBy: { from_cases: 'asc' } },
             special_schemes: { orderBy: { valid_from: 'asc' } }

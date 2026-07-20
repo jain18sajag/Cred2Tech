@@ -51,17 +51,17 @@ async function listTenantLenders(tenantId) {
 }
 
 // ── Create a tenant lender ────────────────────────────────────────────────────
-async function createTenantLender({ tenantId, lenderName, platformLenderId, isEsrEnabled, userId }) {
+async function createTenantLender({ tenantId, lenderName, platformLenderId, isEsrEnabled, maxCapAmount, userId }) {
   const rows = await prisma.$queryRawUnsafe(`
-    INSERT INTO tenant_lenders (tenant_id, lender_name, is_active, platform_lender_id, is_esr_enabled, created_by_user_id, updated_at)
-    VALUES ($1, $2, true, $4, $5, $3, NOW())
+    INSERT INTO tenant_lenders (tenant_id, lender_name, is_active, platform_lender_id, is_esr_enabled, max_cap_amount, created_by_user_id, updated_at)
+    VALUES ($1, $2, true, $4, $5, $6, $3, NOW())
     RETURNING *
-  `, tenantId, lenderName.trim(), userId, platformLenderId || null, isEsrEnabled || false);
+  `, tenantId, lenderName.trim(), userId, platformLenderId || null, isEsrEnabled || false, maxCapAmount !== undefined ? maxCapAmount : null);
   return rows[0];
 }
 
 // ── Update a tenant lender ────────────────────────────────────────────────────
-async function updateTenantLender(id, tenantId, { lenderName, isActive, platformLenderId, isEsrEnabled }) {
+async function updateTenantLender(id, tenantId, { lenderName, isActive, platformLenderId, isEsrEnabled, maxCapAmount }) {
   const sets = [];
   const vals = [];
   let idx = 1;
@@ -70,6 +70,7 @@ async function updateTenantLender(id, tenantId, { lenderName, isActive, platform
   if (isActive !== undefined) { sets.push(`is_active = $${idx++}`); vals.push(isActive); }
   if (platformLenderId !== undefined) { sets.push(`platform_lender_id = $${idx++}`); vals.push(platformLenderId); }
   if (isEsrEnabled !== undefined) { sets.push(`is_esr_enabled = $${idx++}`); vals.push(isEsrEnabled); }
+  if (maxCapAmount !== undefined) { sets.push(`max_cap_amount = $${idx++}`); vals.push(maxCapAmount); }
 
   if (sets.length === 0) throw new Error('No fields to update');
   sets.push(`updated_at = NOW()`);
