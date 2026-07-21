@@ -4,6 +4,7 @@ import IncentiveSummaryTable from '../components/financials/IncentiveSummaryTabl
 import LenderCommissionFilters from '../components/financials/LenderCommissionFilters';
 import LenderCommissionCard from '../components/financials/LenderCommissionCard';
 import GenerateInvoiceModal from '../components/financials/GenerateInvoiceModal';
+import UpdateInvoiceStatusModal from '../components/financials/UpdateInvoiceStatusModal';
 import { getLenderCommissions, syncMissingLenderCommissions } from '../api/commissionOperationsService';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import toast from 'react-hot-toast';

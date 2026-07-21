@@ -77,6 +77,8 @@ export default function CaseDetailPage() {
   const [disbursementSummary, setDisbursementSummary] = useState(null);
   const [tenantLenders, setTenantLenders] = useState([]);
   const [summaryDownloading, setSummaryDownloading] = useState(false);
+  const [stageLenderId, setStageLenderId] = useState('');
+  const [stageProductType, setStageProductType] = useState('');
 
   const { hasRole } = useAuth();
   const isMsme = hasRole('MSME_CUSTOMER');

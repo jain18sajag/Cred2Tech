@@ -361,13 +361,22 @@ exports.getLenderCommissions = async (req, res) => {
             if (l.status !== 'CANCELLED' || l.entry_type === 'REVERSAL') bucket.eligible += comm;
         });
 
-        const summaryData = ['Current Month', 'Previous Month', 'Older'].map(period => ({
-            period,
-            cases: summaryBuckets[period].cases.size,
-            volume: summaryBuckets[period].volume,
-            eligible: summaryBuckets[period].eligible,
-            paid: summaryBuckets[period].paid,
-            pending: summaryBuckets[period].pending
+        const currentMonthStr = getMonthYearString(referenceDate);
+        let prevMonthDate = new Date(referenceDate);
+        prevMonthDate.setMonth(prevMonthDate.getMonth() - 1);
+        const prevMonthStr = getMonthYearString(prevMonthDate);
+
+        const summaryData = [
+            { label: currentMonthStr, bucketKey: 'Current Month' }, 
+            { label: prevMonthStr, bucketKey: 'Previous Month' }, 
+            { label: 'Older', bucketKey: 'Older' }
+        ].map(({ label, bucketKey }) => ({
+            period: label,
+            cases: summaryBuckets[bucketKey].cases.size,
+            volume: summaryBuckets[bucketKey].volume,
+            eligible: summaryBuckets[bucketKey].eligible,
+            paid: summaryBuckets[bucketKey].paid,
+            pending: summaryBuckets[bucketKey].pending
         }));
 
         const lendersMap = new Map();

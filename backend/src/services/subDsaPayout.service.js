@@ -289,7 +289,7 @@ async function calculatePayout(tenantId, subDsaUserId, commissionLedgerId, clien
 
   const eventDate = sourceDateFor(commLedger);
 
-  const rule = await client.subDsaPayoutRule.findFirst({
+  let rule = await client.subDsaPayoutRule.findFirst({
     where: { 
       sub_dsa_user_id: Number(subDsaUserId),
       status: { in: ['ACTIVE', 'ARCHIVED'] },
@@ -302,6 +302,15 @@ async function calculatePayout(tenantId, subDsaUserId, commissionLedgerId, clien
     orderBy: { id: 'desc' },
     include: { overrides: true, case_count_slabs: { orderBy: { from_cases: 'asc' } }, special_schemes: true }
   });
+
+  if (!rule) {
+    rule = await client.subDsaPayoutRule.findFirst({
+      where: { sub_dsa_user_id: Number(subDsaUserId) },
+      orderBy: { effective_from: 'asc' },
+      include: { overrides: true, case_count_slabs: { orderBy: { from_cases: 'asc' } }, special_schemes: true }
+    });
+  }
+
   if (!rule) fail('No payout configuration found for this Sub-DSA');
   if (mode === 'AUTO' && rule.payout_trigger === 'MANUAL') fail('Payout trigger is MANUAL');
   if (mode === 'AUTO' && rule.payout_trigger === 'ON_DSA_RECEIPT' && commLedger.status !== 'PAID') fail('Payout requires DSA receipt/paid commission status');
@@ -322,9 +331,13 @@ async function calculatePayout(tenantId, subDsaUserId, commissionLedgerId, clien
   let subDsaPayout = appliedBase.mul(applicableRate).div(100).toDecimalPlaces(2);
 
   const period = monthKey(eventDate);
-  const { start, end } = monthRange(period);
   const previousCases = await client.subDsaPayoutLedger.findMany({
-    where: { tenant_id: tenantId, sub_dsa_user_id: Number(subDsaUserId), status: { notIn: ['REJECTED'] }, created_at: { gte: start, lt: end } },
+    where: { 
+      tenant_id: tenantId, 
+      sub_dsa_user_id: Number(subDsaUserId), 
+      status: { notIn: ['REJECTED'] }, 
+      calculation_metadata: { path: ['payout_period'], equals: period }
+    },
     select: { case_id: true }
   });
   const distinct = new Set(previousCases.map(r => r.case_id));

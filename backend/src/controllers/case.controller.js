@@ -258,7 +258,7 @@ async function getPipeline(req, res) {
 async function updateStage(req, res) {
   try {
     const caseId = parseInt(req.params.id, 10);
-    const { stage } = req.body;
+    const { stage, tenant_lender_id, product_type } = req.body;
     const tenant_id = req.user.tenant_id;
 
     if (!stage) return res.status(400).json({ error: 'Stage is required' });
@@ -268,7 +268,7 @@ async function updateStage(req, res) {
       return res.status(400).json({ error: `Direct update to ${stage} is not allowed. Please use the Disbursement flow.` });
     }
 
-    const updatedCase = await caseService.advanceStage(caseId, tenant_id, stage, req.user.id);
+    const updatedCase = await caseService.advanceStage(caseId, tenant_id, stage, req.user.id, { tenant_lender_id, product_type });
     res.json(updatedCase);
   } catch (error) {
     if (error.message === 'Case not found or unauthorized.') return res.status(403).json({ error: error.message });

@@ -13,7 +13,7 @@ async function processDisbursementCommission(tenantId, caseId, disbursement, san
     }
 
     // 1. Look up the active commission rule for this lender & product at the time of disbursement
-    const rule = await tx.lenderCommissionRule.findFirst({
+    let rule = await tx.lenderCommissionRule.findFirst({
         where: {
             tenant_id: tenantId,
             tenant_lender_id: sanction.tenant_lender_id,
@@ -27,14 +27,33 @@ async function processDisbursementCommission(tenantId, caseId, disbursement, san
         },
         orderBy: { id: 'desc' },
         include: {
+            tenant_lender: true,
             volume_slabs: { orderBy: { from_amount: 'asc' } },
             case_count_slabs: { orderBy: { from_cases: 'asc' } },
             special_schemes: { orderBy: { valid_from: 'asc' } }
         }
     });
 
+    // Fallback: If the case was disbursed before any rules were configured, pick the earliest available rule.
     if (!rule) {
-        console.warn(`[COMMISSION] No active commission rule found for tenant ${tenantId}, lender ${sanction.tenant_lender_id}, product ${sanction.product_type}. Skipping automatic ledger generation.`);
+        rule = await tx.lenderCommissionRule.findFirst({
+            where: {
+                tenant_id: tenantId,
+                tenant_lender_id: sanction.tenant_lender_id,
+                product_type: sanction.product_type
+            },
+            orderBy: { effective_from: 'asc' },
+            include: {
+                tenant_lender: true,
+                volume_slabs: { orderBy: { from_amount: 'asc' } },
+                case_count_slabs: { orderBy: { from_cases: 'asc' } },
+                special_schemes: { orderBy: { valid_from: 'asc' } }
+            }
+        });
+    }
+
+    if (!rule) {
+        console.warn(`[COMMISSION] No commission rule found for tenant ${tenantId}, lender ${sanction.tenant_lender_id}, product ${sanction.product_type}. Skipping automatic ledger generation.`);
         return null;
     }
 
@@ -42,8 +61,25 @@ async function processDisbursementCommission(tenantId, caseId, disbursement, san
         where: { tenant_id: tenantId, case_id: caseId, entry_type: 'BASE_COMMISSION' }
     });
 
+    const dDate = new Date(disbursement.disbursement_date);
+    const startOfMonth = new Date(dDate.getFullYear(), dDate.getMonth(), 1);
+    const endOfMonth = new Date(dDate.getFullYear(), dDate.getMonth() + 1, 0, 23, 59, 59);
+
+    const mtdLedgers = await tx.commissionLedger.findMany({
+        where: {
+            tenant_id: tenantId,
+            tenant_lender_id: sanction.tenant_lender_id,
+            product_type: sanction.product_type,
+            entry_type: 'BASE_COMMISSION',
+            status: { notIn: ['CANCELLED'] },
+            disbursement: { disbursement_date: { gte: startOfMonth, lte: endOfMonth } }
+        }
+    });
+
+    const mtdVolume = mtdLedgers.reduce((sum, l) => sum + parseFloat(l.disbursed_amount || 0), 0);
+
     // 2. Calculate Commission and create Snapshots
-    const calculationResult = calculateCommission(disbursement, sanction, rule, existingLedgers);
+    const calculationResult = calculateCommission(disbursement, sanction, rule, existingLedgers, mtdVolume);
 
     if (!calculationResult) {
         console.log(`[COMMISSION] Skipping ledger generation for case ${caseId} (likely already paid GROSS_SANCTIONED).`);

@@ -136,12 +136,25 @@ function precedence(rule, product, lenderId) {
 }
 
 function pickRule(rules, product, lenderId, eventDate) {
-  const candidates = rules
+  let candidates = rules
     .filter(r => (!r.effective_from || r.effective_from <= eventDate) && (!r.effective_to || r.effective_to >= eventDate))
     .filter(r => (!r.product_type || r.product_type === product) && (!r.tenant_lender_id || Number(r.tenant_lender_id) === Number(lenderId)))
     .map(r => ({ rule: r, score: precedence(r, product, lenderId) }))
     .filter(x => x.score > 0)
-    .sort((a, b) => b.score - a.score || a.id - b.id);
+    .sort((a, b) => b.score - a.score || a.rule.id - b.rule.id);
+    
+  if (!candidates.length) {
+    candidates = rules
+      .filter(r => (!r.product_type || r.product_type === product) && (!r.tenant_lender_id || Number(r.tenant_lender_id) === Number(lenderId)))
+      .map(r => ({ rule: r, score: precedence(r, product, lenderId) }))
+      .filter(x => x.score > 0)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return (a.rule.effective_from || new Date(0)) - (b.rule.effective_from || new Date(0)) || a.rule.id - b.rule.id;
+      });
+    if (candidates.length) return candidates[0].rule;
+  }
+
   if (!candidates.length) return null;
   if (candidates.filter(x => x.score === candidates[0].score).length > 1) fail('Multiple incentive rules with identical precedence');
   return candidates[0].rule;

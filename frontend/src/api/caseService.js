@@ -199,8 +199,8 @@ export const caseService = {
     return response.data;
   },
 
-  updateCaseStage: async (id, stage) => {
-    const response = await axiosInstance.patch(`/cases/${id}/stage`, { stage });
+  updateCaseStage: async (id, stage, payload = {}) => {
+    const response = await axiosInstance.patch(`/cases/${id}/stage`, { stage, ...payload });
     return response.data;
   },
 

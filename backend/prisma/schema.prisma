@@ -1651,6 +1651,7 @@ model TenantLender {
   // is_esr_enabled: DSA_ADMIN controlled. Only meaningful when platform_lender_id is set.
   // Platform lender must also be ACTIVE for ESR inclusion.
   is_esr_enabled     Boolean @default(false)
+  max_cap_amount     Float?
 
   created_by_user_id Int?
   created_at         DateTime @default(now())
