@@ -9,7 +9,7 @@ const { Decimal } = require('@prisma/client');
  * @param {Object} existingLedgers - Array of existing ledgers for this case
  * @returns {Object} - The exact data ready to be inserted into CommissionLedger
  */
-function calculateCommission(disbursement, sanction, rule, existingLedgers = []) {
+function calculateCommission(disbursement, sanction, rule, existingLedgers = [], mtdVolume = 0) {
     let baseAmount = new Decimal(disbursement.amount);
     
     if (rule.payout_basis === 'GROSS_SANCTIONED') {
@@ -20,19 +20,27 @@ function calculateCommission(disbursement, sanction, rule, existingLedgers = [])
         baseAmount = new Decimal(sanction.sanction_amount);
     }
     
-    // 1. Identify the base rate.
-    // For Phase 1, since volume is evaluated over a month and we are just generating the baseline ledger,
-    // we take the first volume slab (the lowest tier) as the baseline rate. 
-    // Month-end true-ups will be handled by VOLUME_ADJUSTMENT entries later.
-    
     let baseRate = new Decimal(0);
+    let matchedSlab = null;
     
-    // Fallback to 0 if no slabs configured
     if (rule.volume_slabs && rule.volume_slabs.length > 0) {
-        // Find the lowest rate slab, typically the first one
-        // Sort ascending by from_amount
+        const totalVolume = mtdVolume + baseAmount.toNumber();
+        
+        // Sort ascending by from_amount to check lowest to highest
         const sortedSlabs = [...rule.volume_slabs].sort((a, b) => a.from_amount - b.from_amount);
-        baseRate = new Decimal(sortedSlabs[0].percent_rate);
+        
+        // Find the highest slab that applies to the total volume
+        for (const slab of sortedSlabs) {
+            if (totalVolume >= slab.from_amount && (slab.to_amount === null || totalVolume <= slab.to_amount)) {
+                matchedSlab = slab;
+                baseRate = new Decimal(slab.percent_rate);
+                break;
+            } else if (totalVolume > (slab.to_amount || 0)) {
+                // Keep evaluating higher slabs
+                matchedSlab = slab;
+                baseRate = new Decimal(slab.percent_rate);
+            }
+        }
     }
     
     // 2. Calculate the commission
@@ -66,7 +74,7 @@ function calculateCommission(disbursement, sanction, rule, existingLedgers = [])
         applied_rate: baseRate.toNumber(),
         calculated_amount: calculatedCommission.toNumber(),
         capped_at: cappedAmount !== null ? rule.tenant_lender.max_cap_amount : null,
-        slab_used: rule.volume_slabs && rule.volume_slabs.length > 0 ? rule.volume_slabs[0] : null
+        slab_snapshot: matchedSlab,
     };
 
     return {
