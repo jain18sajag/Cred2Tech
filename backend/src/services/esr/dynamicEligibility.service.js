@@ -1371,17 +1371,22 @@ function calculateIciciSalariedConsideredIncome({ esr, incomeEntries = [] }) {
 
     // Salary is stored as verified net monthly salary. ICICI FOIR is applied once
     // later by the scheme parameter; do not pre-haircut salary by 70%.
-    // Manual salary rows are used only as a fallback when OCR/API/bank salary is not available.
-    const netSalaryFromSnapshot =
-        getFirstPositiveValue(esr, [
+    // ICICI accepts salary-slip OCR only; bank/manual salary is not a fallback.
+    const isSalarySlipOcrSnapshot = String(esr.salaried_source || esr.salaried_income_source || '')
+        .toUpperCase().includes('OCR') && Number(esr.salaried_slip_count || 0) > 0;
+    const netSalaryFromSnapshot = isSalarySlipOcrSnapshot
+        ? getFirstPositiveValue(esr, [
             'salaried_net_monthly',
             'salaried_income',
             'salary_income',
             'monthly_salary_income',
             'net_monthly_salary',
             'applicant_salary_income'
-        ], 'monthly');
-    const netSalaryMonthly = netSalaryFromSnapshot > 0 ? netSalaryFromSnapshot : entrySums.manualSalaryMonthly;
+        ], 'monthly')
+        : 0;
+    // ICICI salary eligibility is salary-slip based. Bank-statement salary and
+    // manual salary rows are not substitutes for completed salary-slip OCR.
+    const netSalaryMonthly = netSalaryFromSnapshot;
     const consideredSalary = netSalaryMonthly;
 
     const agricultureResolution = resolveIciciAgricultureIncome({ esr, entrySums });
@@ -1432,7 +1437,7 @@ function calculateIciciSalariedConsideredIncome({ esr, incomeEntries = [] }) {
         salary_gross_monthly: Number(esr.salaried_gross_monthly) || null,
         salary_net_monthly: netSalaryMonthly,
         salary_allowed_pct: 100,
-        salary_source: netSalaryFromSnapshot > 0 ? 'ESR_SALARY_NET_SNAPSHOT' : (entrySums.manualSalaryMonthly > 0 ? 'MANUAL_SALARY_FALLBACK' : 'NONE'),
+        salary_source: netSalaryFromSnapshot > 0 ? 'SALARY_SLIP_OCR' : 'NONE',
         agriculture_raw_monthly: agricultureRawMonthly,
         agriculture_source: agricultureSource,
         agriculture_allowed_pct: agricultureAllowedPct,
@@ -1446,7 +1451,7 @@ function calculateIciciSalariedConsideredIncome({ esr, incomeEntries = [] }) {
                 raw_monthly: netSalaryMonthly,
                 allowed_pct: 100,
                 eligible_monthly: consideredSalary,
-                source: netSalaryFromSnapshot > 0 ? 'ESR salary net snapshot' : 'Manual salary fallback',
+                source: 'Salary-slip OCR',
                 rule: 'ICICI Salaried method: verified monthly net salary is the base; FOIR is applied once by the scheme parameter.'
             }] : []),
             ...(consideredAgriculture > 0 ? [{
@@ -1573,8 +1578,38 @@ function calculateHdfcSalariedConsideredIncome({ esr, paramMap = {} }) {
     };
 }
 
-function getCoApplicantSalaryMonthly({ esr, incomeEntries = [], applicants = [] }) {
+function getCoApplicantSalaryMonthly({ esr, incomeEntries = [], applicants = [], requireSalarySlipOcr = false }) {
     const applicantById = new Map((applicants || []).map(app => [Number(app.id), app]));
+
+    if (requireSalarySlipOcr) {
+        let totalMonthlySalary = 0;
+        let slipCount = 0;
+        const applicantIds = [];
+        for (const applicant of applicants || []) {
+            const isCoApplicant = applicant.is_primary === false || String(applicant.type || '').toUpperCase().includes('CO');
+            if (!isCoApplicant) continue;
+            const uniquePeriods = new Map();
+            for (const slip of applicant.salary_ocr_results || []) {
+                if (String(slip.ocr_status || '').toUpperCase() !== 'COMPLETED') continue;
+                const netSalary = toSafeNumber(slip.net_salary);
+                if (!(netSalary > 0)) continue;
+                const hasYearMonth = slip.year && slip.month;
+                const period = slip.salary_period || (hasYearMonth ? `${slip.year}-${slip.month}` : `SLIP-${slip.id}`);
+                if (!uniquePeriods.has(period)) uniquePeriods.set(period, netSalary);
+            }
+            if (uniquePeriods.size > 0) {
+                totalMonthlySalary += [...uniquePeriods.values()].reduce((sum, value) => sum + value, 0) / uniquePeriods.size;
+                slipCount += uniquePeriods.size;
+                applicantIds.push(applicant.id);
+            }
+        }
+        return {
+            monthlySalary: totalMonthlySalary,
+            source: totalMonthlySalary > 0 ? 'CO_APPLICANT_SALARY_SLIP_OCR' : 'NONE',
+            slipCount,
+            applicantIds
+        };
+    }
     let manualSalaryMonthly = 0;
     let hasCoApplicantSalaryEntry = false;
 
@@ -1604,24 +1639,20 @@ function getCoApplicantSalaryMonthly({ esr, incomeEntries = [], applicants = [] 
         };
     }
 
-    const hasSalariedCoApplicant = (applicants || []).some(app =>
-        (app.is_primary === false || String(app.type || '').toUpperCase().includes('CO'))
-        && String(app.employment_type || '').toUpperCase().includes('SALAR')
-    );
-    const snapshotSalary = hasSalariedCoApplicant && !hasCoApplicantSalaryEntry
-        ? getFirstPositiveValue(esr, ['salaried_net_monthly', 'salaried_income'], 'monthly')
-        : 0;
-
+    // Never assign a case-level ESR salary snapshot to a co-applicant merely
+    // because that applicant is marked SALARIED. The snapshot can come from a
+    // primary-applicant bank statement and has no applicant identity. Only an
+    // applicant-linked income row is safe for ICICI NPM/GST co-app salary.
     return {
-        monthlySalary: snapshotSalary,
-        source: snapshotSalary > 0 ? 'CO_APPLICANT_SALARY_SNAPSHOT' : 'NONE'
+        monthlySalary: 0,
+        source: hasCoApplicantSalaryEntry ? 'CO_APPLICANT_SALARY_ENTRY_INVALID' : 'NONE'
     };
 }
 
-function resolveSalaryTenureScope({ esr, incomeEntries = [], applicants = [], isSalariedMethod = false, methodAllowsCoApplicantSalaryAddon = false }) {
+function resolveSalaryTenureScope({ esr, incomeEntries = [], applicants = [], isSalariedMethod = false, methodAllowsCoApplicantSalaryAddon = false, requireSalarySlipOcr = false }) {
     if (!isSalariedMethod) {
         const coApplicantSalary = methodAllowsCoApplicantSalaryAddon
-            ? getCoApplicantSalaryMonthly({ esr, incomeEntries, applicants })
+            ? getCoApplicantSalaryMonthly({ esr, incomeEntries, applicants, requireSalarySlipOcr })
             : { monthlySalary: 0, source: 'NOT_ALLOWED_FOR_METHOD' };
         return {
             includePrimary: true,
@@ -3088,7 +3119,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         // ICICI NPM includes 100% of co-applicant monthly salary in eligible
         // monthly income. Do not convert it into a separate 60%/70% EMI add-on.
         if (isIciciNpmMethod) {
-            const coApplicantSalary = getCoApplicantSalaryMonthly({ esr, incomeEntries, applicants });
+            const coApplicantSalary = getCoApplicantSalaryMonthly({ esr, incomeEntries, applicants, requireSalarySlipOcr: true });
             if (coApplicantSalary.monthlySalary > 0) {
                 const baseNpmMonthlyIncome = composedIncome;
                 composedIncome += coApplicantSalary.monthlySalary;
@@ -3118,7 +3149,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         // co-applicant net salary is part of eligible monthly income. It is not
         // converted into a separate salaried FOIR/EMI/loan add-on.
         if (isIciciGstMethod) {
-            const coApplicantSalary = getCoApplicantSalaryMonthly({ esr, incomeEntries, applicants });
+            const coApplicantSalary = getCoApplicantSalaryMonthly({ esr, incomeEntries, applicants, requireSalarySlipOcr: true });
             if (coApplicantSalary.monthlySalary > 0) {
                 const baseGstMonthlyIncome = composedIncome;
                 composedIncome += coApplicantSalary.monthlySalary;
@@ -3280,7 +3311,8 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         incomeEntries,
         applicants,
         isSalariedMethod,
-        methodAllowsCoApplicantSalaryAddon: methodAllowsCoApplicantSalaryAddon || isIciciNpmMethod || isIciciGstMethod
+        methodAllowsCoApplicantSalaryAddon: methodAllowsCoApplicantSalaryAddon || isIciciNpmMethod || isIciciGstMethod,
+        requireSalarySlipOcr: isIciciNpmMethod || isIciciGstMethod
     });
     const coApplicantSalaryForTenure = salaryTenureScope.coApplicantSalary || { monthlySalary: 0, source: 'NONE' };
     const includeCoApplicantAgeForTenure = salaryTenureScope.includeCoApplicants;
@@ -4127,7 +4159,7 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
     const pType = esr.product_type.toUpperCase();
 
     const liveProperty = await prisma.casePropertyDetails.findUnique({
-        where: { case_id },
+        where: { case_id, case_entity: { tenant_id } },
         select: {
             property_type: true,
             occupancy_status: true,
@@ -4236,6 +4268,10 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
     const applicants = await prisma.applicant.findMany({
         where: { case_id },
         include: {
+            salary_ocr_results: {
+                where: { ocr_status: 'COMPLETED' },
+                orderBy: { created_at: 'desc' }
+            },
             bureau_checks: {
                 where: { status: 'SUCCESS' },
                 orderBy: { created_at: 'desc' },
@@ -4982,6 +5018,7 @@ module.exports = {
         resolveNpmIncomeByPolicy,
         resolveTataLipEligibility,
         resolveLtvByPolicy,
+        getCoApplicantSalaryMonthly,
         normalizeProfessionForGrp
     }
 };
