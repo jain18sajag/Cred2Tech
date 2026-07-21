@@ -17,7 +17,7 @@ function calculateCommission(disbursement, sanction, rule, existingLedgers = [],
         if (alreadyPaid) {
             return null; // Do not generate duplicate commission for subsequent disbursements
         }
-        baseAmount = new Decimal(sanction.sanction_amount);
+        baseAmount = new Decimal(sanction.sanctioned_amount);
     }
     
     let baseRate = new Decimal(0);
