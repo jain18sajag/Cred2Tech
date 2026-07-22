@@ -3976,7 +3976,9 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     );
 
     let dynamicNpmFoirPercent = null;
-    let actualFinalLtvPercent = null;
+    let actualFinalLtvPercent = Number(esr.property_value) > 0
+        ? final_eligible_loan_amount / Number(esr.property_value)
+        : null;
     let doubleWhammyTotalPercent = null;
     if (combinedDoubleWhammyBreakdown && composedIncome > 0 && esr.property_value > 0) {
         dynamicNpmFoirPercent = combinedDoubleWhammyBreakdown.primaryIncomeFoirPercent;

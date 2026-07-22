@@ -250,6 +250,23 @@ const formatExactCurrency = (n, fractionDigits = 3) => {
 
 
 const firstPresent = (...values) => values.find(v => v !== null && v !== undefined && v !== '');
+const policyRateToFraction = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return numeric > 1 ? numeric / 100 : numeric;
+};
+const formatPolicyPercentRange = (min, max) => {
+  const hasMin = min !== null && min !== undefined && min !== '';
+  const hasMax = max !== null && max !== undefined && max !== '';
+  if (!hasMin && !hasMax) return 'Not Configured';
+  if (hasMin && hasMax) {
+    const minText = fmtPct2(min);
+    const maxText = fmtPct2(max);
+    return Number(min) === Number(max) ? minText : `${minText} - ${maxText}`;
+  }
+  return hasMin ? `From ${fmtPct2(min)}` : `Up to ${fmtPct2(max)}`;
+};
 
 const getDscrBreakdown = (ev) => (
   ev?.dscr_breakdown ||
@@ -548,6 +565,17 @@ const CalcBreakdownPanel = ({ evaluations, lender, monthlyIncome, selectedScheme
   const primaryMonthlyIncome = firstPresent(ev?.primary_monthly_income_used, ev?.foir_breakdown?.primary_composed_income, Number(schemeMonthlyIncome || 0) - Number(coApplicantSalaryIncluded || 0));
   const underwritingRoi = firstPresent(ev?.underwriting_roi_used, ev?.roi_max, ev?.roi_min);
   const finalTenureMonths = firstPresent(ev?.final_tenure_used, ev?.max_tenure_months);
+  const roiRange = formatPolicyPercentRange(
+    policyRateToFraction(ev?.roi_min),
+    policyRateToFraction(ev?.roi_max)
+  );
+  const processingFeeRange = formatPolicyPercentRange(ev?.pf_min, ev?.pf_max);
+  const actualLtv = firstPresent(
+    ev?.actual_final_ltv_percent,
+    Number(ev?.final_eligible_loan_amount) > 0 && Number(effectivePropertyValue) > 0
+      ? Number(ev.final_eligible_loan_amount) / Number(effectivePropertyValue)
+      : null
+  );
   const coreCandidates = [incomeBasedLoan, ltvBasedLoan]
     .filter(value => value !== null && value !== undefined && Number(value) > 0)
     .map(Number);
@@ -560,29 +588,48 @@ const CalcBreakdownPanel = ({ evaluations, lender, monthlyIncome, selectedScheme
   ].filter(([, value]) => value !== null && value !== undefined && Number(value) > 0);
   const finalCandidateText = finalCandidates.map(([, value]) => formatExactCurrency(value, 0)).join(', ');
 
-  const ltvCards = (ev.applicable_ltv_percent != null || ev.ltv_based_eligible_loan_amount != null || ev.max_loan_by_ltv != null)
-    ? [
-      { label: 'Applicable LTV', value: fmtPct2(ev.applicable_ltv_percent), icon: '🏠', color: '#553C9A', bg: '#FAF5FF', note: `Policy key: ${ev.applicable_ltv_key || '—'}` },
-      { label: 'LTV-Based Loan Eligibility', value: ltvBasedLoan != null ? formatDynamicCurrency(ltvBasedLoan) : '—', icon: '🔢', color: '#2C7A7B', bg: '#E6FFFA', note: 'Property Value × Applicable LTV' },
-    ]
-    : [];
-
   const steps = [
-    { label: isDscrScheme ? 'Monthly Income Equivalent' : 'Eligible Monthly Income', value: isPrimaryApplicantNotSalaried ? 'Not Calculated' : (isDscrScheme ? formatDynamicCurrency(schemeMonthlyIncome) : `${formatDynamicCurrency(schemeMonthlyIncome)}/month`), icon: '💰', color: '#2B6CB0', bg: '#EBF8FF', note: isPrimaryApplicantNotSalaried ? 'Primary applicant is not salaried' : (isDscrScheme ? 'Annual income ÷ 12 for display only' : 'Method-specific eligible monthly income') },
-    { label: isDscrScheme ? 'Minimum DSCR Required' : (isGrpScheme || isManualScheme ? 'Eligibility Method' : 'Maximum FOIR Allowed'), value: isPrimaryApplicantNotSalaried ? 'Not Applicable' : (isDscrScheme ? (dscrMinimum ? `${Number(dscrMinimum).toFixed(2)}x` : '—') : (isGrpScheme ? 'Direct GRP' : isManualScheme ? 'Manual' : (ev.foir_breakdown?.skip_foir_check ? 'No DBR' : fmtPct2(ev.foir_allowed_percent)))), icon: '📊', color: '#276749', bg: '#F0FFF4', note: isPrimaryApplicantNotSalaried ? 'Salaried method skipped' : (isDscrScheme ? 'Minimum DSCR ratio' : (ev.foir_breakdown?.skip_foir_check ? 'FOIR validation skipped by policy' : 'Maximum permissible obligation percentage')) },
     {
-      label: isDscrScheme ? 'Actual DSCR' : 'Actual FOIR', value: isPrimaryApplicantNotSalaried ? 'N/A' : (isDscrScheme ? (dscrActual != null ? `${Number(dscrActual).toFixed(2)}x` : '—') : ((isGrpScheme || isManualScheme) ? 'N/A' : fmtPct2(ev.foir_actual_percent))), icon: '📉',
-      color: isDscrScheme ? ((dscrActual != null && dscrMinimum != null && dscrActual < dscrMinimum) ? '#C53030' : '#276749') : ((!ev.foir_breakdown?.skip_foir_check && ev.foir_actual_percent > ev.foir_allowed_percent) ? '#C53030' : '#276749'),
-      bg: isDscrScheme ? ((dscrActual != null && dscrMinimum != null && dscrActual < dscrMinimum) ? '#FFF5F5' : '#F0FFF4') : ((!ev.foir_breakdown?.skip_foir_check && ev.foir_actual_percent > ev.foir_allowed_percent) ? '#FFF5F5' : '#F0FFF4'),
-      note: isDscrScheme ? 'Annual income ÷ annual debt service' : '(Obligations + proposed EMI) ÷ eligible income'
+      label: 'Final Loan Amount',
+      value: isPrimaryApplicantNotSalaried ? 'Not Eligible' : (ev.final_eligible_loan_amount != null ? formatDynamicCurrency(ev.final_eligible_loan_amount) : '—'),
+      icon: '✅', color: ev.is_eligible ? '#276749' : '#C53030', bg: ev.is_eligible ? '#F0FFF4' : '#FFF5F5',
+      note: ev.is_eligible ? 'Final method-specific eligible amount' : 'Failed eligibility', highlight: true
     },
-    { label: isDscrScheme ? 'DSCR-Based Loan Eligibility' : (isGrpScheme ? 'GRP-Based Loan Eligibility' : isManualScheme ? 'Manual Loan Eligibility' : 'FOIR-Based Loan Eligibility'), value: isPrimaryApplicantNotSalaried ? 'Not Calculated' : (incomeBasedLoan != null ? formatDynamicCurrency(incomeBasedLoan) : (ev.foir_breakdown?.skip_foir_check ? 'No Cap' : '—')), icon: '🏦', color: '#744210', bg: '#FFFBF0', note: isPrimaryApplicantNotSalaried ? 'Primary applicant is not salaried' : (isDscrScheme ? 'Based on DSCR debt-service capacity' : isGrpScheme ? 'Gross receipts × lender multiplier − exposure' : 'Reverse EMI from eligible EMI capacity') },
-    ...ltvCards,
     {
-      label: 'Final Eligible Loan Amount', value: isPrimaryApplicantNotSalaried ? 'Not Eligible' : (ev.final_eligible_loan_amount != null ? formatDynamicCurrency(ev.final_eligible_loan_amount) : '—'), icon: '✅',
-      color: ev.is_eligible ? '#276749' : '#C53030', bg: ev.is_eligible ? '#F0FFF4' : '#FFF5F5',
-      note: ev.is_eligible ? 'Min(Capacity, LTV, Max Loan)' : 'Failed eligibility', highlight: true
+      label: 'Tenure',
+      value: isPrimaryApplicantNotSalaried ? 'Not Applicable' : (finalTenureMonths != null ? `${finalTenureMonths} Months` : '—'),
+      icon: '📅', color: '#2B6CB0', bg: '#EBF8FF',
+      note: 'Final eligible tenure'
     },
+    {
+      label: 'ROI',
+      value: isPrimaryApplicantNotSalaried ? 'Not Applicable' : (underwritingRoi != null ? `${Number(underwritingRoi).toFixed(2)}%` : '—'),
+      icon: '📈', color: '#744210', bg: '#FFFBF0',
+      note: `Policy range: ${roiRange}`
+    },
+    {
+      label: 'PF', value: processingFeeRange,
+      icon: '🧾', color: '#805AD5', bg: '#FAF5FF',
+      note: 'Lender and method policy range'
+    },
+    {
+      label: 'Monthly Income',
+      value: isPrimaryApplicantNotSalaried ? 'Not Calculated' : `${formatDynamicCurrency(schemeMonthlyIncome)}/month`,
+      icon: '💰', color: '#2B6CB0', bg: '#EBF8FF',
+      note: 'Method-specific eligible monthly income'
+    },
+    {
+      label: 'Actual FOIR',
+      value: isPrimaryApplicantNotSalaried || !(Number(schemeMonthlyIncome) > 0) || ev.foir_actual_percent == null ? 'N/A' : fmtPct2(ev.foir_actual_percent),
+      icon: '📉', color: '#276749', bg: '#F0FFF4',
+      note: '(Obligations + proposed EMI) ÷ monthly income'
+    },
+    {
+      label: 'Actual LTV',
+      value: isPrimaryApplicantNotSalaried || actualLtv == null ? 'N/A' : fmtPct2(actualLtv),
+      icon: '📐', color: '#553C9A', bg: '#FAF5FF',
+      note: 'Final Eligible Loan Amount ÷ Property Value'
+    }
   ];
 
   return (
@@ -630,17 +677,22 @@ const CalcBreakdownPanel = ({ evaluations, lender, monthlyIncome, selectedScheme
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               {steps.map((step, i) => (
                 <div key={i} style={{
-                  background: step.bg, borderRadius: 8, padding: '10px 12px',
-                  border: step.highlight ? `2px solid ${step.color}` : '1px solid transparent',
+                  background: step.highlight
+                    ? (ev.is_eligible ? 'linear-gradient(135deg, #E6FFFA 0%, #C6F6D5 100%)' : 'linear-gradient(135deg, #FFF5F5 0%, #FED7D7 100%)')
+                    : step.bg,
+                  borderRadius: step.highlight ? 12 : 8,
+                  padding: step.highlight ? '16px 18px' : '10px 12px',
+                  border: step.highlight ? `3px solid ${step.color}` : '1px solid transparent',
                   gridColumn: step.highlight ? 'span 2' : 'span 1',
+                  boxShadow: step.highlight ? `0 8px 20px ${ev.is_eligible ? 'rgba(39, 103, 73, 0.22)' : 'rgba(197, 48, 48, 0.18)'}` : 'none',
                 }}>
-                  <div style={{ fontSize: 10, color: '#718096', fontWeight: 600, marginBottom: 2 }}>
+                  <div style={{ fontSize: step.highlight ? 12 : 10, color: step.highlight ? step.color : '#718096', fontWeight: step.highlight ? 800 : 600, marginBottom: step.highlight ? 5 : 2, letterSpacing: step.highlight ? '0.03em' : 'normal' }}>
                     {step.icon} {step.label}
                   </div>
-                  <div style={{ fontSize: step.highlight ? 18 : 15, fontWeight: 800, color: step.color }}>
+                  <div style={{ fontSize: step.highlight ? 26 : 15, fontWeight: 900, color: step.color, lineHeight: step.highlight ? 1.15 : 'normal' }}>
                     {step.value}
                   </div>
-                  <div style={{ fontSize: 10, color: '#718096', marginTop: 4, fontStyle: 'italic' }}>
+                  <div style={{ fontSize: step.highlight ? 11 : 10, color: step.highlight ? '#4A5568' : '#718096', marginTop: step.highlight ? 7 : 4, fontStyle: 'italic', fontWeight: step.highlight ? 600 : 400 }}>
                     {step.note}
                   </div>
                 </div>

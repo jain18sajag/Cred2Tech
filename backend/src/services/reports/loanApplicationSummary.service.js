@@ -18,6 +18,7 @@ const XLSX = require('xlsx');
 const axios = require('axios');
 const prisma = require('../../../config/db');
 const { getStorageProvider } = require('../storage');
+const { buildCanonicalLoanApplicationSummaryData } = require('./loanApplicationSummary.mapper');
 
 const TEMPLATE_PATH = path.resolve(__dirname, '../../templates/reports/Loan Application Summary.xlsx');
 const LOGO_PATH = path.resolve(__dirname, '../../templates/reports/white-logo.jpg');
@@ -41,6 +42,8 @@ function buildReportFileName(caseId) {
   const suffix = Number.isFinite(Number(caseId)) ? Number(caseId) : String(caseId || 'case');
   return `Loan_Application_Summary_${suffix}.xlsx`;
 }
+
+const KNOWN_TEMPLATE_SAMPLE_VALUES = ['RAMESH KUMAR', 'RAJESH KUMAR', 'SUNITA', 'SUHAS', 'DEEPIKA'];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Generic helpers
@@ -1138,16 +1141,32 @@ function sumIncomeByType(caseRecord, matcher) {
   }, 0);
 }
 
-function documentStatus(caseRecord, types = [], applicant = null) {
+function documentStatus(caseRecord, types = [], applicant = null, keywords = []) {
   const wanted = new Set(types.map(t => String(t).toUpperCase()));
-  const applicantDocs = (caseRecord.applicants || []).flatMap(a => a.documents || []);
+  const applicantDocs = (caseRecord.applicants || []).flatMap(a =>
+    (a.documents || []).map(doc => ({ ...doc, _ownerApplicantId: a.id }))
+  );
   const docs = [...(caseRecord.documents || []), ...applicantDocs];
   const applicantId = applicant?.id || null;
+  const wantedKeywords = keywords.map(value => String(value).toLowerCase());
   const matched = docs.find(doc => {
     if (doc.status === 'DELETED') return false;
     const docType = String(doc.document_type || '').toUpperCase();
     if (!wanted.has(docType)) return false;
-    if (applicantId && doc.applicant_id && doc.applicant_id !== applicantId) return false;
+    const ownerApplicantId = doc.applicant_id ?? doc._ownerApplicantId;
+    if (applicantId && Number(ownerApplicantId) !== Number(applicantId)) return false;
+    if (wantedKeywords.length) {
+      const searchable = [
+        doc.document_subtype,
+        doc.document_name,
+        doc.name,
+        doc.file_name,
+        doc.original_name,
+        doc.scope,
+        doc.description
+      ].filter(Boolean).join(' ').toLowerCase();
+      if (!wantedKeywords.some(keyword => searchable.includes(keyword))) return false;
+    }
     return true;
   });
   return matched ? 'Uploaded' : 'Pending';
@@ -1393,9 +1412,186 @@ function applySummarySheetFormatting(ws) {
   ws.views = [{ state: 'frozen', ySplit: 4 }];
 }
 
+function clearLoanApplicationSummaryDynamicCells(summarySheet) {
+  if (!summarySheet) return;
+  for (let row = 2; row <= 60; row += 1) {
+    for (let col = 1; col <= 7; col += 1) {
+      const cell = summarySheet.getCell(row, col);
+      if (cell.value && typeof cell.value === 'object' && cell.value.formula) continue;
+      cell.value = '';
+      cell.note = undefined;
+    }
+  }
+}
+
+function addSourceNote(cell, sourceTrace, field) {
+  const item = sourceTrace?.[field];
+  if (!cell || !item) return;
+  cell.note = `Source: ${item.selectedSourceTable || 'N/A'} #${item.sourceRecordId ?? 'N/A'}\nApplicant: ${item.applicantId ?? 'N/A'}\nPath: ${item.jsonPath || 'N/A'}\nTimestamp: ${item.sourceTimestamp || 'N/A'}${item.fallbackReason ? `\nFallback: ${item.fallbackReason}` : ''}`;
+}
+
+function applyCanonicalSummaryData(workbook, reportData) {
+  const ws = workbook.getWorksheet('Summary');
+  if (!ws || !reportData) return;
+  const itr = reportData.financials.itr;
+  const gst = reportData.financials.gst;
+  const bank = reportData.financials.banking;
+  const primary = reportData.primaryApplicant || {};
+  const coApps = reportData.coApplicants || [];
+  const best = reportData.eligibility.best;
+
+  setCell(ws, 'B2', reportData.case.reference);
+  setFinancialCell(ws, 'D2', reportData.case.requestedAmount);
+  setCell(ws, 'B3', reportData.case.customerName);
+  setCell(ws, 'D3', reportData.case.productType);
+  setCell(ws, 'B4', [reportData.case.dsaName, reportData.case.dsaCode].filter(Boolean).join(' · '));
+
+  setCell(ws, 'B8', reportData.business.name || primary.name);
+  setCell(ws, 'D8', reportData.business.pan || primary.pan_number);
+  setCell(ws, 'E8', reportData.business.gstin);
+  setCell(ws, 'F8', contactText({ mobile: reportData.business.mobile, email: reportData.business.email }));
+  setCell(ws, 'G8', reportData.business.address);
+  setCell(ws, 'B9', primary.name);
+  setCell(ws, 'C9', primary.employment_type);
+  setCell(ws, 'D9', primary.pan_number || reportData.business.pan);
+  setCell(ws, 'F9', contactText({ mobile: primary.mobile, email: primary.email }));
+
+  [10, 11].forEach((row, index) => {
+    const applicant = coApps[index];
+    if (!applicant) {
+      for (let col = 1; col <= 7; col += 1) ws.getCell(row, col).value = '';
+      return;
+    }
+    setCell(ws, `A${row}`, `Co-Applicant ${index + 1}`);
+    setCell(ws, `B${row}`, applicant.name || applicant.applicant_label);
+    setCell(ws, `C${row}`, applicant.relationship_to_primary || applicant.employment_type || applicant.type);
+    setCell(ws, `D${row}`, applicant.pan_number);
+    setCell(ws, `F${row}`, contactText({ mobile: applicant.mobile, email: applicant.email }));
+  });
+
+  setFinancialCell(ws, 'B15', reportData.case.requestedAmount);
+  setCell(ws, 'D15', reportData.case.requestedTenureMonths === null ? '' : `${reportData.case.requestedTenureMonths} Months`);
+  setCell(ws, 'F15', reportData.property.ownership);
+  setCell(ws, 'B17', reportData.property.type);
+  setCell(ws, 'D17', reportData.property.occupancy);
+  setFinancialCell(ws, 'B18', reportData.property.marketValue);
+  setCell(ws, 'D18', reportData.property.address);
+
+  setCell(ws, 'B24', itr.latest.year || gst.latest.year || 'Current Year (X)');
+  setCell(ws, 'C24', itr.previous.year || gst.previous.year || 'X-1');
+  setCell(ws, 'D24', itr.older.year || gst.older.year || 'X-2');
+  const values = {
+    26: [itr.latest.profitAfterTax, itr.previous.profitAfterTax, itr.older.profitAfterTax, null, null],
+    27: [itr.latest.depreciation, itr.previous.depreciation, itr.older.depreciation, null, null],
+    28: [itr.latest.financeCost, itr.previous.financeCost, itr.older.financeCost, null, null],
+    29: [itr.latest.remuneration, itr.previous.remuneration, itr.older.remuneration, null, null],
+    30: [gst.latest.turnover, gst.previous.turnover, gst.older.turnover, gst.rolling12Months.turnover, gst.rolling12Months.averageMonthlySales],
+    31: [null, null, null, gst.rolling12Months.turnover, gst.rolling12Months.averageMonthlySales],
+    32: [itr.latest.grossReceipts, itr.previous.grossReceipts, itr.older.grossReceipts, null, null],
+    33: [bank.latest.totalCredits, bank.previous.totalCredits, bank.older.totalCredits, bank.rolling12Months.totalCredits, bank.rolling12Months.averageMonthlyCredits],
+    34: [bank.latest.averageBalance, bank.previous.averageBalance, bank.older.averageBalance, null, bank.latest.averageBalance],
+    35: [null, null, null, null, reportData.financials.rentalIncome.bankMonthly],
+    36: [null, null, null, null, reportData.financials.rentalIncome.cashMonthly],
+    37: [itr.latest.agriculturalIncome, itr.previous.agriculturalIncome, itr.older.agriculturalIncome, null, null],
+    38: [null, null, null, null, reportData.financials.salary.monthlyNet],
+    39: [null, null, null, null, reportData.financials.otherIncome.monthly],
+    40: [null, null, null, null, null]
+  };
+  Object.entries(values).forEach(([row, rowValues]) => {
+    ['B', 'C', 'D', 'E', 'F'].forEach((column, index) => setStyledFinancialCell(ws, `${column}${row}`, rowValues[index]));
+  });
+  addSourceNote(ws.getCell('B26'), reportData.sourceTrace, 'financials.itr.latest.profitAfterTax');
+  addSourceNote(ws.getCell('B27'), reportData.sourceTrace, 'financials.itr.latest.depreciation');
+  addSourceNote(ws.getCell('B28'), reportData.sourceTrace, 'financials.itr.latest.financeCost');
+  addSourceNote(ws.getCell('B30'), reportData.sourceTrace, 'financials.gst.latest.turnover');
+  addSourceNote(ws.getCell('E31'), reportData.sourceTrace, 'financials.gst.rolling12Months.turnover');
+  addSourceNote(ws.getCell('B33'), reportData.sourceTrace, 'financials.banking.rolling12Months.totalCredits');
+  addSourceNote(ws.getCell('B34'), reportData.sourceTrace, 'financials.banking.latest.averageBalance');
+  addSourceNote(ws.getCell('F38'), reportData.sourceTrace, 'financials.salary.monthlyNet');
+  addSourceNote(ws.getCell('B18'), reportData.sourceTrace, 'property.marketValue');
+
+  setCell(ws, 'B42', best?.lender_name);
+  setCell(ws, 'C42', best?.best_scheme_name);
+  setFinancialCell(ws, 'D42', best?.eligible_amount);
+  setFinancialCell(ws, 'E42', best?.roi);
+  setCell(ws, 'F42', best?.tenure_months ? `${best.tenure_months} Months` : '');
+
+  [46, 47].forEach((row, index) => {
+    if (coApps[index]) return;
+    for (let col = 1; col <= 6; col += 1) ws.getCell(row, col).value = '';
+  });
+}
+
+function applyCanonicalAnalysisData(workbook, reportData) {
+  const bankWs = workbook.getWorksheet('Bank Statement Analysis');
+  const itrWs = workbook.getWorksheet('ITR Analysis');
+  const gstWs = workbook.getWorksheet('GST Analysis');
+  const bank = reportData.financials.banking;
+  const itr = reportData.financials.itr;
+  const gst = reportData.financials.gst;
+  if (bankWs && bank.sourceKind !== 'NONE') {
+    [['B2', bank.bankName], ['B3', bank.accountHolderName], ['B4', bank.accountNumber], ['B9', bank.statementPeriod]].forEach(([addr, value]) => setCell(bankWs, addr, value));
+    setStyledFinancialCell(bankWs, 'N19', bank.rolling12Months.totalCredits);
+    setStyledFinancialCell(bankWs, 'N27', bank.latest.averageBalance);
+    setStyledFinancialCell(bankWs, 'N43', bank.latest.averageBalance);
+    setStyledFinancialCell(bankWs, 'N39', bank.rolling12Months.totalCredits);
+  }
+  if (itrWs && itr.sourceKind !== 'NONE') {
+    setCell(itrWs, 'F6', itr.latest.taxpayerName || reportData.primaryApplicant.name);
+    setCell(itrWs, 'H6', itr.latest.taxpayerName || reportData.primaryApplicant.name);
+    setCell(itrWs, 'F12', itr.latest.pan || reportData.business.pan);
+    setCell(itrWs, 'H12', itr.latest.pan || reportData.business.pan);
+    ['H40', 'H43', 'H44', 'H46', 'H50'].forEach(addr => setStyledFinancialCell(itrWs, addr, itr.latest.profitAfterTax));
+    setStyledFinancialCell(itrWs, 'H52', itr.latest.agriculturalIncome);
+  }
+  if (gstWs && gst.sourceKind !== 'NONE') {
+    setCell(gstWs, 'B2', gst.legalName || reportData.business.name);
+    setCell(gstWs, 'B3', gst.tradeName);
+    setCell(gstWs, 'B4', gst.gstin);
+    setCell(gstWs, 'B11', gst.businessAddress);
+    setCell(gstWs, 'B13', gst.registrationStatus);
+    setStyledFinancialCell(gstWs, 'B25', gst.latest.turnover);
+    setStyledFinancialCell(gstWs, 'C25', gst.previous.turnover);
+    setStyledFinancialCell(gstWs, 'D25', gst.older.turnover);
+  }
+}
+
+function validateCanonicalWorkbook(workbook, reportData) {
+  const errors = [];
+  const summary = workbook.getWorksheet('Summary');
+  const dynamicText = [];
+  workbook.worksheets.forEach(ws => ws.eachRow(row => row.eachCell({ includeEmpty: false }, cell => {
+    const value = cell.value?.result ?? cell.value?.text ?? cell.value;
+    if (typeof value === 'string') dynamicText.push(value.toUpperCase());
+    if (value === undefined || value === null) return;
+    if (typeof value === 'number' && !Number.isFinite(value)) errors.push(`${ws.name}!${cell.address} contains a non-finite number.`);
+    if (String(value) === '[object Object]') errors.push(`${ws.name}!${cell.address} contains an invalid object value.`);
+  })));
+  KNOWN_TEMPLATE_SAMPLE_VALUES.forEach(sample => {
+    if (dynamicText.some(value => value.includes(sample))) errors.push(`Stale template customer value remains: ${sample}.`);
+  });
+  (reportData.coApplicants || []).slice(2).forEach(app => {
+    if (app?.id) errors.push('Template supports only two co-applicants; additional applicant requires explicit layout handling.');
+  });
+  if (!reportData.coApplicants?.[1] && summary) {
+    const populated = ['A11', 'B11', 'C11', 'D11', 'E11', 'F11', 'G11', 'A47', 'B47', 'C47', 'D47', 'E47', 'F47']
+      .filter(addr => !isBlank(summary.getCell(addr).value));
+    if (populated.length) errors.push(`Unused Co-Borrower 2 cells are populated: ${populated.join(', ')}.`);
+  }
+  const requiredTrace = [
+    ['B26', 'financials.itr.latest.profitAfterTax'], ['B30', 'financials.gst.latest.turnover'],
+    ['B34', 'financials.banking.latest.averageBalance'], ['B18', 'property.marketValue']
+  ];
+  requiredTrace.forEach(([address, field]) => {
+    if (summary && !isBlank(summary.getCell(address).value) && !reportData.sourceTrace[field]) errors.push(`Missing source trace for ${field}.`);
+  });
+  if (errors.length) throw new Error(`Loan Application Summary canonical validation failed: ${errors.join(' ')}`);
+}
+
 function fillSummarySheet(workbook, caseRecord, mappedSources = {}) {
   const ws = workbook.getWorksheet('Summary');
   if (!ws) return;
+  clearLoanApplicationSummaryDynamicCells(ws);
 
   const customer = caseRecord.customer || {};
   const primary = getPrimaryApplicant(caseRecord);
@@ -1621,7 +1817,7 @@ function fillSummarySheet(workbook, caseRecord, mappedSources = {}) {
   setStyledStatusCell(ws, 'C48', documentStatus(caseRecord, ['GST_PDF', 'GST_REPORT_PDF', 'GST_REPORT_EXCEL']));
   setCell(ws, 'D48', 'Partnership Deed / MOA');
   setCell(ws, 'E48', 'Borrower business');
-  setStyledStatusCell(ws, 'F48', documentStatus(caseRecord, ['OTHER']));
+  setStyledStatusCell(ws, 'F48', documentStatus(caseRecord, ['OTHER'], null, ['partnership', 'moa', 'memorandum', 'deed']));
 
   // ── Section 5: Property Documents ────────────────────────────────────────
   setCell(ws, 'A50', 'PROPERTY DOCUMENT STATUS');
@@ -1637,28 +1833,28 @@ function fillSummarySheet(workbook, caseRecord, mappedSources = {}) {
   setStyledStatusCell(ws, 'C52', documentStatus(caseRecord, ['SALE_DEED', 'PROPERTY_DOCUMENT']));
   setCell(ws, 'D52', 'Property Tax Receipt');
   setCell(ws, 'E52', 'Collateral property');
-  setStyledStatusCell(ws, 'F52', documentStatus(caseRecord, ['PROPERTY_DOCUMENT']));
+  setStyledStatusCell(ws, 'F52', documentStatus(caseRecord, ['PROPERTY_DOCUMENT'], null, ['tax receipt', 'property tax']));
 
   setCell(ws, 'A53', 'Encumbrance Certificate');
   setCell(ws, 'B53', 'Collateral property');
-  setStyledStatusCell(ws, 'C53', documentStatus(caseRecord, ['PROPERTY_DOCUMENT']));
+  setStyledStatusCell(ws, 'C53', documentStatus(caseRecord, ['PROPERTY_DOCUMENT'], null, ['encumbrance']));
   setCell(ws, 'D53', 'Approved Building Plan');
   setCell(ws, 'E53', 'Collateral property');
-  setStyledStatusCell(ws, 'F53', documentStatus(caseRecord, ['PROPERTY_DOCUMENT']));
+  setStyledStatusCell(ws, 'F53', documentStatus(caseRecord, ['PROPERTY_DOCUMENT'], null, ['building plan', 'approved plan']));
 
   setCell(ws, 'A54', 'Borrower Photograph');
   setCell(ws, 'B54', firstNonBlank(primary.name, customer.business_name, 'Applicant'));
-  setStyledStatusCell(ws, 'C54', documentStatus(caseRecord, ['OTHER'], primary));
+  setStyledStatusCell(ws, 'C54', documentStatus(caseRecord, ['OTHER'], primary, ['photo', 'photograph']));
   setCell(ws, 'D54', 'Co-Applicant Photograph');
   setCell(ws, 'E54', coApps[0] ? getApplicantLabel(coApps[0], 0) : 'Co-Applicant');
-  setStyledStatusCell(ws, 'F54', coApps[0] ? documentStatus(caseRecord, ['OTHER'], coApps[0]) : 'Pending');
+  setStyledStatusCell(ws, 'F54', coApps[0] ? documentStatus(caseRecord, ['OTHER'], coApps[0], ['photo', 'photograph']) : 'Pending');
 
   setCell(ws, 'A55', 'Property Photographs');
   setCell(ws, 'B55', 'Collateral property');
-  setStyledStatusCell(ws, 'C55', documentStatus(caseRecord, ['PROPERTY_DOCUMENT']));
+  setStyledStatusCell(ws, 'C55', documentStatus(caseRecord, ['PROPERTY_DOCUMENT'], null, ['photo', 'photograph']));
   setCell(ws, 'D55', 'Business Premises Photos');
   setCell(ws, 'E55', 'Business premises');
-  setStyledStatusCell(ws, 'F55', documentStatus(caseRecord, ['OTHER']));
+  setStyledStatusCell(ws, 'F55', documentStatus(caseRecord, ['OTHER'], null, ['business premises', 'premises photo']));
 
   // ── Section 6: References ─────────────────────────────────────────────────
   setCell(ws, 'A57', '5. REFERENCES');
@@ -2048,9 +2244,12 @@ async function fetchReportCase(caseId, tenantId, currentUser) {
       income_entries: { orderBy: { created_at: 'asc' } },
       obligations: { orderBy: { created_at: 'asc' } },
       documents: { where: { deleted_at: null }, orderBy: { created_at: 'desc' } },
-      gst_requests: { orderBy: { updated_at: 'desc' }, take: 3 },
-      itr_analytics: { orderBy: { updated_at: 'desc' }, take: 3 },
-      bank_statements: { orderBy: { updated_at: 'desc' }, take: 3 },
+      gst_requests: {
+        orderBy: [{ updated_at: 'desc' }, { created_at: 'desc' }, { id: 'desc' }],
+        include: { gst_financial_year_summaries: { orderBy: { financial_year: 'desc' } } }
+      },
+      itr_analytics: { orderBy: [{ updated_at: 'desc' }, { created_at: 'desc' }, { id: 'desc' }] },
+      bank_statements: { orderBy: [{ updated_at: 'desc' }, { created_at: 'desc' }, { id: 'desc' }] },
       bureau_checks: { orderBy: { updated_at: 'desc' }, take: 3 },
       sanction: true,
       disbursements: { orderBy: { tranche_number: 'asc' } },
@@ -2087,15 +2286,32 @@ async function generateLoanApplicationSummaryWorkbook({ caseId, tenantId, user }
 
   const sourceWorkbooks = await loadAvailableSourceWorkbooks(caseRecord, tenantId);
   const mappedSources = mapSourceWorkbooks(sourceWorkbooks);
+  const reportData = buildCanonicalLoanApplicationSummaryData(caseRecord);
 
   fillSummarySheet(workbook, caseRecord, mappedSources);
   fillBankStatementSheet(workbook, caseRecord);
   fillItrSheet(workbook, caseRecord);
   fillGstSheet(workbook, caseRecord);
   fillCibilSheet(workbook, caseRecord);
-  await copyAvailableSourceWorkbooks(workbook, caseRecord, tenantId, sourceWorkbooks);
+  // Legacy Excel is a final compatibility fallback only. Never allow it to
+  // overwrite a sheet for which applicant-scoped JSON was successfully parsed.
+  const legacyFallbackSources = {
+    bank: reportData.sourceAvailability.bankJson ? null : sourceWorkbooks.bank,
+    itr: reportData.sourceAvailability.itrJson ? null : sourceWorkbooks.itr,
+    gst: reportData.sourceAvailability.gstJson ? null : sourceWorkbooks.gst
+  };
+  await copyAvailableSourceWorkbooks(workbook, caseRecord, tenantId, legacyFallbackSources);
+  applyCanonicalSummaryData(workbook, reportData);
+  applyCanonicalAnalysisData(workbook, reportData);
+  console.info('[LoanApplicationSummary] canonical source trace', JSON.stringify({
+    caseId: caseRecord.id,
+    tenantId: caseRecord.tenant_id,
+    warnings: reportData.warnings,
+    sourceTrace: reportData.sourceTrace
+  }));
   addLogoAndPrintSettings(workbook);
   validateWorkbook(workbook, { requireCaseSummary: true });
+  validateCanonicalWorkbook(workbook, reportData);
 
   const buffer = await workbook.xlsx.writeBuffer();
   if (!buffer || !buffer.byteLength) throw new Error('Generated workbook is empty.');
@@ -2103,6 +2319,7 @@ async function generateLoanApplicationSummaryWorkbook({ caseId, tenantId, user }
   const check = new ExcelJS.Workbook();
   await check.xlsx.load(buffer);
   validateWorkbook(check, { requireCaseSummary: true });
+  validateCanonicalWorkbook(check, reportData);
 
   return buffer;
 }
@@ -2128,6 +2345,11 @@ module.exports = {
   buildReportFileName,
   sanitizeExcelValue,
   setFinancialCell,
+  clearLoanApplicationSummaryDynamicCells,
+  applyCanonicalSummaryData,
+  applyCanonicalAnalysisData,
+  validateCanonicalWorkbook,
+  buildCanonicalLoanApplicationSummaryData,
   ensureWorksheetContract,
   validateWorkbook,
   copySourceWorkbookToSheet,
