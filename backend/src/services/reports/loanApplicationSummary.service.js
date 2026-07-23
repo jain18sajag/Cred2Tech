@@ -1492,6 +1492,19 @@ function addSourceNote(cell, sourceTrace, field) {
   cell.note = `Source: ${item.selectedSourceTable || 'N/A'} #${item.sourceRecordId ?? 'N/A'}\nApplicant: ${item.applicantId ?? 'N/A'}\nPath: ${item.jsonPath || 'N/A'}\nTimestamp: ${item.sourceTimestamp || 'N/A'}${item.fallbackReason ? `\nFallback: ${item.fallbackReason}` : ''}`;
 }
 
+function canonicalDocumentStatus(reportData, types = [], applicantId = null, keywords = []) {
+  const normalizedTypes = new Set(types.map(type => String(type).toUpperCase()));
+  const normalizedKeywords = keywords.map(keyword => String(keyword).toLowerCase());
+  const records = reportData?.documents?.records || [];
+  const matched = records.some((record) => {
+    if (applicantId && record.applicant_id && Number(record.applicant_id) !== Number(applicantId)) return false;
+    const type = String(record.document_type || '').toUpperCase();
+    const searchable = `${record.file_name || ''} ${record.original_name || ''} ${record.document_name || ''}`.toLowerCase();
+    return normalizedTypes.has(type) || normalizedKeywords.some(keyword => searchable.includes(keyword));
+  });
+  return matched ? 'Uploaded' : 'Pending';
+}
+
 function applyCanonicalSummaryData(workbook, reportData) {
   const ws = workbook.getWorksheet('Summary');
   if (!ws || !reportData) return;
@@ -1506,6 +1519,7 @@ function applyCanonicalSummaryData(workbook, reportData) {
   setCell(ws, 'D2', formatLakhs(reportData.case.requestedAmount));
   setCell(ws, 'B3', reportData.case.customerName);
   setCell(ws, 'D3', reportData.case.productType);
+  setCell(ws, 'D4', formatDate(new Date()));
   setCell(ws, 'B4', [reportData.case.dsaName, reportData.case.dsaCode].filter(Boolean).join(' · '));
 
   setCell(ws, 'B8', reportData.business.name || primary.name);
@@ -1521,7 +1535,7 @@ function applyCanonicalSummaryData(workbook, reportData) {
   [10, 11].forEach((row, index) => {
     const applicant = coApps[index];
     if (!applicant) {
-      for (let col = 1; col <= 7; col += 1) ws.getCell(row, col).value = '';
+      for (let col = 2; col <= 7; col += 1) ws.getCell(row, col).value = '';
       return;
     }
     setCell(ws, `A${row}`, `Co-Applicant ${index + 1}`);
@@ -1538,6 +1552,13 @@ function applyCanonicalSummaryData(workbook, reportData) {
   setCell(ws, 'D17', reportData.property.occupancy);
   setCell(ws, 'B18', formatInr(reportData.property.marketValue));
   setCell(ws, 'D18', reportData.property.address);
+
+  setCell(ws, 'B20', primary.name);
+  setCell(ws, 'C20', coApps[0]?.name || coApps[0]?.applicant_label);
+  setCell(ws, 'D20', coApps[1]?.name || coApps[1]?.applicant_label);
+  setCell(ws, 'B21', firstNonBlank(primary.cibil_score, reportData.bureau.primary?.score));
+  setCell(ws, 'C21', firstNonBlank(coApps[0]?.cibil_score, reportData.bureau.coApplicants[0]?.record?.score));
+  setCell(ws, 'D21', firstNonBlank(coApps[1]?.cibil_score, reportData.bureau.coApplicants[1]?.record?.score));
 
   setCell(ws, 'B24', itr.latest.year || gst.latest.year || 'Current Year (X)');
   setCell(ws, 'C24', itr.previous.year || gst.previous.year || 'X-1');
@@ -1571,6 +1592,41 @@ function applyCanonicalSummaryData(workbook, reportData) {
   addSourceNote(ws.getCell('B34'), reportData.sourceTrace, 'financials.banking.latest.averageBalance');
   addSourceNote(ws.getCell('F38'), reportData.sourceTrace, 'financials.salary.monthlyNet');
   addSourceNote(ws.getCell('B18'), reportData.sourceTrace, 'property.marketValue');
+
+  const primaryLabel = primary.name || reportData.business.name || 'Applicant';
+  setCell(ws, 'B45', `Primary / ${primaryLabel}`);
+  setCell(ws, 'C45', canonicalDocumentStatus(reportData, ['PAN_CARD'], primary.id));
+  setCell(ws, 'E45', `Primary / ${primaryLabel}`);
+  setCell(ws, 'F45', canonicalDocumentStatus(reportData, ['AADHAAR'], primary.id));
+  [46, 47].forEach((row, index) => {
+    const applicant = coApps[index];
+    if (!applicant) return;
+    const label = `Co-Borrower ${index + 1} / ${applicant.name || applicant.applicant_label || `Applicant ${index + 2}`}`;
+    setCell(ws, `B${row}`, label);
+    setCell(ws, `C${row}`, canonicalDocumentStatus(reportData, ['PAN_CARD'], applicant.id));
+    setCell(ws, `E${row}`, label);
+    setCell(ws, `F${row}`, canonicalDocumentStatus(reportData, ['AADHAAR'], applicant.id));
+  });
+  setCell(ws, 'B48', 'Borrower business');
+  setCell(ws, 'C48', canonicalDocumentStatus(reportData, ['GST_PDF', 'GST_REPORT_PDF', 'GST_REPORT_EXCEL']));
+  setCell(ws, 'E48', 'Borrower business');
+  setCell(ws, 'F48', canonicalDocumentStatus(reportData, ['OTHER'], null, ['partnership', 'moa', 'memorandum', 'deed']));
+
+  [
+    ['B52', 'Collateral property'], ['E52', 'Collateral property'],
+    ['B53', 'Collateral property'], ['E53', 'Collateral property'],
+    ['B55', 'Collateral property'], ['E55', 'Business premises']
+  ].forEach(([address, value]) => setCell(ws, address, value));
+  setCell(ws, 'C52', canonicalDocumentStatus(reportData, ['SALE_DEED', 'PROPERTY_DOCUMENT'], null, ['sale deed', 'title deed']));
+  setCell(ws, 'F52', canonicalDocumentStatus(reportData, ['PROPERTY_DOCUMENT'], null, ['tax receipt', 'property tax']));
+  setCell(ws, 'C53', canonicalDocumentStatus(reportData, ['PROPERTY_DOCUMENT'], null, ['encumbrance']));
+  setCell(ws, 'F53', canonicalDocumentStatus(reportData, ['PROPERTY_DOCUMENT'], null, ['building plan', 'approved plan']));
+  setCell(ws, 'B54', primaryLabel);
+  setCell(ws, 'C54', canonicalDocumentStatus(reportData, ['OTHER'], primary.id, ['photo', 'photograph']));
+  setCell(ws, 'E54', coApps[0]?.name || coApps[0]?.applicant_label || 'Co-Applicant');
+  setCell(ws, 'F54', canonicalDocumentStatus(reportData, ['OTHER'], coApps[0]?.id, ['photo', 'photograph']));
+  setCell(ws, 'C55', canonicalDocumentStatus(reportData, ['PROPERTY_DOCUMENT'], null, ['photo', 'photograph']));
+  setCell(ws, 'F55', canonicalDocumentStatus(reportData, ['OTHER'], null, ['business premises', 'premises photo']));
 
   [46, 47].forEach((row, index) => {
     if (coApps[index]) return;

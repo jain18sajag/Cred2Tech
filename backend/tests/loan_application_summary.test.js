@@ -443,6 +443,22 @@ test('canonical LAS mapper gives raw JSON priority over conflicting structured s
   assert.deepEqual(report.sourceAvailability, { itrJson: true, gstJson: true, bankJson: true });
 });
 
+test('canonical LAS does not suppress Excel fallback for empty or unusable JSON payloads', () => {
+  const fixture = canonicalCaseFixture();
+  fixture.loan_amount = 0;
+  fixture.esr_financials.requested_loan_amount = 0;
+  fixture.esr_financials.requested_tenure_months = 0;
+  fixture.itr_analytics[0].analytics_payload = {};
+  fixture.gst_requests[0].raw_report_data = {};
+  fixture.bank_statements[0].raw_analyze_response = {};
+  fixture.bank_statements[0].raw_retrieve_response = null;
+
+  const report = buildCanonicalLoanApplicationSummaryData(fixture);
+  assert.deepEqual(report.sourceAvailability, { itrJson: false, gstJson: false, bankJson: false });
+  assert.equal(report.case.requestedAmount, null);
+  assert.equal(report.case.requestedTenureMonths, null);
+});
+
 test('pay-slip salary is not replaced by ITR salary or manual agriculture', () => {
   const report = buildCanonicalLoanApplicationSummaryData(canonicalCaseFixture());
   assert.equal(report.financials.salary.monthlyNet, 21200);
@@ -466,7 +482,14 @@ test('canonical Summary writes numeric financial cells and clears unused co-borr
   assert.equal(summary.getCell('B15').value, '');
   assert.equal(summary.getCell('D15').value, '');
   assert.equal(summary.getCell('D18').value, 'Verified Property Address');
-  assert.deepEqual(['A11', 'B11', 'C11', 'D11', 'E11', 'F11', 'G11', 'A47', 'B47', 'C47', 'D47', 'E47', 'F47'].map(addr => summary.getCell(addr).value), Array(13).fill(''));
+  assert.equal(summary.getCell('A11').value, 'Co-Applicant 2');
+  assert.equal(summary.getCell('A47').value, 'PAN Card');
+  assert.deepEqual(['B11', 'C11', 'D11', 'E11', 'F11', 'G11', 'B47', 'C47', 'E47', 'F47'].map(addr => summary.getCell(addr).value), Array(10).fill(''));
+  assert.equal(summary.getCell('B20').value, 'Current Customer');
+  assert.equal(summary.getCell('C20').value, 'Only Co Borrower');
+  assert.equal(summary.getCell('B21').value, '780');
+  assert.equal(summary.getCell('C45').value, 'Pending');
+  assert.equal(summary.getCell('F45').value, 'Pending');
   assert.doesNotThrow(() => validateCanonicalWorkbook(workbook, report));
 });
 

@@ -84,6 +84,11 @@ function pickPayload(record, fields) {
   return { payload: null, field: null };
 }
 
+function hasPayloadContent(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  return Array.isArray(payload) ? payload.length > 0 : Object.keys(payload).length > 0;
+}
+
 function trace(traceMap, field, { table, record, applicantId, path, value, fallbackReason = null }) {
   traceMap[field] = {
     reportField: field,
@@ -142,11 +147,19 @@ function buildItr(record, applicantId, sourceTrace, warnings) {
     taxpayerName: row.taxpayer_name || row.name || null,
     pan: row.pan || record.pan || null
   });
+  const hasJsonData = Boolean(hasPayloadContent(selected.payload) && (
+    parsedYears.length
+    || [
+      whole.net_profit_latest_year, whole.depreciation_latest_year,
+      whole.finance_cost_latest_year, whole.gross_receipts_latest_year,
+      whole.taxpayer_name, whole.pan
+    ].some(value => value !== null && value !== undefined && value !== '')
+  ));
   const result = {
     latest: normalizeYear(snapshots[0], 0),
     previous: normalizeYear(snapshots[1], 1),
     older: normalizeYear(snapshots[2], 2),
-    sourceKind: selected.payload ? 'JSON' : 'STRUCTURED'
+    sourceKind: hasJsonData ? 'JSON' : 'STRUCTURED'
   };
   ['profitAfterTax', 'depreciation', 'financeCost', 'remuneration', 'grossReceipts', 'agriculturalIncome'].forEach(field => {
     const value = result.latest[field];
@@ -155,7 +168,7 @@ function buildItr(record, applicantId, sourceTrace, warnings) {
       fallbackReason: selected.payload ? null : 'Raw ITR JSON value unavailable; structured snapshot used.'
     });
   });
-  if (!selected.payload) warnings.push('ITR: valid analytics_payload unavailable; structured snapshot fallback used.');
+  if (!hasJsonData) warnings.push('ITR: analytics_payload is missing or unusable; structured/Excel fallback enabled.');
   return result;
 }
 
@@ -175,6 +188,14 @@ function buildGst(record, applicantId, sourceTrace, warnings) {
   const turnover = index => number(uniqueYears[index]?.turnover);
   const rolling = number(extracted.turnover_latest_year ?? record.rolling_12_month_turnover);
   const average = number(extracted.avg_monthly_turnover ?? record.avg_monthly_turnover ?? (rolling !== null ? rolling / 12 : null));
+  const hasJsonData = Boolean(hasPayloadContent(selected.payload) && (
+    extractedSummaries.length
+    || rolling !== null
+    || average !== null
+    || extracted.gstin
+    || extracted.legal_name
+    || extracted.legalName
+  ));
   const result = {
     latest: { year: uniqueYears[0]?.financial_year || record.financial_year_latest, turnover: turnover(0) ?? number(record.turnover_latest_year) },
     previous: { year: uniqueYears[1]?.financial_year || record.financial_year_previous, turnover: turnover(1) ?? number(record.turnover_previous_year) },
@@ -186,7 +207,7 @@ function buildGst(record, applicantId, sourceTrace, warnings) {
     registrationStatus: selected.payload?.status || selected.payload?.registrationStatus || null,
     filingPeriod: `${record.from_date || ''}${record.to_date ? ` to ${record.to_date}` : ''}`.trim(),
     businessAddress: selected.payload?.principalPlaceOfBusiness?.address || selected.payload?.businessAddress || null,
-    sourceKind: selected.payload ? 'JSON' : 'STRUCTURED'
+    sourceKind: hasJsonData ? 'JSON' : 'STRUCTURED'
   };
   [['latest.turnover', result.latest.turnover], ['rolling12Months.turnover', rolling], ['rolling12Months.averageMonthlySales', average]].forEach(([field, value]) => {
     if (value !== null) trace(sourceTrace, `financials.gst.${field}`, {
@@ -194,7 +215,7 @@ function buildGst(record, applicantId, sourceTrace, warnings) {
       fallbackReason: selected.payload ? null : 'Raw GST JSON unavailable; structured snapshot used.'
     });
   });
-  if (!selected.payload) warnings.push('GST: valid raw JSON unavailable; structured snapshot fallback used.');
+  if (!hasJsonData) warnings.push('GST: raw_report_data is missing or unusable; structured/Excel fallback enabled.');
   return result;
 }
 
@@ -211,6 +232,13 @@ function buildBanking(record, applicantId, sourceTrace, warnings) {
   const previous = fy?.previous || {};
   const totalCredits = number(fy?.total_credits ?? latest?.totalCredits ?? details.total_credits ?? details.avg_monthly_credit_total);
   const avgMonthlyCredits = number(fy?.avg_monthly_credit ?? details.avg_monthly_credit ?? latest?.avgMonthlyCredit);
+  const hasJsonData = Boolean(hasPayloadContent(selected.payload) && (
+    totalCredits !== null
+    || avgMonthlyCredits !== null
+    || number((typeof latest === 'number' ? latest : latest?.averageBalance) ?? details.avg_bank_balance_latest_year) !== null
+    || details.bank_name
+    || details.account_number_masked
+  ));
   const result = {
     latest: {
       year: details.financial_year_latest || record.financial_year_latest,
@@ -232,7 +260,7 @@ function buildBanking(record, applicantId, sourceTrace, warnings) {
     salaryCredits: number(salary.avgMonthlySalary),
     chequeReturns: number(details.cheque_bounces_12m),
     emiObligations: number(latest.emiObligations),
-    sourceKind: selected.payload ? 'JSON' : 'STRUCTURED'
+    sourceKind: hasJsonData ? 'JSON' : 'STRUCTURED'
   };
   [['latest.averageBalance', result.latest.averageBalance], ['rolling12Months.totalCredits', totalCredits], ['salaryCredits', result.salaryCredits]].forEach(([field, value]) => {
     if (value !== null) trace(sourceTrace, `financials.banking.${field}`, {
@@ -240,7 +268,7 @@ function buildBanking(record, applicantId, sourceTrace, warnings) {
       fallbackReason: selected.payload ? null : 'Raw bank JSON unavailable; structured snapshot used.'
     });
   });
-  if (!selected.payload) warnings.push('Banking: valid raw JSON unavailable; structured snapshot fallback used.');
+  if (!hasJsonData) warnings.push('Banking: raw_analyze_response is missing or unusable; structured/Excel fallback enabled.');
   return result;
 }
 
@@ -291,8 +319,10 @@ function buildCanonicalLoanApplicationSummaryData(caseRecord) {
   const latestEsr = deterministicSort(caseRecord.esrs || [])[0] || null;
   const lenders = latestEsr?.lenders || [];
   const best = [...lenders].filter(row => row.is_eligible).sort((a, b) => number(b.eligible_amount) - number(a.eligible_amount))[0] || null;
-  const requestedAmount = number(caseRecord.loan_amount ?? caseRecord.esr_financials?.requested_loan_amount);
-  const requestedTenure = number(caseRecord.requested_tenure_months ?? caseRecord.esr_financials?.requested_tenure_months);
+  const requestedAmountValue = number(caseRecord.loan_amount ?? caseRecord.esr_financials?.requested_loan_amount);
+  const requestedTenureValue = number(caseRecord.requested_tenure_months ?? caseRecord.esr_financials?.requested_tenure_months);
+  const requestedAmount = requestedAmountValue !== null && requestedAmountValue > 0 ? requestedAmountValue : null;
+  const requestedTenure = requestedTenureValue !== null && requestedTenureValue > 0 ? requestedTenureValue : null;
   if (requestedAmount === null) warnings.push('Requested loan amount is missing; report cell left blank.');
   if (requestedTenure === null) warnings.push('Requested tenure is missing; report cell left blank.');
 
