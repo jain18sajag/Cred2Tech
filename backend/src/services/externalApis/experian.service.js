@@ -139,6 +139,21 @@ async function runExperianCheck({ caseId, applicantId, payloadData }) {
         return isNaN(date.getTime()) ? null : date;
       };
 
+      // case_credit_obligations.status has a DB check constraint allowing
+      // only ACTIVE / CLOSED / NPA / VERIFY — but Experian's own status text
+      // is free-form ("Account Purchased", "Written-Off", "Settled", etc.),
+      // so writing it straight through violates the constraint and fails the
+      // *entire* createMany batch (this was the actual cause of every
+      // obligation silently disappearing). Map to the allowed set instead;
+      // the original bureau text is kept in `remarks` so nothing is lost.
+      const mapStatus = (description, isClosed, needsVerification) => {
+        const desc = (description || '').toLowerCase();
+        if (isClosed) return 'CLOSED';
+        if (/npa|non.?performing|written.?off|write.?off|suit.?filed|purchased|default/.test(desc)) return 'NPA';
+        if (needsVerification) return 'VERIFY';
+        return 'ACTIVE';
+      };
+
       let totalEmi = 0;
       const obligations = [];
 
@@ -164,7 +179,8 @@ async function runExperianCheck({ caseId, applicantId, payloadData }) {
           loan_amount: loanAmount,
           outstanding_amount: outstandingAmount,
           emi_per_month: emi,
-          status: acc.accountStatusDescription || 'Unknown',
+          status: mapStatus(acc.accountStatusDescription, isClosed, needsVerification),
+          remarks: acc.accountStatusDescription || null,
           loan_start_date: parseExperianDate(acc.Open_Date),
           source: 'BUREAU',
           needs_verification: needsVerification
