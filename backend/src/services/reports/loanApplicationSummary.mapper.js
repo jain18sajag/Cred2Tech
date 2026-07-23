@@ -200,7 +200,10 @@ function buildGst(record, applicantId, sourceTrace, warnings) {
 
 function buildBanking(record, applicantId, sourceTrace, warnings) {
   if (!record) return { latest: {}, previous: {}, older: {}, rolling12Months: {}, sourceKind: 'NONE' };
-  const selected = pickPayload(record, ['raw_retrieve_response', 'raw_download_response', 'raw_analyze_response', 'files_payload']);
+  // BankStatementAnalysisRequest.raw_analyze_response is the authoritative
+  // Loan Application Summary source. Retrieve/download payloads are retained
+  // only as compatibility fallbacks for older records.
+  const selected = pickPayload(record, ['raw_analyze_response', 'raw_retrieve_response', 'raw_download_response', 'files_payload']);
   const details = selected.payload ? extractBankDetails(selected.payload) : {};
   const fy = selected.payload ? extractBankFySnapshot(selected.payload) : {};
   const salary = selected.payload ? extractBankSalary(selected.payload) : {};
