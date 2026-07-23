@@ -94,81 +94,118 @@ async function runExperianCheck({ caseId, applicantId, payloadData }) {
       }
     }
 
-    // 3. Extract obligations
-    const reportData = responseData?.data?.jsonExperianReport || responseData?.jsonExperianReport;
-    const accounts = reportData?.CAIS_Account?.CAIS_Account_DETAILS || [];
-    
-    if (accounts.length === 0) {
-      console.log(`[Experian Service] No obligations found for Applicant: ${applicantId}`);
-      return { status: 'SUCCESS', message: 'No obligations found' };
-    }
+    // 3. Extract obligations. Parsing + the DB write get their own try/catch,
+    // separate from the outer one: the vendor call above already succeeded
+    // and got logged, so a failure here is a distinct "we have the data but
+    // couldn't save it" case that needs its own record — otherwise it's
+    // indistinguishable from a vendor failure and impossible to diagnose
+    // after the fact (this is exactly what was happening: Experian was
+    // returning full reports every time, but every single parse/save was
+    // silently throwing and discarding all obligations with no trace).
+    try {
+      const reportData = responseData?.data?.jsonExperianReport || responseData?.jsonExperianReport;
+      const accounts = reportData?.CAIS_Account?.CAIS_Account_DETAILS || [];
 
-    console.log(`[Experian Service] Found ${accounts.length} accounts for Applicant: ${applicantId}. Processing...`);
-
-    const parseExperianDate = (dateString) => {
-      // Date format is YYYYMMDD
-      if (!dateString || dateString.length !== 8) return null;
-      const year = dateString.substring(0, 4);
-      const month = dateString.substring(4, 6);
-      const day = dateString.substring(6, 8);
-      return new Date(`${year}-${month}-${day}T00:00:00Z`);
-    };
-
-    let totalEmi = 0;
-    const obligations = [];
-
-    for (const acc of accounts) {
-      // Safe parsing of financial values
-      const loanAmount = acc.Highest_Credit_or_Original_Loan_Amount ? parseFloat(acc.Highest_Credit_or_Original_Loan_Amount) : 0;
-      const outstandingAmount = acc.Current_Balance ? parseFloat(acc.Current_Balance) : 0;
-      const emi = acc.Scheduled_Monthly_Payment_Amount ? parseFloat(acc.Scheduled_Monthly_Payment_Amount) : 0;
-      
-      const isClosed = acc.accountStatusDescription?.toLowerCase().includes('closed') || outstandingAmount <= 0;
-      
-      // If it's an active loan but EMI is 0, we flag it for manual verification
-      const needsVerification = !isClosed && emi === 0;
-
-      if (!isClosed) {
-        totalEmi += emi;
+      if (accounts.length === 0) {
+        console.log(`[Experian Service] No obligations found for Applicant: ${applicantId}`);
+        return { status: 'SUCCESS', message: 'No obligations found' };
       }
 
-      obligations.push({
-        case_id: caseId,
-        applicant_id: applicantId,
-        lender_name: acc.Subscriber_Name || acc.Identification_Number || 'Unknown Lender',
-        loan_type: acc.accountTypeDescription || 'Unknown',
-        loan_amount: loanAmount,
-        outstanding_amount: outstandingAmount,
-        emi_per_month: emi,
-        status: acc.accountStatusDescription || 'Unknown',
-        loan_start_date: parseExperianDate(acc.Open_Date),
-        source: 'BUREAU',
-        needs_verification: needsVerification
-      });
-    }
+      console.log(`[Experian Service] Found ${accounts.length} accounts for Applicant: ${applicantId}. Processing...`);
 
-    // 4. Upsert/Create in database
-    // Delete old bureau obligations for this applicant to prevent duplicates if pulled again
-    await prisma.caseCreditObligation.deleteMany({
-      where: {
-        applicant_id: applicantId,
-        source: 'BUREAU'
+      // Experian/Signzy send numeric fields inconsistently — sometimes a
+      // number, sometimes a numeric string, sometimes a non-numeric
+      // placeholder like "" or "N/A". parseFloat() on the latter yields NaN,
+      // which Prisma rejects for the (NOT NULL) Float columns below and
+      // fails the *entire* createMany batch — so one bad account was wiping
+      // out all the good ones. Always fall back to a finite number.
+      const safeFloat = (val) => {
+        if (val === null || val === undefined || val === '') return 0;
+        const n = parseFloat(val);
+        return Number.isFinite(n) ? n : 0;
+      };
+
+      const parseExperianDate = (dateValue) => {
+        // Date format is YYYYMMDD, but Experian sends it as a JS number, not
+        // a string — dateValue.length on a number is always undefined, so
+        // this always returned null previously. Coerce to string first.
+        if (dateValue === null || dateValue === undefined || dateValue === '') return null;
+        const s = String(dateValue);
+        if (s.length !== 8) return null;
+        const year = s.substring(0, 4);
+        const month = s.substring(4, 6);
+        const day = s.substring(6, 8);
+        const date = new Date(`${year}-${month}-${day}T00:00:00Z`);
+        return isNaN(date.getTime()) ? null : date;
+      };
+
+      let totalEmi = 0;
+      const obligations = [];
+
+      for (const acc of accounts) {
+        const loanAmount = safeFloat(acc.Highest_Credit_or_Original_Loan_Amount);
+        const outstandingAmount = safeFloat(acc.Current_Balance);
+        const emi = safeFloat(acc.Scheduled_Monthly_Payment_Amount);
+
+        const isClosed = acc.accountStatusDescription?.toLowerCase?.().includes('closed') || outstandingAmount <= 0;
+
+        // If it's an active loan but EMI is 0, we flag it for manual verification
+        const needsVerification = !isClosed && emi === 0;
+
+        if (!isClosed) {
+          totalEmi += emi;
+        }
+
+        obligations.push({
+          case_id: caseId,
+          applicant_id: applicantId,
+          lender_name: acc.Subscriber_Name || acc.Identification_Number || 'Unknown Lender',
+          loan_type: acc.accountTypeDescription || 'Unknown',
+          loan_amount: loanAmount,
+          outstanding_amount: outstandingAmount,
+          emi_per_month: emi,
+          status: acc.accountStatusDescription || 'Unknown',
+          loan_start_date: parseExperianDate(acc.Open_Date),
+          source: 'BUREAU',
+          needs_verification: needsVerification
+        });
       }
-    });
 
-    if (obligations.length > 0) {
-      await prisma.caseCreditObligation.createMany({
-        data: obligations
+      // 4. Replace this applicant's bureau-sourced obligations with the
+      // freshly parsed set (delete-then-insert avoids duplicates on repeat pulls).
+      await prisma.caseCreditObligation.deleteMany({
+        where: {
+          applicant_id: applicantId,
+          source: 'BUREAU'
+        }
       });
+
+      if (obligations.length > 0) {
+        await prisma.caseCreditObligation.createMany({
+          data: obligations
+        });
+      }
+
+      console.log(`[Experian Service] Successfully processed ${obligations.length} obligations for Applicant: ${applicantId}`);
+
+      return {
+        status: 'SUCCESS',
+        obligationsCount: obligations.length,
+        totalEmi
+      };
+    } catch (parseError) {
+      console.error('[Experian Service] Failed to parse/save obligations:', parseError);
+      await prisma.bureauVerificationLog.create({
+        data: {
+          case_id: caseId,
+          applicant_id: applicantId,
+          status: 'OBLIGATIONS_PARSE_FAILED',
+          request_payload: payload,
+          response_payload: { error: parseError.message, stack: parseError.stack }
+        }
+      });
+      return { status: 'FAILED', error: parseError.message };
     }
-
-    console.log(`[Experian Service] Successfully processed ${obligations.length} obligations for Applicant: ${applicantId}`);
-
-    return { 
-      status: 'SUCCESS', 
-      obligationsCount: obligations.length,
-      totalEmi
-    };
 
   } catch (error) {
     console.error('[Experian Service] Internal error during processing:', error);
