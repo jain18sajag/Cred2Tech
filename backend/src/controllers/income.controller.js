@@ -38,6 +38,20 @@ async function deleteEntry(req, res) {
   }
 }
 
+async function updateEntry(req, res) {
+  try {
+    const caseId = parseInt(req.params.id, 10);
+    const entryId = parseInt(req.params.entryId, 10);
+    const entry = await incomeService.updateIncomeEntry(entryId, caseId, req.body, req.user.tenant_id);
+    res.json(entry);
+  } catch (err) {
+    if (err.message.includes('not found') || err.message.includes('unauthorized')) return res.status(404).json({ error: err.message });
+    if (err.message.includes('required') || err.message.includes('positive')) return res.status(400).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update income entry.' });
+  }
+}
+
 async function confirm(req, res) {
   try {
     const caseId = parseInt(req.params.id, 10);
@@ -50,4 +64,4 @@ async function confirm(req, res) {
   }
 }
 
-module.exports = { getSummary, addEntry, deleteEntry, confirm };
+module.exports = { getSummary, addEntry, updateEntry, deleteEntry, confirm };

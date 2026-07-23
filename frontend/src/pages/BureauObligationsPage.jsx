@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { caseService } from '../api/caseService';
 import { toast } from 'react-hot-toast';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
-import { PlusCircle, ChevronLeft, Zap } from 'lucide-react';
+import { PlusCircle, Trash2, ChevronLeft, Zap } from 'lucide-react';
 
 const fmt = (n) => n != null ? `₹${Number(n).toLocaleString('en-IN')}` : '—';
 
@@ -105,6 +105,16 @@ export default function BureauObligationsPage() {
     }
   };
 
+  const handleDeleteObligation = async (oblId) => {
+    try {
+      await caseService.deleteObligation(caseId, oblId);
+      toast.success('Obligation removed from ESR. Regenerate ESR to apply the change.');
+      await load();
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'Failed to remove obligation');
+    }
+  };
+
   if (loading) return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}><LoadingSpinner size={40} /></div>;
 
   const { grouped = [], summary = {} } = data || {};
@@ -167,7 +177,7 @@ export default function BureauObligationsPage() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
                   <tr style={{ background: 'var(--bg-elevated)' }}>
-                    {['Lender', 'Type', 'Loan Amount', 'Outstanding', 'Start', 'EMI / Month', 'Status'].map(h => (
+                    {['Lender', 'Type', 'Loan Amount', 'Outstanding', 'Start', 'EMI / Month', 'Status', ''].map(h => (
                       <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)', borderBottom: '1px solid var(--border)', fontSize: 12 }}>{h}</th>
                     ))}
                   </tr>
@@ -201,6 +211,11 @@ export default function BureauObligationsPage() {
                         }}>
                           {obl.needs_verification ? '⚠ Verify' : (obl.source === 'MANUAL' ? '✎ Manual' : '✓ Active')}
                         </span>
+                      </td>
+                      <td style={{ padding: '8px 10px' }}>
+                        <button onClick={() => handleDeleteObligation(obl.id)} style={{ background: 'none', border: 'none', color: 'var(--error)', cursor: 'pointer', padding: 4 }} title="Remove from ESR">
+                          <Trash2 size={15} />
+                        </button>
                       </td>
                     </tr>
                   ))}

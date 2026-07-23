@@ -2483,7 +2483,12 @@ function calculateAgeBasedTenureMonthsFromDob(dob, maturityAge) {
         + (maturityDate.getMonth() - today.getMonth());
     const dayAdjustment = maturityDate.getDate() < today.getDate() ? 1 : 0;
     const rawMonths = maturityDate <= today ? 0 : Math.max(0, baseMonths - dayAdjustment);
-    const months = roundAgeBasedTenureMonthsToFullYears(rawMonths);
+    // rawMonths contains completed whole months. Preserve any remaining days so
+    // a partial final year is rounded up instead of being silently discarded.
+    const hasPartialMonth = maturityDate > today
+        && maturityDate.getDate() !== today.getDate();
+    const months = roundAgeBasedTenureMonthsToFullYears(rawMonths, hasPartialMonth);
+    const monthsForYearRounding = rawMonths + (hasPartialMonth ? 1 : 0);
 
     return {
         months,
@@ -2493,14 +2498,22 @@ function calculateAgeBasedTenureMonthsFromDob(dob, maturityAge) {
         maturityDate: maturityDate.toISOString().slice(0, 10),
         baseMonths,
         dayAdjustment,
-        calculation: `CEIL((${baseMonths} - ${dayAdjustment}) / 12) * 12 = ${months}`
+        hasPartialMonth,
+        monthsForYearRounding,
+        calculation: hasPartialMonth
+            ? `CEIL((${rawMonths} completed months + remaining days) / 12) * 12 = ${months}`
+            : `CEIL(${rawMonths} / 12) * 12 = ${months}`
     };
 }
 
-function roundAgeBasedTenureMonthsToFullYears(months) {
+function roundAgeBasedTenureMonthsToFullYears(months, hasPartialMonth = false) {
     const value = Number(months);
-    if (!Number.isFinite(value) || value <= 0) return 0;
-    return Math.ceil(value / 12) * 12;
+    if (!Number.isFinite(value) || value < 0) return 0;
+    const valueIncludingPartialMonth = value + (hasPartialMonth ? 1 : 0);
+    if (valueIncludingPartialMonth <= 0) return 0;
+    // Lender tenure rounds any partial year up to the next full year:
+    // 10 years 1 month (121 months) becomes 11 years (132 months).
+    return Math.ceil(valueIncludingPartialMonth / 12) * 12;
 }
 
 function calculateAgeBasedTenureMonthsFromAge(appAge, maturityAge) {
@@ -5021,6 +5034,7 @@ module.exports = {
         resolveTataLipEligibility,
         resolveLtvByPolicy,
         getCoApplicantSalaryMonthly,
+        roundAgeBasedTenureMonthsToFullYears,
         normalizeProfessionForGrp
     }
 };

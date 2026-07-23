@@ -30,6 +30,9 @@ const {
   validateWorkbook,
   copySourceWorkbookToSheet,
   setFinancialCell,
+  applyCanonicalSummaryData,
+  validateCanonicalWorkbook,
+  buildCanonicalLoanApplicationSummaryData,
   writeNoDataMessage,
   findStoredExcelDocument,
   isSafeHttpsSourceUrl,
@@ -336,4 +339,145 @@ test('loan application summary uses empty mapped values when Bank GST or ITR sou
   assert.equal(mapped.financialSnapshot.annualGstrSales, undefined);
   assert.equal(mapped.financialSnapshot.netProfitAfterTax, undefined);
   assert.equal(mapped.financialSnapshot.annualBusinessReceiptBank, undefined);
+});
+
+function itrYear(profitAfterTax, depreciation, grossReceipts, salaryIncome = 9999999) {
+  return [{ json: { ITR: { ITR3: {
+    PARTA_PL: {
+      TaxProvAppr: { ProfitAfterTax: profitAfterTax },
+      DebitsToPL: { DepreciationAmort: depreciation, InterestExpdrtDtls: { InterestExpdr: 12345 } }
+    },
+    TradingAccount: { TotRevenueFrmOperations: grossReceipts },
+    PartB_TI: { Salary: salaryIncome }
+  } } } }];
+}
+
+function canonicalCaseFixture() {
+  const monthlyTurnover = 8211259.75 / 12;
+  const gstMonths = ['Apr 2024', 'May 2024', 'Jun 2024', 'Jul 2024', 'Aug 2024', 'Sep 2024', 'Oct 2024', 'Nov 2024', 'Dec 2024', 'Jan 2025', 'Feb 2025', 'Mar 2025']
+    .map(Month => ({ Month, 'Taxable Value': monthlyTurnover }));
+  return {
+    id: 578,
+    tenant_id: 7,
+    customer_id: 70,
+    customer_name: 'Current Customer',
+    product_type: 'LAP',
+    loan_amount: null,
+    customer: { id: 70, business_name: 'Current Customer', business_pan: 'ABCDE1234F' },
+    applicants: [
+      {
+        id: 701, is_primary: true, type: 'PRIMARY', name: 'Current Customer', pan_number: 'ABCDE1234F',
+        salary_ocr_results: [{ id: 1, ocr_status: 'COMPLETED', net_salary: 21200, updated_at: '2026-01-05' }],
+        bureau_checks: [{ id: 'b1', status: 'SUCCESS', score: '780', updated_at: '2026-01-05' }], documents: []
+      },
+      { id: 702, is_primary: false, type: 'CO_APPLICANT', name: 'Only Co Borrower', bureau_checks: [], documents: [] }
+    ],
+    itr_analytics: [{
+      id: 1001, tenant_id: 7, customer_id: 70, case_id: 578, applicant_id: 701, status: 'COMPLETED', pan: 'ABCDE1234F', updated_at: '2026-01-05',
+      analytics_payload: {
+        '2024-2025': itrYear(1437483, 47693, 6266702),
+        '2023-2024': itrYear(1200000, 40000, 5500000),
+        '2022-2023': itrYear(1100000, 30000, 5000000)
+      }
+    }],
+    gst_requests: [{
+      id: 1002, tenant_id: 7, customer_id: 70, case_id: 578, applicant_id: 701, status: 'COMPLETED', gstin: '27ABCDE1234F1Z5', updated_at: '2026-01-05',
+      raw_report_data: { 'Monthly Sales&Purchase': [{ 'Monthly Sale Summary': { data: gstMonths } }] },
+      gst_financial_year_summaries: []
+    }],
+    bank_statements: [{
+      id: 1003, tenant_id: 7, customer_id: 70, case_id: 578, applicant_id: 701, status: 'COMPLETED', updated_at: '2026-01-05',
+      raw_retrieve_response: {
+        overview: { monthlyAverageDailyBalance: [{ month: 'Apr 2024', averageDailyBalance: 311811.42 }] },
+        accountLevelAnalysis: [{ bankName: 'Test Bank', accountNumber: '1234567890', avgMonthlyCredit: 1000000, totalCreditAmount: 12000000 }]
+      }
+    }],
+    income_entries: [{ id: 10, applicant_id: 701, income_type: 'Agriculture', annual_amount: 600000 }],
+    property: { id: 12, market_value: 20000000, property_type: 'Residential', property_address: 'Verified Property Address', remarks: 'DO NOT USE AS ADDRESS' },
+    esr_financials: { requested_loan_amount: null, requested_tenure_months: null },
+    documents: [], esrs: []
+  };
+}
+
+test('canonical LAS mapper uses applicant-scoped JSON and case-578 regression facts', () => {
+  const report = buildCanonicalLoanApplicationSummaryData(canonicalCaseFixture());
+  assert.equal(report.financials.itr.latest.profitAfterTax, 1437483);
+  assert.equal(report.financials.itr.latest.depreciation, 47693);
+  assert.equal(report.financials.itr.latest.grossReceipts, 6266702);
+  assert.ok(Math.abs(report.financials.gst.rolling12Months.turnover - 8211259.75) < 0.01);
+  assert.ok(Math.abs(report.financials.gst.rolling12Months.averageMonthlySales - 684271.6458333334) < 0.01);
+  assert.equal(report.financials.salary.monthlyNet, 21200);
+  assert.equal(report.case.requestedAmount, null);
+  assert.equal(report.case.requestedTenureMonths, null);
+  assert.equal(report.property.address, 'Verified Property Address');
+  assert.notEqual(report.property.address, report.property.remarks);
+});
+
+test('canonical LAS mapper keeps three ITR years independent', () => {
+  const itr = buildCanonicalLoanApplicationSummaryData(canonicalCaseFixture()).financials.itr;
+  assert.deepEqual([itr.latest.profitAfterTax, itr.previous.profitAfterTax, itr.older.profitAfterTax], [1437483, 1200000, 1100000]);
+  assert.deepEqual([itr.latest.grossReceipts, itr.previous.grossReceipts, itr.older.grossReceipts], [6266702, 5500000, 5000000]);
+});
+
+test('canonical LAS mapper rejects cross-tenant case customer and applicant records', () => {
+  const fixture = canonicalCaseFixture();
+  fixture.itr_analytics.unshift({ ...fixture.itr_analytics[0], id: 9999, tenant_id: 8, applicant_id: 999, analytics_payload: { '2024-2025': itrYear(99999999, 9, 9) }, updated_at: '2027-01-01' });
+  fixture.gst_requests.unshift({ ...fixture.gst_requests[0], id: 9998, case_id: 999, applicant_id: 999, updated_at: '2027-01-01' });
+  fixture.bank_statements.unshift({ ...fixture.bank_statements[0], id: 9997, customer_id: 999, applicant_id: 999, updated_at: '2027-01-01' });
+  const report = buildCanonicalLoanApplicationSummaryData(fixture);
+  assert.equal(report.financials.itr.latest.profitAfterTax, 1437483);
+  assert.equal(report.sourceTrace['financials.itr.latest.profitAfterTax'].sourceRecordId, 1001);
+  assert.equal(report.sourceTrace['financials.gst.rolling12Months.turnover'].sourceRecordId, 1002);
+  assert.equal(report.sourceTrace['financials.banking.latest.averageBalance'].sourceRecordId, 1003);
+});
+
+test('canonical LAS mapper gives raw JSON priority over conflicting structured snapshots', () => {
+  const fixture = canonicalCaseFixture();
+  Object.assign(fixture.itr_analytics[0], { net_profit_latest_year: 1, gross_receipts_latest_year: 2 });
+  Object.assign(fixture.gst_requests[0], { turnover_latest_year: 3, rolling_12_month_turnover: 4 });
+  Object.assign(fixture.bank_statements[0], { avg_bank_balance_latest_year: 5 });
+  const report = buildCanonicalLoanApplicationSummaryData(fixture);
+  assert.equal(report.financials.itr.latest.profitAfterTax, 1437483);
+  assert.ok(report.financials.gst.rolling12Months.turnover > 8000000);
+  assert.equal(report.financials.banking.latest.averageBalance, 311811.42);
+  assert.deepEqual(report.sourceAvailability, { itrJson: true, gstJson: true, bankJson: true });
+});
+
+test('pay-slip salary is not replaced by ITR salary or manual agriculture', () => {
+  const report = buildCanonicalLoanApplicationSummaryData(canonicalCaseFixture());
+  assert.equal(report.financials.salary.monthlyNet, 21200);
+  assert.notEqual(report.financials.salary.monthlyNet, 9999999 / 12);
+  assert.equal(report.financials.agriculturalIncome.itrAnnual, null);
+  assert.equal(report.financials.agriculturalIncome.manualMonthly, 50000);
+});
+
+test('canonical Summary writes numeric financial cells and clears unused co-borrower 2', () => {
+  const report = buildCanonicalLoanApplicationSummaryData(canonicalCaseFixture());
+  const workbook = new ExcelJS.Workbook();
+  SHEET_NAMES.forEach(name => workbook.addWorksheet(name));
+  const summary = workbook.getWorksheet('Summary');
+  summary.getCell('A11').value = 'Co-Applicant 2';
+  summary.getCell('B11').value = 'Deepika';
+  summary.getCell('A47').value = 'PAN Card';
+  applyCanonicalSummaryData(workbook, report);
+  assert.equal(summary.getCell('B26').value, 1437483);
+  assert.equal(typeof summary.getCell('B26').value, 'number');
+  assert.equal(summary.getCell('F38').value, 21200);
+  assert.equal(summary.getCell('B15').value, '');
+  assert.equal(summary.getCell('D15').value, '');
+  assert.equal(summary.getCell('D18').value, 'Verified Property Address');
+  assert.deepEqual(['A11', 'B11', 'C11', 'D11', 'E11', 'F11', 'G11', 'A47', 'B47', 'C47', 'D47', 'E47', 'F47'].map(addr => summary.getCell(addr).value), Array(13).fill(''));
+  assert.doesNotThrow(() => validateCanonicalWorkbook(workbook, report));
+});
+
+test('canonical LAS creates source trace for every populated key financial source', () => {
+  const trace = buildCanonicalLoanApplicationSummaryData(canonicalCaseFixture()).sourceTrace;
+  [
+    'financials.itr.latest.profitAfterTax',
+    'financials.itr.latest.depreciation',
+    'financials.gst.rolling12Months.turnover',
+    'financials.banking.latest.averageBalance',
+    'financials.salary.monthlyNet',
+    'property.marketValue'
+  ].forEach(field => assert.ok(trace[field], `missing trace for ${field}`));
 });

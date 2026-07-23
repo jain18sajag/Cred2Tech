@@ -1,4 +1,5 @@
 const prisma = require('../../config/db');
+const { markEsrInputsChanged } = require('./esrSnapshotMutation.service');
 const { dedupeObligations } = require('../utils/obligationDedup');
 
 function parseNumericInput(value, fieldName, { nullable = true } = {}) {
@@ -98,10 +99,7 @@ async function syncObligationsFromBureau(case_id, tenant_id) {
   }
 
   if (created > 0 || skipped > 0) {
-    await prisma.caseEsrFinancials.updateMany({
-      where: { case_id },
-      data: { extraction_status: 'PENDING' }
-    });
+    await markEsrInputsChanged(prisma, case_id);
   }
 
   return { created, skipped };
@@ -116,6 +114,7 @@ async function getObligations(case_id, tenant_id) {
     include: {
       applicants: true,
       obligations: {
+        where: { status: 'ACTIVE' },
         orderBy: [{ applicant_id: 'asc' }, { created_at: 'asc' }]
       }
     }
@@ -125,9 +124,7 @@ async function getObligations(case_id, tenant_id) {
   // Group by applicant
   const grouped = caseRecord.applicants.map(app => {
     const appObligations = caseRecord.obligations.filter(o => o.applicant_id === app.id);
-    const totalEmi = appObligations
-      .filter(o => o.status === 'ACTIVE')
-      .reduce((sum, o) => sum + (Number(o.emi_per_month) || 0), 0);
+    const totalEmi = appObligations.reduce((sum, o) => sum + (Number(o.emi_per_month) || 0), 0);
     return {
       applicant: {
         id:            app.id,
@@ -139,11 +136,11 @@ async function getObligations(case_id, tenant_id) {
       },
       obligations:   appObligations,
       total_emi:     totalEmi,
-      active_count:  appObligations.filter(o => o.status === 'ACTIVE').length
+      active_count:  appObligations.length
     };
   });
 
-  const allActive = caseRecord.obligations.filter(o => o.status === 'ACTIVE');
+  const allActive = caseRecord.obligations;
   const dedupedActive = dedupeObligations(allActive);
   const combinedEmi = dedupedActive.obligations.reduce((sum, o) => sum + (Number(o.emi_per_month) || 0), 0);
   const allScores = caseRecord.applicants.map(a => a.cibil_score).filter(Boolean);
@@ -188,10 +185,7 @@ async function addObligation(case_id, payload, tenant_id) {
       }
     });
 
-    await tx.caseEsrFinancials.updateMany({
-      where: { case_id },
-      data: { extraction_status: 'PENDING' }
-    });
+    await markEsrInputsChanged(tx, case_id);
 
     return result;
   });
@@ -223,11 +217,24 @@ async function updateObligation(obligation_id, case_id, payload, tenant_id) {
       }
     });
 
-    await tx.caseEsrFinancials.updateMany({
-      where: { case_id },
-      data: { extraction_status: 'PENDING' }
-    });
+    await markEsrInputsChanged(tx, case_id);
 
+    return result;
+  });
+}
+
+async function deleteObligation(obligation_id, case_id, tenant_id) {
+  const caseRecord = await prisma.case.findFirst({ where: { id: case_id, tenant_id } });
+  if (!caseRecord) throw new Error('Case not found or unauthorized.');
+  const existing = await prisma.caseCreditObligation.findFirst({ where: { id: obligation_id, case_id } });
+  if (!existing) throw new Error('Obligation not found.');
+
+  return prisma.$transaction(async tx => {
+    const result = await tx.caseCreditObligation.update({
+      where: { id: obligation_id },
+      data: { status: 'CLOSED', include_in_foir: false, updated_at: new Date() }
+    });
+    await markEsrInputsChanged(tx, case_id);
     return result;
   });
 }
@@ -236,5 +243,6 @@ module.exports = {
   syncObligationsFromBureau,
   getObligations,
   addObligation,
-  updateObligation
+  updateObligation,
+  deleteObligation
 };

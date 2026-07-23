@@ -108,6 +108,10 @@ export const caseService = {
     const response = await axiosInstance.post(`/cases/${caseId}/income-entries`, entry);
     return response.data;
   },
+  updateIncomeEntry: async (caseId, entryId, entry) => {
+    const response = await axiosInstance.put(`/cases/${caseId}/income-entries/${entryId}`, entry);
+    return response.data;
+  },
   deleteIncomeEntry: async (caseId, entryId) => {
     const response = await axiosInstance.delete(`/cases/${caseId}/income-entries/${entryId}`);
     return response.data;
@@ -132,6 +136,10 @@ export const caseService = {
   },
   updateObligation: async (caseId, oblId, data) => {
     const response = await axiosInstance.put(`/cases/${caseId}/bureau-obligations/${oblId}`, data);
+    return response.data;
+  },
+  deleteObligation: async (caseId, oblId) => {
+    const response = await axiosInstance.delete(`/cases/${caseId}/bureau-obligations/${oblId}`);
     return response.data;
   },
 

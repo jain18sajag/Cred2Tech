@@ -338,6 +338,7 @@ async function updateProduct(case_id, product_type, tenant_id) {
 }
 
 async function updateProductProperty(case_id, payload, tenant_id) {
+  const { markEsrInputsChanged } = require('./esrSnapshotMutation.service');
   const { product_type, property } = payload;
   const existingCase = await prisma.case.findFirst({
     where: { id: case_id, tenant_id },
@@ -364,8 +365,8 @@ async function updateProductProperty(case_id, payload, tenant_id) {
       }
     : null;
 
-  const [updatedCase] = await prisma.$transaction([
-    prisma.case.update({
+  const updatedCase = await prisma.$transaction(async tx => {
+    const updated = await tx.case.update({
       where: { id: case_id },
       data: {
         product_type,
@@ -373,19 +374,23 @@ async function updateProductProperty(case_id, payload, tenant_id) {
         customer_name: existingCase.customer.business_name,
         entity_type: existingCase.customer.entity_type
       }
-    }),
-    ...(propertyPayload ? [
-      prisma.casePropertyDetails.upsert({
+    });
+    if (propertyPayload) {
+      await tx.casePropertyDetails.upsert({
         where: { case_id },
         create: { case_id, ...propertyPayload },
         update: { ...propertyPayload, updated_at: new Date() }
-      })
-    ] : []),
-    prisma.caseEsrFinancials.updateMany({
-      where: { case_id },
-      data: { extraction_status: 'PENDING' }
-    }),
-    prisma.caseStageHistory.create({
+      });
+    }
+    await markEsrInputsChanged(tx, case_id, {
+      product_type,
+      ...(propertyPayload ? {
+        property_type: propertyPayload.property_type ?? undefined,
+        occupancy_type: propertyPayload.occupancy_status ?? undefined,
+        property_value: propertyPayload.market_value ?? undefined
+      } : {})
+    });
+    await tx.caseStageHistory.create({
       data: {
         case_id: case_id,
         tenant_id: tenant_id,
@@ -393,8 +398,9 @@ async function updateProductProperty(case_id, payload, tenant_id) {
         new_stage: 'LEAD_CREATED',
         changed_by: null
       }
-    })
-  ]);
+    });
+    return updated;
+  });
 
   // Return the full updated case with property
   const finalCase = await prisma.case.findUnique({

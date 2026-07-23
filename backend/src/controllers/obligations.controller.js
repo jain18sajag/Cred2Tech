@@ -50,4 +50,17 @@ async function update(req, res) {
   }
 }
 
-module.exports = { sync, getAll, add, update };
+async function remove(req, res) {
+  try {
+    const caseId = parseInt(req.params.id, 10);
+    const oblId = parseInt(req.params.oblId, 10);
+    await obligationsService.deleteObligation(oblId, caseId, req.user.tenant_id);
+    res.json({ success: true });
+  } catch (err) {
+    if (err.message.includes('not found') || err.message.includes('unauthorized')) return res.status(404).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Failed to remove obligation.' });
+  }
+}
+
+module.exports = { sync, getAll, add, update, remove };

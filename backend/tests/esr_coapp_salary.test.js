@@ -72,3 +72,11 @@ test('ICICI salary-slip-only mode averages completed OCR months for the co-appli
     applicantIds: [781]
   });
 });
+
+test('age-based tenure rounds partial years up to the next full year', () => {
+  assert.equal(__testables.roundAgeBasedTenureMonthsToFullYears(121), 132);
+  assert.equal(__testables.roundAgeBasedTenureMonthsToFullYears(131), 132);
+  assert.equal(__testables.roundAgeBasedTenureMonthsToFullYears(132), 132);
+  assert.equal(__testables.roundAgeBasedTenureMonthsToFullYears(120, true), 132);
+  assert.equal(__testables.roundAgeBasedTenureMonthsToFullYears(120, false), 120);
+});

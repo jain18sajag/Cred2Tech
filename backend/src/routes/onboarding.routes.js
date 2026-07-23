@@ -16,6 +16,7 @@ router.use(requireCaseAccess);
 // ── Income Summary  (/api/cases/:id/income-summary) ──────────────────────────
 router.get('/income-summary',             incomeCtrl.getSummary);
 router.post('/income-entries',            incomeCtrl.addEntry);
+router.put('/income-entries/:entryId',    incomeCtrl.updateEntry);
 router.delete('/income-entries/:entryId', incomeCtrl.deleteEntry);
 router.put('/income-summary/confirm',     incomeCtrl.confirm);
 
@@ -24,6 +25,7 @@ router.post('/bureau-obligations/sync',      obligationsCtrl.sync);
 router.get('/bureau-obligations',            obligationsCtrl.getAll);
 router.post('/bureau-obligations',           obligationsCtrl.add);
 router.put('/bureau-obligations/:oblId',     obligationsCtrl.update);
+router.delete('/bureau-obligations/:oblId',  obligationsCtrl.remove);
 
 // ── Eligibility Summary Report  (/api/cases/:id/esr) ─────────────────────────
 router.post('/esr/generate', esrCtrl.generate);

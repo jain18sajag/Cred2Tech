@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { caseService } from '../api/caseService';
 import { toast } from 'react-hot-toast';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
-import { PlusCircle, Trash2, ChevronRight, ChevronLeft } from 'lucide-react';
+import { PlusCircle, Trash2, Pencil, ChevronRight, ChevronLeft } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 const INCOME_TYPES = [
@@ -39,6 +39,7 @@ export default function IncomeSummaryPage() {
     annual_amount: '', supporting_doc_type: 'CA Certificate', remarks: ''
   });
   const [adding, setAdding] = useState(false);
+  const [editingEntryId, setEditingEntryId] = useState(null);
   const [caseData, setCaseData] = useState(null);
 
   const load = useCallback(async () => {
@@ -70,9 +71,15 @@ export default function IncomeSummaryPage() {
         applicant_id: newEntry.applicant_id || null,
         annual_amount: parseFloat(newEntry.annual_amount)
       };
-      await caseService.addIncomeEntry(caseId, entry);
-      toast.success('Entry added');
+      if (editingEntryId) {
+        await caseService.updateIncomeEntry(caseId, editingEntryId, entry);
+        toast.success('Entry updated. Regenerate ESR to apply the change.');
+      } else {
+        await caseService.addIncomeEntry(caseId, entry);
+        toast.success('Entry added. Regenerate ESR to apply the change.');
+      }
       setNewEntry({ income_type: '', applicant_id: '', applicant_label: '', annual_amount: '', supporting_doc_type: 'CA Certificate', remarks: '' });
+      setEditingEntryId(null);
       setAdding(false);
       await load();
     } catch (e) {
@@ -82,10 +89,23 @@ export default function IncomeSummaryPage() {
     }
   };
 
+  const handleEdit = (entry) => {
+    setNewEntry({
+      income_type: entry.income_type || '',
+      applicant_id: entry.applicant_id ? String(entry.applicant_id) : '',
+      applicant_label: entry.applicant_label || '',
+      annual_amount: entry.annual_amount ?? '',
+      supporting_doc_type: entry.supporting_doc_type || 'None',
+      remarks: entry.remarks || ''
+    });
+    setEditingEntryId(entry.id);
+    setAdding(true);
+  };
+
   const handleDelete = async (entryId) => {
     try {
       await caseService.deleteIncomeEntry(caseId, entryId);
-      toast.success('Entry removed');
+      toast.success('Entry removed. Regenerate ESR to apply the change.');
       await load();
     } catch (e) {
       toast.error('Failed to remove entry');
@@ -190,7 +210,11 @@ export default function IncomeSummaryPage() {
             <h3 style={{ fontSize: 15, fontWeight: 700 }}>✏️ Manual Income Addition</h3>
             <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>Add income not captured via API — Director salary, rental, agriculture, other</p>
           </div>
-          <button className="btn btn-secondary btn-sm" onClick={() => setAdding(v => !v)}>
+          <button className="btn btn-secondary btn-sm" onClick={() => {
+            setAdding(v => !v);
+            setEditingEntryId(null);
+            setNewEntry({ income_type: '', applicant_id: '', applicant_label: '', annual_amount: '', supporting_doc_type: 'CA Certificate', remarks: '' });
+          }}>
             <PlusCircle size={14} /> {adding ? 'Cancel' : '+ Add Entry'}
           </button>
         </div>
@@ -231,7 +255,7 @@ export default function IncomeSummaryPage() {
                 <input className="form-control" placeholder="Optional note" value={newEntry.remarks} onChange={e => setNewEntry({ ...newEntry, remarks: e.target.value })} />
               </div>
               <button className="btn btn-primary" onClick={handleAddEntry} disabled={saving} style={{ whiteSpace: 'nowrap', height: 38 }}>
-                {saving ? '...' : 'Add'}
+                {saving ? '...' : (editingEntryId ? 'Update' : 'Add')}
               </button>
             </div>
           </div>
@@ -257,6 +281,9 @@ export default function IncomeSummaryPage() {
                     <td style={{ padding: '12px 16px', color: 'var(--text-secondary)' }}>{entry.supporting_doc_type || '—'}</td>
                     <td style={{ padding: '12px 16px', color: 'var(--text-tertiary)', fontSize: 12 }}>{entry.remarks || '—'}</td>
                     <td style={{ padding: '8px 16px' }}>
+                      <button onClick={() => handleEdit(entry)} style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', padding: 4 }} title="Edit">
+                        <Pencil size={15} />
+                      </button>
                       <button onClick={() => handleDelete(entry.id)} style={{ background: 'none', border: 'none', color: 'var(--error)', cursor: 'pointer', padding: 4 }} title="Remove">
                         <Trash2 size={15} />
                       </button>

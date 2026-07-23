@@ -21,7 +21,7 @@ async function generateESR(case_id, user_id, tenant_id) {
 async function _generateESR(case_id, user_id, tenant_id) {
     const caseRecord = await prisma.case.findFirst({
         where: { id: case_id, tenant_id },
-        select: { id: true, product_type: true }
+        select: { id: true, product_type: true, dsa_notes: true }
     });
     if (!caseRecord) {
         throw new Error('Case not found or unauthorized.');
@@ -48,8 +48,8 @@ async function _generateESR(case_id, user_id, tenant_id) {
     const sourceFreshness = await _getEsrSourceFreshness(case_id);
     const sourceChanged = _sourceChangedAfterSnapshot(snapshot, sourceFreshness);
 
-    if (_isBulkUploadSnapshot(snapshot) && !sourceChanged) {
-        console.log(`[ESR] Case ${case_id} has completed bulk-upload/manual financials and no newer mutable ESR source rows. Bypassing vendor extraction refresh.`);
+    if (_isBulkUploadSnapshot(snapshot, caseRecord)) {
+        console.log(`[ESR] Case ${case_id} uses a bulk-upload financial baseline. Preserving uploaded snapshot fields; live property, income and obligation edits will be consumed directly.`);
     } else if (snapshot?.selected_income_method === 'LEGACY_UPLOAD' && !sourceChanged) {
         console.log(`[ESR] Case ${case_id} is a LEGACY_UPLOAD and no newer mutable ESR source rows exist. Bypassing extraction refresh.`);
     } else if (_snapshotNeedsRefresh(snapshot, caseRecord) || sourceChanged) {
@@ -187,10 +187,12 @@ async function _assertCaseAccess(case_id, tenant_id) {
     }
 }
 
-function _isBulkUploadSnapshot(snapshot) {
+function _isBulkUploadSnapshot(snapshot, caseRecord = null) {
     if (!snapshot) return false;
     if (snapshot.extraction_status !== 'COMPLETED') return false;
-    return String(snapshot.selected_income_method || '').toUpperCase() === 'ANY';
+    const method = String(snapshot.selected_income_method || '').toUpperCase();
+    const notes = String(caseRecord?.dsa_notes || '').toUpperCase();
+    return method === 'ANY' || method === 'LEGACY_UPLOAD' || notes.includes('[BULK UPLOAD]') || notes.includes('[LEGACY UPLOAD]');
 }
 
 function _snapshotNeedsRefresh(snapshot, caseRecord) {
