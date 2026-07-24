@@ -4,7 +4,7 @@ const prisma = require('../../config/db');
 const hashOtp = (otp) => crypto.createHash('sha256').update(otp).digest('hex');
 
 const generateOtp = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return crypto.randomInt(100000, 1000000).toString();
 };
 
 /**
@@ -48,15 +48,14 @@ const otpService = {
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
     const otp = generateOtp();
 
-  console.log('[OTP GENERATED]', {
-    otp,
-    mobile,
-    purpose,
-    targetType,
-    targetId,
-    tenantId,
-    createdAt: new Date().toISOString()
-  });
+    console.log('[OTP GENERATED]', {
+      mobile,
+      purpose,
+      targetType,
+      targetId,
+      tenantId,
+      createdAt: new Date().toISOString()
+    });
     const otpHash = hashOtp(otp);
 
     await prisma.otpVerification.create({

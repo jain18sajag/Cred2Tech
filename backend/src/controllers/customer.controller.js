@@ -277,7 +277,7 @@ async function getProfile(req, res) {
       entity_type: customer.entity_type,
       industry: customer.industry,
       business_vintage: customer.business_vintage,
-      business_pan: customer.business_pan,
+      business_pan: customer.business_pan ? `XXXXX${customer.business_pan.slice(5, 9)}X` : null,
       business_mobile: customer.business_mobile,
       business_email: customer.business_email,
       mobile_verified: customer.mobile_verified,
