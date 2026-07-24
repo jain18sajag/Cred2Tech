@@ -235,7 +235,16 @@ async function confirmIncomeSummary(case_id, tenant_id, userId) {
     return caseRecord;
   }
 
-  return await updateStage(case_id, tenant_id, 'INCOME_REVIEWED', userId);
+  // Every other stage (DRAFT, LEAD_SENT_TO_LENDER, ESR_GENERATED, IN_REVIEW,
+  // APPROVED, ...) does not list INCOME_REVIEWED as a valid forward
+  // transition in case.service.js's STATE_TRANSITIONS graph — either the
+  // case already passed through INCOME_REVIEWED earlier, or the pipeline
+  // bypassed that stage by design (e.g. LEAD_CREATED -> LEAD_SENT_TO_LENDER
+  // is itself a valid direct transition). Confirming income summary here is
+  // a no-op, not an error: forcing the stage backward would violate the
+  // state machine, and a user re-viewing/re-confirming income shouldn't
+  // hard-crash the request.
+  return caseRecord;
 }
 
 module.exports = {
