@@ -1,6 +1,7 @@
 const prisma = require('../../config/db');
 const { Decimal } = require('@prisma/client');
 const { markEsrInputsChanged } = require('./esrSnapshotMutation.service');
+const { safeJsonParse } = require('../utils/safeJsonParse');
 
 function parseNumericInput(value, fieldName) {
   if (value === undefined || value === null || value === '') return null;
