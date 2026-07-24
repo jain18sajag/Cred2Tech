@@ -106,7 +106,7 @@ async function updateTenantStatus(req, res) {
  */
 async function publicRegisterDSA(req, res) {
   try {
-    const {
+    let {
       name, email, mobile,
       pan_number, gst_number, company_type,
       state, city, pincode,
@@ -114,6 +114,13 @@ async function publicRegisterDSA(req, res) {
       website, // honeypot — a hidden field real users never fill; the frontend
                // must render (and CSS-hide) an input named exactly this
     } = req.body;
+
+    // Normalize both emails the same way auth.service.js's login lookup
+    // does — otherwise an admin who registers with any uppercase character
+    // in their email can never log back in (case-sensitive DB lookup vs.
+    // lowercased login query).
+    email = email?.toLowerCase().trim();
+    admin_email = admin_email?.toLowerCase().trim();
 
     // Honeypot: bots that blindly fill every form field trip this; real
     // browsers submit it empty since it's hidden from human users. Respond

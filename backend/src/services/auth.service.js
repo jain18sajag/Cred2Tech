@@ -106,7 +106,7 @@ async function loginUser(email, password, ipAddress) {
 }
 
 async function initiatePasswordReset(email) {
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await prisma.user.findUnique({ where: { email: email?.toLowerCase().trim() } });
   if (!user || user.status !== 'ACTIVE') return;
 
   const rawToken = crypto.randomBytes(32).toString('hex');

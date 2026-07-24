@@ -32,7 +32,10 @@ function assertRoleAssignable(currentUser, targetRoleName) {
 }
 
 async function createUser(data, currentUser) {
-  const { name, email, mobile, password, role_id, tenant_id, hierarchy_level, manager_id, designation } = data;
+  let { name, email, mobile, password, role_id, tenant_id, hierarchy_level, manager_id, designation } = data;
+  // Match auth.service.js's lowercased login lookup — otherwise a user
+  // created with any uppercase character in their email can never log in.
+  email = email?.toLowerCase().trim();
   console.log('CREATE USER PAYLOAD:', JSON.stringify({ name, email, mobile, role_id, tenant_id, hierarchy_level, manager_id, designation }));
 
   if (!role_id) throw Object.assign(new Error('role_id is required'), { status: 400 });
@@ -246,6 +249,9 @@ async function updateUser(id, data, currentUser) {
     if (data[field] !== undefined) updateData[field] = data[field];
   }
   if (updateData.manager_id !== undefined) updateData.manager_id = parsedManagerId;
+  // Match auth.service.js's lowercased login lookup — otherwise changing a
+  // user's email to include an uppercase character locks them out.
+  if (updateData.email !== undefined) updateData.email = updateData.email?.toLowerCase().trim();
 
   if (data.status !== undefined) {
     if (!VALID_USER_STATUSES.includes(data.status)) {
