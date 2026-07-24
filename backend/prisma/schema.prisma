@@ -792,6 +792,10 @@ model GstrAnalyticsRequest {
   mobile_numbers            Json?
   callback_url              String?
   provider_request_id       String?             @unique
+  /// HMAC token embedded in the callback URL we register with Signzy and
+  /// re-verified on webhook receipt — Signzy webhooks carry no signature
+  /// scheme of their own, so this is the only thing authenticating the callback.
+  webhook_token             String?
   auth_link                 String?
   status                    GstrAnalyticsStatus @default(INITIATED)
   provider_message          String?
@@ -951,6 +955,16 @@ model BankStatementAnalysisRequest {
   applicant_id     Int?
   auth_token       String?
   report_id        String?             @unique
+  /// HMAC token embedded in the callback URL we register with Signzy and
+  /// re-verified on webhook receipt — Signzy webhooks carry no signature
+  /// scheme of their own, so this is the only thing authenticating the callback.
+  webhook_token    String?
+  /// Atomic-claim marker for webhook dedup (see external.bank.controller.js
+  /// handleSignzyCallback) — Signzy retries webhooks liberally; a plain
+  /// read-then-branch status check is a TOCTOU race that lets two concurrent
+  /// deliveries both re-process. Set via a conditional UPDATE ... WHERE
+  /// webhook_claimed_at IS NULL, which only one concurrent request can win.
+  webhook_claimed_at DateTime?
   status           BankStatementStatus @default(INITIATED)
   provider_message String?
   report_json_url  String?
@@ -2838,6 +2852,27 @@ model UserSession {
 
   @@index([user_id])
   @@map("user_sessions")
+}
+
+/// Append-only audit trail for reads of sensitive customer data (documents,
+/// KYC/PAN profiles, bureau pulls) — an RBI requirement this backend
+/// previously had no equivalent of at all (VAPT H-7). No FK relations on
+/// purpose: this log must survive even if the referenced customer/case/user
+/// is later deleted, and application code should never update or delete rows
+/// here (no updated_at, no delete path is wired anywhere).
+model SensitiveDataAccessLog {
+  id            Int      @id @default(autoincrement())
+  tenant_id     Int
+  user_id       Int?
+  resource_type String // e.g. 'DOCUMENT', 'CUSTOMER_PROFILE', 'BUREAU_PULL', 'PAN_INTELLIGENCE'
+  resource_id   String? // stringified so it can hold any PK shape (Int/BigInt/composite)
+  action        String // e.g. 'VIEW', 'DOWNLOAD'
+  ip_address    String?
+  created_at    DateTime @default(now())
+
+  @@index([tenant_id, created_at])
+  @@index([resource_type, resource_id])
+  @@map("sensitive_data_access_logs")
 }
 
 model LoginAttempt {

@@ -7,14 +7,19 @@
  * changing the uploaded template layout/design. Values are mapped from the
  * existing case/customer/applicant/property/ESR/API data sources.
  *
- * Requires exceljs because the existing `xlsx` package does not reliably
- * preserve template formatting and cannot insert images.
+ * Uses exceljs throughout (both for writing the template-based output, which
+ * needs to preserve formatting and insert images, and for reading uploaded
+ * source Excel documents — the `xlsx`/SheetJS package this file used to read
+ * with has known Prototype-Pollution/ReDoS advisories with no upstream fix,
+ * and this parsing path takes attacker-reachable uploaded files as input.
+ * Known behavior change: exceljs only reads modern `.xlsx` (OOXML), not
+ * legacy binary `.xls` — an `.xls` source document now falls through to
+ * `readSourceExcelWorkbook`'s existing null-handling instead of parsing.
  */
 
 const fs = require('fs');
 const path = require('path');
 const ExcelJS = require('exceljs');
-const XLSX = require('xlsx');
 const axios = require('axios');
 const prisma = require('../../../config/db');
 const { getStorageProvider } = require('../storage');
@@ -328,21 +333,42 @@ function setStyledStatusCell(ws, address, status) {
   styleStatusCell(cell, status);
 }
 
-function cellDisplayValue(cell, leftLabel = '') {
-  if (!cell || cell.v === undefined || cell.v === null || cell.v === '') return '';
-  if (cell.v instanceof Date) return formatDate(cell.v);
-  const label = String(leftLabel || '').toLowerCase();
-  if (cell.t === 'n') {
-    const numeric = Number(cell.v);
-    const looksLikeIdentifier = Number.isInteger(numeric)
-      && (Math.abs(numeric) >= 1000000000 || /(account|aadhaar|aadhar|mobile|phone|pan|gstin|ifsc|micr|din)/i.test(label));
-    if (looksLikeIdentifier) return String(cell.v);
-    if (cell.w && !/[eE]\+/.test(String(cell.w))) return cell.w;
-    return numeric;
+// Extracts the raw JS value from an exceljs cell regardless of its internal
+// representation (formulas are {formula, result}, hyperlinks are {text,
+// hyperlink}, rich text is {richText: [...]}), mirroring what xlsx's `.v`
+// (raw value) meant for the source-cell-scanning logic below.
+function rawCellValue(cell) {
+  if (!cell) return null;
+  let v = cell.value;
+  if (v && typeof v === 'object' && !(v instanceof Date)) {
+    if ('result' in v) v = v.result;
+    else if (Array.isArray(v.richText)) v = v.richText.map((rt) => rt.text).join('');
+    else if ('text' in v) v = v.text;
   }
-  if (cell.t === 'd') return formatDate(cell.v);
-  if (cell.w && !/[eE]\+/.test(String(cell.w))) return cell.w;
-  return cell.v;
+  return v;
+}
+
+// Source Excel documents (bank/GST/ITR statement exports) are read for
+// display/mapping purposes — mirrors xlsx's cellDisplayValue behavior
+// (prefer the number-format-aware display text, fall back to raw value,
+// treat long integers/labelled fields as identifiers to avoid precision
+// loss or scientific notation).
+function cellDisplayValue(cell, leftLabel = '') {
+  const raw = rawCellValue(cell);
+  if (raw === undefined || raw === null || raw === '') return '';
+  if (raw instanceof Date) return formatDate(raw);
+  const label = String(leftLabel ?? '').toLowerCase();
+  if (typeof raw === 'number') {
+    const looksLikeIdentifier = Number.isInteger(raw)
+      && (Math.abs(raw) >= 1000000000 || /(account|aadhaar|aadhar|mobile|phone|pan|gstin|ifsc|micr|din)/i.test(label));
+    if (looksLikeIdentifier) return String(raw);
+    const text = cell.text;
+    if (text && !/[eE]\+/.test(String(text))) return text;
+    return raw;
+  }
+  const text = cell.text;
+  if (text && !/[eE]\+/.test(String(text))) return text;
+  return raw;
 }
 
 function streamToBuffer(stream) {
@@ -386,7 +412,15 @@ async function readExcelWorkbookFromDocument(doc) {
   const stream = await storage.getStream(doc.storage_path);
   const buffer = await streamToBuffer(stream);
   if (!buffer.length) return null;
-  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true, raw: false, dense: false });
+  const workbook = new ExcelJS.Workbook();
+  try {
+    await workbook.xlsx.load(buffer);
+  } catch (err) {
+    // Legacy binary .xls (or a corrupt/non-Excel file) — exceljs only reads
+    // OOXML .xlsx. Fall through to the caller's null-handling.
+    console.warn(`[loanApplicationSummary] Could not parse source document #${doc.id} as .xlsx: ${err.message}`);
+    return null;
+  }
   return { workbook, document: doc, source: 'document' };
 }
 
@@ -449,7 +483,13 @@ async function readExcelWorkbookFromUrl(sourceUrl) {
   }
   const buffer = Buffer.from(response.data);
   if (!buffer.length || buffer.length > MAX_SOURCE_EXCEL_SIZE_BYTES) return null;
-  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true, raw: false, dense: false });
+  const workbook = new ExcelJS.Workbook();
+  try {
+    await workbook.xlsx.load(buffer);
+  } catch (err) {
+    console.warn(`[loanApplicationSummary] Could not parse source URL as .xlsx: ${err.message}`);
+    return null;
+  }
   return { workbook, source: 'url' };
 }
 
@@ -462,28 +502,30 @@ async function readSourceExcelWorkbook({ documentId, tenantId, sourceUrl, docume
 
 function findSourceSheetName(workbook, wantedName) {
   const normalizedWanted = String(wantedName).toLowerCase().replace(/[^a-z0-9]/g, '');
-  return workbook.SheetNames.find(name => (
-    String(name).toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedWanted
+  const match = workbook.worksheets.find((ws) => (
+    String(ws.name).toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedWanted
   ));
+  return match ? match.name : undefined;
 }
 
 function sourceSheetRows(workbook, sheetName) {
-  const sheet = workbook.Sheets[sheetName];
+  const sheet = workbook.getWorksheet(sheetName);
   if (!sheet) return [];
-  const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1:A1');
+  const colCount = Math.max(sheet.columnCount || 0, sheet.actualColumnCount || 0);
   const rows = [];
-  for (let r = range.s.r; r <= range.e.r; r += 1) {
+  sheet.eachRow({ includeEmpty: true }, (sheetRow) => {
     const row = [];
     let lastNonBlank = -1;
-    for (let c = range.s.c; c <= range.e.c; c += 1) {
-      const leftCell = c > range.s.c ? sheet[XLSX.utils.encode_cell({ r, c: c - 1 })] : null;
-      const cell = sheet[XLSX.utils.encode_cell({ r, c })];
-      const value = cellDisplayValue(cell, leftCell?.v);
+    const rowColCount = Math.max(colCount, sheetRow.cellCount || 0);
+    for (let c = 1; c <= rowColCount; c += 1) {
+      const leftCell = c > 1 ? sheetRow.getCell(c - 1) : null;
+      const cell = sheetRow.getCell(c);
+      const value = cellDisplayValue(cell, leftCell ? rawCellValue(leftCell) : null);
       row.push(value);
       if (!isBlank(value)) lastNonBlank = row.length - 1;
     }
     if (lastNonBlank >= 0) rows.push(row.slice(0, lastNonBlank + 1));
-  }
+  });
   return trimEmptyColumns(rows);
 }
 
@@ -880,14 +922,15 @@ function applySourceSheetLayout(ws, { sectionRows = new Set(), headerRows = new 
 }
 
 function copySourceWorkbookToSheet(targetSheet, sourceWorkbook, sourceType) {
-  if (!targetSheet || !sourceWorkbook?.SheetNames?.length) return false;
+  const sourceSheetNames = sourceWorkbook?.worksheets?.map((ws) => ws.name) || [];
+  if (!targetSheet || !sourceSheetNames.length) return false;
 
   clearWorksheet(targetSheet);
-  const preferredSheets = SOURCE_SHEET_LIMITS[sourceType] || sourceWorkbook.SheetNames;
+  const preferredSheets = SOURCE_SHEET_LIMITS[sourceType] || sourceSheetNames;
   const selectedSheetNames = preferredSheets
     .map(name => findSourceSheetName(sourceWorkbook, name))
     .filter(Boolean);
-  const fallbackSheetNames = selectedSheetNames.length ? [] : sourceWorkbook.SheetNames.slice(0, Math.min(sourceWorkbook.SheetNames.length, preferredSheets.length || 1));
+  const fallbackSheetNames = selectedSheetNames.length ? [] : sourceSheetNames.slice(0, Math.min(sourceSheetNames.length, preferredSheets.length || 1));
   const sheetNames = [...new Set([...selectedSheetNames, ...fallbackSheetNames])];
 
   const sections = sheetNames.map(sheetName => ({

@@ -43,12 +43,24 @@ const {
   extractCreditTxnTotal,
   extractMonthlyAverageBalance
 } = require('../src/services/reports/loanApplicationSummary.service');
-const XLSX = require('xlsx');
+
+// Builds an ExcelJS workbook from a { sheetName: [[row1cells], [row2cells], ...] }
+// shape — matches what readSourceExcelWorkbook now returns in production
+// (migrated off `xlsx`/SheetJS, see loanApplicationSummary.service.js header).
+function addAoaSheet(workbook, name, rows) {
+  const ws = workbook.addWorksheet(name);
+  rows.forEach((row, rIdx) => {
+    row.forEach((value, cIdx) => {
+      if (value !== undefined && value !== '') ws.getCell(rIdx + 1, cIdx + 1).value = value;
+    });
+  });
+  return ws;
+}
 
 function makeWorkbook(sheets) {
-  const workbook = XLSX.utils.book_new();
+  const workbook = new ExcelJS.Workbook();
   Object.entries(sheets).forEach(([name, rows]) => {
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), name);
+    addAoaSheet(workbook, name, rows);
   });
   return workbook;
 }
@@ -92,16 +104,16 @@ test('loan application summary copies source Excel sections into existing report
   sheet.mergeCells('A1:D1');
   sheet.getCell('A1').value = 'Old Template Header';
 
-  const source = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(source, XLSX.utils.aoa_to_sheet([
+  const source = new ExcelJS.Workbook();
+  addAoaSheet(source, 'Summary', [
     ['Description', 'HDFC - 123 - Savings'],
     ['Account Holders', 'Elevate Consulting'],
     ['Account Number', 50200080231149]
-  ]), 'Summary');
-  XLSX.utils.book_append_sheet(source, XLSX.utils.aoa_to_sheet([
+  ]);
+  addAoaSheet(source, 'Monthly summary', [
     ['Month', 'Credit', 'Debit'],
     ['Apr 2025', 1000, 500]
-  ]), 'Monthly summary');
+  ]);
 
   const copied = copySourceWorkbookToSheet(sheet, source, 'bank');
 
@@ -121,15 +133,15 @@ test('loan application summary copies only requested GST and ITR source sheets',
   const gstSheet = target.addWorksheet('GST Analysis');
   const itrSheet = target.addWorksheet('ITR Analysis');
 
-  const gstSource = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(gstSource, XLSX.utils.aoa_to_sheet([['Account Details'], ['PAN', 'AAAAA0000A']]), 'Account Details');
-  XLSX.utils.book_append_sheet(gstSource, XLSX.utils.aoa_to_sheet([['Particulars', 'FY 2024-25'], ['Sales', 1000]]), 'Overview Yearly');
-  XLSX.utils.book_append_sheet(gstSource, XLSX.utils.aoa_to_sheet([['Particulars', 'Total'], ['Sales', 1000]]), 'Overview Monthly');
-  XLSX.utils.book_append_sheet(gstSource, XLSX.utils.aoa_to_sheet([['Customer Summary'], ['A', 1]]), 'Customer Summary');
+  const gstSource = new ExcelJS.Workbook();
+  addAoaSheet(gstSource, 'Account Details', [['Account Details'], ['PAN', 'AAAAA0000A']]);
+  addAoaSheet(gstSource, 'Overview Yearly', [['Particulars', 'FY 2024-25'], ['Sales', 1000]]);
+  addAoaSheet(gstSource, 'Overview Monthly', [['Particulars', 'Total'], ['Sales', 1000]]);
+  addAoaSheet(gstSource, 'Customer Summary', [['Customer Summary'], ['A', 1]]);
 
-  const itrSource = XLSX.utils.book_new();
+  const itrSource = new ExcelJS.Workbook();
   ['General Information', 'Tax Calculation', 'Balance Sheet', 'Profit and Loss Statement', 'Ratio Analysis', 'Appendix-1'].forEach((name) => {
-    XLSX.utils.book_append_sheet(itrSource, XLSX.utils.aoa_to_sheet([[name], ['Value', 1]]), name);
+    addAoaSheet(itrSource, name, [[name], ['Value', 1]]);
   });
 
   assert.equal(copySourceWorkbookToSheet(gstSheet, gstSource, 'gst'), true);

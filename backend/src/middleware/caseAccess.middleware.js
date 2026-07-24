@@ -20,13 +20,17 @@ async function requireCaseAccess(req, res, next) {
       return res.status(401).json({ error: 'Unauthorized. User not found in request.' });
     }
 
-    const isBypassed = ['DSA_ADMIN', 'SUPER_ADMIN', 'MSME_CUSTOMER', 'LENDER_ADMIN'].includes(user.role);
+    // DSA_ADMIN/SUPER_ADMIN see every case in their tenant. MSME_CUSTOMER is NOT
+    // bypassed here — they only ever own the cases they created themselves
+    // (msme_customer_user_id), never their whole tenant's case pool, since every
+    // direct MSME customer shares one tenant. (LENDER_ADMIN removed: not a real role.)
+    const isBypassed = ['DSA_ADMIN', 'SUPER_ADMIN'].includes(user.role);
 
-    const hierarchyFilter = isBypassed ? {} : {
-      created_by: {
-        hierarchy_path: { startsWith: user.hierarchy_path || '' }
-      }
-    };
+    const hierarchyFilter = isBypassed
+      ? {}
+      : user.role === 'MSME_CUSTOMER'
+        ? { msme_customer_user_id: user.id }
+        : { created_by: { hierarchy_path: { startsWith: user.hierarchy_path || '' } } };
 
     const caseRecord = await prisma.case.findFirst({
       where: {

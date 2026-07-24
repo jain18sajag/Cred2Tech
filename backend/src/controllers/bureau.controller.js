@@ -2,6 +2,8 @@ const bureauService = require('../services/externalApis/bureau.service');
 const experianService = require('../services/externalApis/experian.service');
 const walletService = require('../services/wallet.service');
 const prisma = require('../../config/db');
+const { logSensitiveAccess } = require('../utils/auditLog');
+const { sendError } = require('../utils/sendError');
 
 async function runBureauVerification(req, res) {
    try {
@@ -15,9 +17,18 @@ async function runBureauVerification(req, res) {
       });
 
       if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
-      if (req.user.role.name !== 'SUPER_ADMIN' && caseRecord.tenant_id !== tenantId) {
+      if (req.user.role !== 'SUPER_ADMIN' && caseRecord.tenant_id !== tenantId) {
          return res.status(403).json({ error: 'Forbidden' });
       }
+      // Direct MSME customers share one tenant with every other direct customer,
+      // so tenant_id alone doesn't isolate them from each other's cases.
+      if (req.user.role === 'MSME_CUSTOMER' && caseRecord.msme_customer_user_id !== req.user.id) {
+         return res.status(403).json({ error: 'Forbidden' });
+      }
+
+      await logSensitiveAccess({
+         tenantId, userId: req.user.id, resourceType: 'BUREAU_PULL', resourceId: caseId, action: 'VIEW', ip: req.ip
+      });
 
       const results = {
          caseId: caseId,
@@ -168,8 +179,7 @@ async function runBureauVerification(req, res) {
 
       res.json({ status: overallStatus, ...results });
    } catch (error) {
-      console.error(error);
-      res.status(500).json({ error: error.message || 'Failed to execute Bureau Verification' });
+      sendError(res, 500, error, 'Failed to execute Bureau Verification');
    }
 }
 

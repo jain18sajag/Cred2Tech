@@ -13,6 +13,7 @@
 const path = require('path');
 const prisma = require('../../config/db');
 const { streamDocument } = require('../services/document.service');
+const { logSensitiveAccess } = require('../utils/auditLog');
 
 /**
  * List documents scoped to the requesting user's tenant.
@@ -34,6 +35,15 @@ async function listDocuments(req, res) {
         if (case_id) where.case_id = parseInt(case_id, 10);
         if (customer_id) where.customer_id = parseInt(customer_id, 10);
         if (document_type) where.document_type = document_type;
+
+        // Direct MSME customers share one tenant, so tenant_id alone doesn't isolate
+        // them from each other — restrict to cases/customers they themselves own.
+        if (req.user.role === 'MSME_CUSTOMER') {
+            where.OR = [
+                { case_entity: { msme_customer_user_id: req.user.id } },
+                { customer: { created_by_user_id: req.user.id } },
+            ];
+        }
 
         const documents = await prisma.document.findMany({
             where,
@@ -75,7 +85,12 @@ async function serveDocument(req, res, disposition) {
         }
 
         const tenantId = req.user.tenant_id;
-        const { doc, stream } = await streamDocument(documentId, tenantId);
+        const { doc, stream } = await streamDocument(documentId, tenantId, req.user);
+
+        await logSensitiveAccess({
+            tenantId, userId: req.user.id, resourceType: 'DOCUMENT', resourceId: documentId,
+            action: disposition === 'attachment' ? 'DOWNLOAD' : 'VIEW', ip: req.ip
+        });
 
         // Security headers
         res.setHeader('Content-Type', doc.mime_type || 'application/octet-stream');
@@ -137,9 +152,12 @@ async function uploadDocument(req, res) {
         const tenantId = req.user.tenant_id;
         const userId = req.user.id;
 
-        // Verify case belongs to this tenant
+        // Verify case belongs to this tenant (and, for MSME customers, to them specifically —
+        // they share one tenant with every other direct customer, so tenant_id alone isn't isolation).
+        const caseWhere = { id: parseInt(case_id, 10), tenant_id: tenantId };
+        if (req.user.role === 'MSME_CUSTOMER') caseWhere.msme_customer_user_id = userId;
         const caseRecord = await prisma.case.findFirst({
-            where: { id: parseInt(case_id), tenant_id: tenantId },
+            where: caseWhere,
             select: { id: true, customer_id: true }
         });
         if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
@@ -147,7 +165,7 @@ async function uploadDocument(req, res) {
         // If applicant_id is provided, verify it belongs to this case
         if (applicant_id) {
             const applicantRecord = await prisma.applicant.findFirst({
-                where: { id: parseInt(applicant_id), case_id: parseInt(case_id) }
+                where: { id: parseInt(applicant_id, 10), case_id: parseInt(case_id, 10) }
             });
             if (!applicantRecord) return res.status(404).json({ error: 'Applicant not found or does not belong to this case' });
         }
@@ -167,9 +185,9 @@ async function uploadDocument(req, res) {
         const doc = await prisma.document.create({
             data: {
                 tenant_id: tenantId,
-                case_id: parseInt(case_id),
+                case_id: parseInt(case_id, 10),
                 customer_id: caseRecord.customer_id,
-                applicant_id: applicant_id ? parseInt(applicant_id) : null,
+                applicant_id: applicant_id ? parseInt(applicant_id, 10) : null,
                 document_type: docType,
                 source_type: 'DIRECT_UPLOAD',
                 storage_provider: 'LOCAL',

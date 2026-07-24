@@ -1,5 +1,6 @@
 const axios = require('axios');
 const FormData = require('form-data');
+const { generateWebhookToken, appendWebhookToken } = require('../../utils/webhookToken');
 
 // Internal memory caching for simplistic auth token lifecycle management
 let _cachedToken = null;
@@ -117,10 +118,15 @@ async function analyzeStatement(filesPayload) {
             }
         }
 
+        // Signzy webhooks carry no signature scheme — embed a random per-request
+        // token in the callback URL now (before we know the reportId) so the
+        // webhook handler can verify it later. Returned to the caller under
+        // `__webhookToken` so it can be persisted alongside the created DB row.
+        const webhookToken = generateWebhookToken();
         const isLocal = process.env.APP_BASE_URL && process.env.APP_BASE_URL.includes('localhost');
         const callbackUrl = isLocal
             ? "https://webhook.site/dummy-callback-for-localhost"
-            : process.env.APP_BASE_URL + "/api/external/webhooks/signzy/bank";
+            : appendWebhookToken(process.env.APP_BASE_URL + "/api/external/webhooks/signzy/bank", webhookToken);
 
         const response = await axios.post(
             `${apiBase}/statementanalysis/analyze-statement`,
@@ -132,7 +138,7 @@ async function analyzeStatement(filesPayload) {
                 }
             }
         );
-        return handleResponse(response);
+        return { ...handleResponse(response), __webhookToken: webhookToken };
     } catch (error) {
         throw parseError(error);
     }

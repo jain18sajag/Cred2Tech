@@ -1,4 +1,5 @@
 const prisma = require('../../config/db');
+const { encryptString } = require('../utils/fieldEncryption');
 
 async function bulkUploadLegacyCases(req, res) {
   try {
@@ -8,6 +9,10 @@ async function bulkUploadLegacyCases(req, res) {
 
     if (!Array.isArray(cases) || cases.length === 0) {
       return res.status(400).json({ error: 'No cases provided for upload' });
+    }
+    const MAX_BULK_UPLOAD_ROWS = 200;
+    if (cases.length > MAX_BULK_UPLOAD_ROWS) {
+      return res.status(400).json({ error: `Too many cases in one upload (max ${MAX_BULK_UPLOAD_ROWS}, got ${cases.length})` });
     }
 
     const results = {
@@ -59,12 +64,17 @@ async function bulkUploadLegacyCases(req, res) {
           }
 
           // 3. Prepare Applicants Data
+          // NOTE: these get created via a nested `applicants: { create: [...] }`
+          // write below, which bypasses the Applicant model's own Prisma query
+          // extensions (config/db.js's encryption hooks only intercept
+          // top-level `prisma.applicant.*` calls) — pan_number is encrypted
+          // explicitly here instead.
           const applicantsData = [
             {
               is_primary: true,
               type: 'PRIMARY',
               name: customer.business_name,
-              pan_number: customer.business_pan,
+              pan_number: encryptString(customer.business_pan, { deterministic: true }),
               mobile: customer.business_mobile || '0000000000',
               email: customer.business_email || null,
               bureau_fetched: row.bureau_score_applicant ? true : false,
@@ -77,7 +87,7 @@ async function bulkUploadLegacyCases(req, res) {
               is_primary: false,
               type: 'CO_APPLICANT',
               name: row.co_applicant_name || 'Co-Applicant',
-              pan_number: row.co_applicant_pan || null,
+              pan_number: row.co_applicant_pan ? encryptString(row.co_applicant_pan, { deterministic: true }) : null,
               mobile: row.co_applicant_mobile || null,
               email: row.co_applicant_email || null,
               bureau_fetched: row.bureau_score_co_applicant ? true : false,

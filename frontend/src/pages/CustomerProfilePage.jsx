@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { customerService } from '../api/customerService';
+import { viewDocument } from '../api/documentHelper';
+import { toast } from 'react-hot-toast';
 import { Building2, Phone, Mail, MapPin, FileText, ChevronRight, AlertTriangle, Plus, Eye } from 'lucide-react';
 
 const STAGE_COLORS = {
@@ -316,9 +318,7 @@ const CustomerProfilePage = () => {
                   <td style={{ padding: '12px 24px' }}>
                     <button
                       onClick={() => {
-                        const token = localStorage.getItem('token');
-                        const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
-                        window.open(`${baseUrl}/documents/${doc.id}/view?token=${token}`, '_blank');
+                        viewDocument(doc.id).catch(() => toast.error('Failed to open document'));
                       }}
                       style={{
                         background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 6,

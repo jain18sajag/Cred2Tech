@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const xlsx = require('xlsx');
+const ExcelJS = require('exceljs');
 
 class EsrAuditExporter {
     constructor(caseId) {
@@ -89,7 +89,7 @@ class EsrAuditExporter {
         return outputPath;
     }
 
-    generateExcel(outputPath) {
+    async generateExcel(outputPath) {
         const sections = {};
         for (const r of this.records) {
             let s = r.Section.replace(/[^a-zA-Z0-9_]/g, '').substring(0, 31);
@@ -98,8 +98,8 @@ class EsrAuditExporter {
             sections[s].push(r);
         }
 
-        const wb = xlsx.utils.book_new();
-        
+        const wb = new ExcelJS.Workbook();
+
         // Create Summary Sheet
         const summaryData = this.records.map(r => ({
             Section: r.Section,
@@ -108,21 +108,24 @@ class EsrAuditExporter {
             SourceType: r['Source Type'],
             Path: r['Exact Source Path / Config Key / DB Field']
         }));
-        const summaryWs = xlsx.utils.json_to_sheet(summaryData);
-        xlsx.utils.book_append_sheet(wb, summaryWs, "Summary");
+        const summaryWs = wb.addWorksheet("Summary");
+        if (summaryData.length > 0) {
+            summaryWs.columns = Object.keys(summaryData[0]).map((key) => ({ header: key, key, width: 30 }));
+            summaryWs.addRows(summaryData);
+        }
 
         // Create Section Sheets
         for (const [sheetName, records] of Object.entries(sections)) {
-            const ws = xlsx.utils.json_to_sheet(records);
-            // Auto width roughly
-            const wscols = Object.keys(records[0]).map(() => ({ wch: 30 }));
-            ws['!cols'] = wscols;
-            xlsx.utils.book_append_sheet(wb, ws, sheetName);
+            const ws = wb.addWorksheet(sheetName);
+            if (records.length > 0) {
+                ws.columns = Object.keys(records[0]).map((key) => ({ header: key, key, width: 30 }));
+                ws.addRows(records);
+            }
         }
 
         const dir = path.dirname(outputPath);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        xlsx.writeFile(wb, outputPath);
+        await wb.xlsx.writeFile(outputPath);
         return outputPath;
     }
 }

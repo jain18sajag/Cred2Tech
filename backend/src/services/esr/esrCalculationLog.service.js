@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const XLSX = require('xlsx');
+const ExcelJS = require('exceljs');
 const prisma = require('../../../config/db');
 const { getStorageProvider } = require('../storage');
 const { getLocalEsrLogsDir } = require('./esrTraceLogger');
@@ -263,7 +263,7 @@ async function _writeExportFiles(payload, caseRecord, calculationRunId, createdA
     const jsonBuffer = Buffer.from(JSON.stringify(payload, null, 2), 'utf8');
     fs.writeFileSync(jsonFilePath, jsonBuffer);
     const workbook = _buildWorkbook(payload);
-    XLSX.writeFile(workbook, xlsxFilePath);
+    await workbook.xlsx.writeFile(xlsxFilePath);
     const xlsxBuffer = fs.readFileSync(xlsxFilePath);
     const storageMeta = await _uploadExportFilesToStorage({
         jsonBuffer,
@@ -311,7 +311,7 @@ async function _uploadExportFilesToStorage({ jsonBuffer, xlsxBuffer, jsonFileNam
 }
 
 function _buildWorkbook(payload) {
-    const wb = XLSX.utils.book_new();
+    const wb = new ExcelJS.Workbook();
     _appendSheet(wb, 'Summary', _objectToKeyValueRows({
         calculation_run_id: payload.calculation_run_id,
         calculation_version: payload.calculation_version,
@@ -812,7 +812,13 @@ function _flatten(row) {
 
 function _appendSheet(workbook, name, rows) {
     const safeRows = Array.isArray(rows) && rows.length ? rows : [{ note: 'No data available' }];
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(safeRows), name.slice(0, 31));
+    const columnKeys = Array.from(safeRows.reduce((set, row) => {
+        Object.keys(row || {}).forEach((k) => set.add(k));
+        return set;
+    }, new Set()));
+    const ws = workbook.addWorksheet(name.slice(0, 31));
+    ws.columns = columnKeys.map((key) => ({ header: key, key, width: 20 }));
+    ws.addRows(safeRows);
 }
 
 function _objectToKeyValueRows(obj) {

@@ -6,7 +6,11 @@ const bcrypt = require('bcrypt');
 async function login(req, res) {
   try {
     const { email, password } = req.body;
-    const ipAddress = req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown';
+    // req.ip (not the raw x-forwarded-for header) — Express resolves this
+    // using the trusted-proxy hop count set via app.set('trust proxy', 1),
+    // so a client can't just send an arbitrary X-Forwarded-For to make every
+    // failed login look like a different IP and defeat the lockout below.
+    const ipAddress = req.ip || 'unknown';
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });

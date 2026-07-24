@@ -19,9 +19,11 @@ app.use(pinoHttp({
   },
 }));
 
-// Secure backend HTTP headers using Helmet (with CSP disabled for API-frontend routing compatibility)
-// TODO: Review and enable CSP policies in production if client hosts scripts directly
-app.use(helmet({ contentSecurityPolicy: false }));
+// Secure backend HTTP headers using Helmet. CSP only affects browser-rendered
+// HTML (this is a pure JSON API for every route except /api-docs, which gets
+// its own, more permissive policy below since Swagger UI needs inline
+// scripts/styles) — helmet's default policy is safe to enable app-wide.
+app.use(helmet());
 
 // CORS Policy Lockdown using env variables
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000')
@@ -30,13 +32,21 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000')
   .filter(Boolean);
 const allowAnyOrigin = allowedOrigins.includes('*');
 
+// Matches ONLY a genuine http(s)://localhost[:port] or http(s)://127.0.0.1[:port]
+// origin — not any string that merely contains the substring "localhost"
+// (the old check would wrongly allow e.g. http://localhost.attacker.io).
+const LOCALHOST_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+const allowsAnyLocalhostPort = allowedOrigins.some(o => LOCALHOST_ORIGIN_RE.test(o));
+
 function isCorsOriginAllowed(origin) {
   if (!origin) return true;
   if (allowAnyOrigin) return true;
-
-  return allowedOrigins.some(allowedUrl =>
-    origin === allowedUrl || (allowedUrl.includes('localhost') && origin.includes('localhost'))
-  );
+  if (allowedOrigins.includes(origin)) return true;
+  // Dev convenience: any localhost port is allowed once at least one
+  // localhost origin is configured, so new local frontend ports don't need
+  // an .env change — but exact-match only, never substring.
+  if (allowsAnyLocalhostPort && LOCALHOST_ORIGIN_RE.test(origin)) return true;
+  return false;
 }
 
 app.use(cors({
@@ -54,16 +64,58 @@ app.use(cors({
 const webhookRoutes = require('./routes/webhook.routes');
 app.use('/api/webhooks', webhookRoutes);
 
-app.use(express.json({ limit: '20mb' }));
-app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+// 20mb was an unnecessarily large default for a JSON API — file uploads go
+// through multer (its own fileSize limit), not this JSON/urlencoded parser.
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
 const swaggerUi = require('swagger-ui-express');
 const fs = require('fs');
+const crypto = require('crypto');
+
+// /api-docs exposes the full API surface/schema and was previously reachable
+// pre-auth by anyone. A JWT Bearer check doesn't work here (browsers can't
+// attach an Authorization header on a plain navigation to the URL), so this
+// gates it with HTTP Basic Auth instead — fails closed (blocks entirely) if
+// SWAGGER_DOCS_USER/PASSWORD aren't configured, rather than falling open.
+function swaggerBasicAuth(req, res, next) {
+  const expectedUser = process.env.SWAGGER_DOCS_USER;
+  const expectedPass = process.env.SWAGGER_DOCS_PASSWORD;
+  if (!expectedUser || !expectedPass) {
+    return res.status(503).json({ error: 'API docs are not available (SWAGGER_DOCS_USER/PASSWORD not configured).' });
+  }
+
+  const header = req.headers.authorization || '';
+  const [scheme, encoded] = header.split(' ');
+  if (scheme === 'Basic' && encoded) {
+    const [user, pass] = Buffer.from(encoded, 'base64').toString('utf8').split(':');
+    const userBuf = Buffer.from(String(user || ''));
+    const passBuf = Buffer.from(String(pass || ''));
+    const expectedUserBuf = Buffer.from(expectedUser);
+    const expectedPassBuf = Buffer.from(expectedPass);
+    const userMatches = userBuf.length === expectedUserBuf.length && crypto.timingSafeEqual(userBuf, expectedUserBuf);
+    const passMatches = passBuf.length === expectedPassBuf.length && crypto.timingSafeEqual(passBuf, expectedPassBuf);
+    if (userMatches && passMatches) return next();
+  }
+
+  res.setHeader('WWW-Authenticate', 'Basic realm="API Docs"');
+  return res.status(401).json({ error: 'Authentication required to view API docs.' });
+}
 
 try {
   const swaggerDocument = JSON.parse(fs.readFileSync('./docs/swagger.json', 'utf8'));
-  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
-  console.log("Swagger UI mounted cleanly at /api-docs");
+  // Swagger UI's bundled assets need inline scripts/styles — scope a more
+  // permissive CSP to just this route rather than weakening the app-wide default.
+  const swaggerCsp = helmet.contentSecurityPolicy({
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:'],
+    },
+  });
+  app.use('/api-docs', swaggerBasicAuth, swaggerCsp, swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+  console.log("Swagger UI mounted cleanly at /api-docs (behind Basic Auth)");
 } catch (e) {
   console.log("Swagger JSON not found at ./docs/swagger.json. Run node scripts/generate_swagger.js");
 }
@@ -153,7 +205,18 @@ const uploadLimiter = rateLimit({
   message: { error: 'Too many file uploads from this IP, please try again after 15 minutes.' }
 });
 
+// Conservative default for every route not covered by a more specific
+// limiter below — previously only login/OTP/upload had any limit at all.
+const defaultLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please slow down.' }
+});
+
 const apiRouter = express.Router();
+apiRouter.use(defaultLimiter);
 
 // Specific rate limiters for sensitive endpoints
 apiRouter.use('/auth/login', loginLimiter);
@@ -202,7 +265,6 @@ apiRouter.use('/msme/auth', directCustomerAuthRoutes);
 apiRouter.use('/msme', directCustomerRoutes);
 apiRouter.use('/admin/msme-cases', adminDirectCustomerRoutes);
 
-app.use((req, res, next) => { if (req.url.includes('clone')) require('fs').appendFileSync('clone_debug.json', new Date() + ' ' + req.method + ' ' + req.url + '\n'); next(); });
 app.use('/api', apiRouter);
 
 app.use((err, req, res, next) => {

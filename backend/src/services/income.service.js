@@ -1,4 +1,5 @@
 const prisma = require('../../config/db');
+const { Decimal } = require('@prisma/client');
 const { markEsrInputsChanged } = require('./esrSnapshotMutation.service');
 
 function parseNumericInput(value, fieldName) {
@@ -58,8 +59,7 @@ async function getIncomeSummary(case_id, tenant_id) {
 
   // Fallback to analytics_payload for legacy records that predate the snapshot columns
   if (netProfitLatest === null && itrReq?.analytics_payload) {
-    const payload = typeof itrReq.analytics_payload === 'string'
-      ? JSON.parse(itrReq.analytics_payload) : itrReq.analytics_payload;
+    const payload = safeJsonParse(itrReq.analytics_payload, {});
     netProfitLatest = payload?.net_profit || payload?.netProfit || null;
   }
 
@@ -79,13 +79,17 @@ async function getIncomeSummary(case_id, tenant_id) {
       ? (applicantDisplayName(applicantById.get(entry.applicant_id)) || entry.applicant_label || 'Applicant')
       : 'Entity'
   }));
-  const manualTotal = manualEntries.reduce((sum, e) => sum + (Number(e.annual_amount) || 0), 0);
+  const manualTotal = manualEntries
+    .reduce((sum, e) => sum.plus(new Decimal(e.annual_amount || 0)), new Decimal(0))
+    .toNumber();
 
   // ── Obligations total ─────────────────────────────────────────────────────
-  const totalEmiPerMonth = caseRecord.obligations.reduce((sum, o) => sum + (Number(o.emi_per_month) || 0), 0);
+  const totalEmiPerMonth = caseRecord.obligations
+    .reduce((sum, o) => sum.plus(new Decimal(o.emi_per_month || 0)), new Decimal(0))
+    .toNumber();
 
   // ── Combined income = ITR net profit + manual ─────────────────────────────
-  const combinedAnnualIncome = (Number(netProfitLatest) || 0) + manualTotal;
+  const combinedAnnualIncome = new Decimal(netProfitLatest || 0).plus(manualTotal).toNumber();
 
   return {
     api_data: {

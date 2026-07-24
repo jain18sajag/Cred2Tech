@@ -1,3 +1,5 @@
+const { safeJsonParse } = require('../utils/safeJsonParse');
+
 const toNum = (v) => {
     if (v === undefined || v === null || v === '') return null;
     const n = Number(String(v).replace(/[₹,\s%]/g, ''));
@@ -210,13 +212,13 @@ function extractAllGstSummaries(rawFetchData, rawReportData) {
     };
 
     if (rawFetchData) {
-        const rawFetch = typeof rawFetchData === 'string' ? JSON.parse(rawFetchData) : rawFetchData;
+        const rawFetch = safeJsonParse(rawFetchData, {});
         pushSummaries(parseGstr1(rawFetch), 'GSTR1');
         pushSummaries(parseGstr3b(rawFetch), 'GSTR3B');
     }
 
     if (rawReportData) {
-        const rawReport = typeof rawReportData === 'string' ? JSON.parse(rawReportData) : rawReportData;
+        const rawReport = safeJsonParse(rawReportData, {});
         pushSummaries(parseProviderReport(rawReport), 'PROVIDER_REPORT');
     }
 
@@ -227,7 +229,7 @@ function extractAllGstSummaries(rawFetchData, rawReportData) {
  * Backward compatible extractGstDetails (used by ESR and Proposal).
  */
 function extractGstDetails(rawGstData) {
-    const raw = typeof rawGstData === 'string' ? JSON.parse(rawGstData) : rawGstData;
+    const raw = safeJsonParse(rawGstData, {});
     const summaries = extractAllGstSummaries(null, raw); // Old behaviour mostly used the report
     
     // We recreate the old signature by reading from PROVIDER_REPORT

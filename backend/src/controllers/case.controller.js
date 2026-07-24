@@ -244,8 +244,8 @@ async function getPipeline(req, res) {
 
     const result = await caseService.getPipeline(tenant_id, {
       search, stage, lender, entity_type, alert, sort_by, sort_order,
-      page: parseInt(page) || 1,
-      limit: parseInt(limit) || 10
+      page: parseInt(page, 10) || 1,
+      limit: parseInt(limit, 10) || 10
     }, req.user);
 
     res.json(result);
@@ -407,7 +407,7 @@ async function uploadBulkCases(req, res) {
 
   } catch (error) {
     console.error('Bulk upload error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Internal server error during upload' });
+    res.status(500).json({ success: false, message: 'Internal server error during upload' });
   }
 }
 

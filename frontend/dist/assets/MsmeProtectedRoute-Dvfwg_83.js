@@ -1,0 +1,1 @@
+import{D as r,j as e,e as i,N as n,O as a}from"./index-DMP4Edla.js";const u=()=>{const{user:s,loading:t}=r();return t?e.jsx("div",{className:"flex-1 flex items-center justify-center min-h-[50vh]",children:e.jsx(i,{size:40})}):s?e.jsx(a,{}):e.jsx(n,{to:"/msme/login",replace:!0})};export{u as default};

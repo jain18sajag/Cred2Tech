@@ -6,3 +6,9 @@ node_modules
 
 /uploads
 /logs
+
+# Debug/scratch artifacts that shouldn't be committed (VAPT L-4)
+clone_debug.json
+*.out.log
+drop_schema.sql
+.DS_Store

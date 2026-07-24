@@ -9,6 +9,24 @@ const { Decimal } = require('@prisma/client');
  * Transitions stage to PARTLY_DISBURSED or DISBURSED.
  */
 async function recordDisbursement(caseId, tenantId, payload, userId, idempotencyKey = null) {
+    // Serializable transactions can raise a serialization-failure error under
+    // genuine concurrent conflict (Postgres 40001 / Prisma P2034) — that's the
+    // isolation level doing its job, not a bug. Retry once: a retry re-reads
+    // the now-committed state and re-validates the remaining-amount guard.
+    const MAX_ATTEMPTS = 3;
+    let lastError;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+            return await recordDisbursementOnce(caseId, tenantId, payload, userId, idempotencyKey);
+        } catch (err) {
+            lastError = err;
+            if (err.code !== 'P2034' || attempt === MAX_ATTEMPTS) throw err;
+        }
+    }
+    throw lastError;
+}
+
+async function recordDisbursementOnce(caseId, tenantId, payload, userId, idempotencyKey = null) {
     const {
         amount,
         disbursement_date,
@@ -150,6 +168,14 @@ async function recordDisbursement(caseId, tenantId, payload, userId, idempotency
         await processDisbursementCommission(tenantId, caseId, disbursement, sanction, userId, tx);
 
         return disbursement;
+    }, {
+        // Read-Committed (the default) lets two concurrent tranches both read
+        // the same pre-insert total and both pass the remaining-amount check,
+        // over-disbursing past the sanctioned amount. Serializable forces one
+        // of them to abort and retry instead (see recordDisbursement above).
+        isolationLevel: 'Serializable',
+        maxWait: 5000,
+        timeout: 15000
     });
 
     await salesIncentiveService.calculateIncentives(tenantId, {

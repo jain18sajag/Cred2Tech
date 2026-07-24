@@ -44,8 +44,12 @@ router.post('/create', caseController.createCase);
 router.post('/create-from-existing', caseController.createFromExisting);
 
 // POST /cases/bulk-legacy-upload
+// Lets the caller set cibil_score/bureau scores/ESR financials directly and
+// marks the case as already ESR-generated — restricted to trusted migration
+// roles only (was reachable by MSME_CUSTOMER/DSA_MEMBER via the router-level
+// gate above, letting a customer fabricate their own creditworthiness).
 const legacyUploadController = require('../controllers/legacyUpload.controller');
-router.post('/bulk-legacy-upload', legacyUploadController.bulkUploadLegacyCases);
+router.post('/bulk-legacy-upload', requireRole('DSA_ADMIN', 'SUPER_ADMIN'), legacyUploadController.bulkUploadLegacyCases);
 
 // GET /cases/bulk-upload/template
 router.get('/bulk-upload/template', caseController.downloadBulkTemplate);

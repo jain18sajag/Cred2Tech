@@ -101,13 +101,18 @@ async function attachDocs(req, res) {
 
 async function detachDoc(req, res) {
     try {
+        const case_id = parseInt(req.params.id, 10);
         const proposal_id = parseInt(req.params.pid, 10);
         const document_id = parseInt(req.params.docId, 10);
-        await proposalService.detachDocumentFromProposal({
+        const result = await proposalService.detachDocumentFromProposal({
             proposal_id,
             document_id,
+            case_id,
             tenant_id: req.user.tenant_id,
         });
+        if (!result.success) {
+            return res.status(404).json({ error: 'Proposal document not found' });
+        }
         res.json({ success: true });
     } catch (err) {
         console.error('[Proposal] detachDoc error:', err.message);
@@ -159,7 +164,7 @@ async function send(req, res) {
         res.json({ success: true, ...result });
     } catch (err) {
         console.error('[Proposal] send error:', err.message);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: 'Failed to send proposal.' });
     }
 }
 

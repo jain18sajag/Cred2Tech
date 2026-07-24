@@ -1,4 +1,5 @@
 const prisma = require('../../config/db');
+const { encryptString } = require('../utils/fieldEncryption');
 
 function parseNumericInput(value, fieldName) {
   if (value === undefined || value === null || value === '') return null;
@@ -24,6 +25,14 @@ async function createCase(customer_id, product_type, tenant_id, user_id) {
     include: { role: true }
   });
   const isMsme = user && user.role?.name === 'MSME_CUSTOMER';
+
+  // Direct MSME customers share one tenant with every other direct customer,
+  // so tenant_id alone doesn't stop one MSME user from "adopting" another
+  // MSME user's customer record into a case they'd then own via
+  // msme_customer_user_id below (case-hijacking BOLA).
+  if (isMsme && customer.created_by_user_id !== user_id) {
+    throw Object.assign(new Error('Customer not found or unauthorized.'), { status: 403 });
+  }
 
   // Idempotency check: Look for an existing DRAFT case for this customer in the last 24 hours
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -53,12 +62,16 @@ async function createCase(customer_id, product_type, tenant_id, user_id) {
       lead_source: isMsme ? 'DIRECT_MSME' : 'DSA',
       msme_customer_user_id: isMsme ? user_id : null,
       applicants: {
+        // NOTE: nested writes bypass the Applicant model's own Prisma query
+        // extensions (config/db.js's encryption hooks only intercept
+        // top-level `prisma.applicant.*` calls) — pan_number is encrypted
+        // explicitly here instead.
         create: {
           type: 'PRIMARY',
           is_primary: true,   // FIXED: was missing, causing Case.cibil_score to never update
           mobile: customer.business_mobile,
           email: customer.business_email,
-          pan_number: customer.business_pan,
+          pan_number: encryptString(customer.business_pan, { deterministic: true }),
           pincode: customer.pan_profiles?.[0]?.principal_pincode || null,
           otp_verified: customer.mobile_verified || false // Security Fix: Remove || true bypass
         }
@@ -153,6 +166,10 @@ async function createSalariedCase({ business_pan, business_name, business_mobile
         stage: 'DRAFT',
         customer_name: customer.business_name,
         entity_type: customer.entity_type,
+        // NOTE: nested write bypasses the Applicant model's own Prisma query
+        // extensions (config/db.js's encryption hooks only intercept
+        // top-level `prisma.applicant.*` calls) — pan_number is encrypted
+        // explicitly here instead.
         applicants: {
           create: {
             type: 'PRIMARY',
@@ -161,7 +178,7 @@ async function createSalariedCase({ business_pan, business_name, business_mobile
             name: customer.business_name,
             mobile: customer.business_mobile,
             email: customer.business_email,
-            pan_number: customer.business_pan,
+            pan_number: encryptString(customer.business_pan, { deterministic: true }),
             otp_verified: customer.mobile_verified || false
           }
         }
@@ -1681,7 +1698,9 @@ async function reuseApplicant(caseId, sourceApplicantId, tenantId, userId) {
 }
 
 async function removeApplicant(caseId, applicantId, tenantId) {
-  return await prisma.$transaction(async (tx) => {
+  const { getStorageProvider } = require('./storage/index');
+
+  const { docsToDelete, ...result } = await prisma.$transaction(async (tx) => {
     const targetCase = await tx.case.findFirst({
       where: { id: parseInt(caseId, 10), tenant_id: tenantId }
     });
@@ -1693,6 +1712,14 @@ async function removeApplicant(caseId, applicantId, tenantId) {
     });
     if (!app) throw new Error('Applicant not found in this case.');
     if (app.type === 'PRIMARY') throw new Error('Cannot remove primary applicant.');
+
+    // Capture storage locations before the rows are deleted — DPDP
+    // right-to-erasure requires the physical files to go too, not just the
+    // DB rows (previously left orphaned on disk/S3 indefinitely).
+    const docsToDelete = await tx.document.findMany({
+      where: { applicant_id: app.id },
+      select: { storage_provider: true, storage_path: true }
+    });
 
     // Delete cascading references inside this case only
     await tx.caseIncomeEntry.deleteMany({ where: { applicant_id: app.id } });
@@ -1706,8 +1733,23 @@ async function removeApplicant(caseId, applicantId, tenantId) {
 
     await tx.applicant.delete({ where: { id: app.id } });
 
-    return { success: true, message: 'Applicant removed.' };
+    return { success: true, message: 'Applicant removed.', docsToDelete };
   });
+
+  // Physical file removal happens after the DB transaction commits — an
+  // external I/O call (disk/S3) can't be rolled back if committed mid-tx,
+  // and a storage failure shouldn't fail applicant removal (best-effort,
+  // matching document.service.js's own deleteDocument).
+  for (const doc of docsToDelete) {
+    try {
+      const storage = getStorageProvider(doc.storage_provider);
+      await storage.delete(doc.storage_path);
+    } catch (err) {
+      console.error(`[case.service] Storage delete failed during applicant removal for key=${doc.storage_path}: ${err.message}`);
+    }
+  }
+
+  return result;
 }
 
 async function allocateDsaUser(caseId, tenantId, targetUserId, currentUser) {

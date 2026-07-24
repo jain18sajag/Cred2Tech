@@ -4,6 +4,8 @@ const gstService = require('../services/externalApis/gst.service');
 const documentService = require('../services/document.service');
 const { extractGstDetails } = require('../services/financial.extractor');
 const { determineNotificationRecipient } = require('../services/notification.service');
+const { safeGet } = require('../utils/ssrf');
+const { generateWebhookToken, appendWebhookToken, verifyWebhookToken } = require('../utils/webhookToken');
 
 
 // Helper: extract latest + previous financial year turnover from raw GST JSON
@@ -118,6 +120,9 @@ async function createGstRequest(req, res) {
                 let authLink = null;
                 let requestId = null;
                 let message = '';
+                // Generated before we know Signzy's requestId, so it has to be an
+                // opaque secret we mint ourselves rather than derived from the ID.
+                const webhookToken = generateWebhookToken();
 
                 if (mode === 'AUTH_LINK') {
                     // Signzy will ping the callback URL synchronously to verify reachability.
@@ -125,7 +130,7 @@ async function createGstRequest(req, res) {
                     const isLocal = process.env.APP_BASE_URL && process.env.APP_BASE_URL.includes('localhost');
                     const callbackUrl = isLocal
                         ? "https://webhook.site/dummy-callback-for-localhost"
-                        : process.env.APP_BASE_URL + "/api/external/webhooks/signzy/gst";
+                        : appendWebhookToken(process.env.APP_BASE_URL + "/api/external/webhooks/signzy/gst", webhookToken);
 
                     const authLinkPayload = {
                         gstin,
@@ -146,7 +151,7 @@ async function createGstRequest(req, res) {
                     status = 'AUTH_LINK_CREATED';
                 } else {
                     // IN_SYSTEM setup
-                    const callbackUrl = process.env.APP_BASE_URL + "/api/external/webhooks/signzy/gst";
+                    const callbackUrl = appendWebhookToken(process.env.APP_BASE_URL + "/api/external/webhooks/signzy/gst", webhookToken);
                     const payload = {
                         gstin,
                         username,
@@ -190,7 +195,10 @@ async function createGstRequest(req, res) {
                         pdf_url_requested: pdf_url || false,
                         emails: emails || [],
                         mobile_numbers: mobile_numbers || [],
-                        callback_url: mode === 'AUTH_LINK' || mode === 'IN_SYSTEM' ? (process.env.APP_BASE_URL + "/api/external/webhooks/signzy/gst") : null,
+                        callback_url: mode === 'AUTH_LINK' || mode === 'IN_SYSTEM'
+                            ? appendWebhookToken(process.env.APP_BASE_URL + "/api/external/webhooks/signzy/gst", webhookToken)
+                            : null,
+                        webhook_token: webhookToken,
                         provider_request_id: requestId,
                         auth_link: authLink,
                         status: status,
@@ -363,8 +371,7 @@ async function syncGstData(req, res) {
                     let rawReportData = undefined;
                     if (reportRes.jsonDataUrl) {
                         try {
-                            const axios = require('axios');
-                            const downloader = await axios.get(reportRes.jsonDataUrl);
+                            const downloader = await safeGet(reportRes.jsonDataUrl, { timeout: 30000 });
                             rawReportData = downloader.data;
                         } catch (err) { console.error("[Sync] Failed to download JSON payload:", err.message); }
                     }
@@ -429,16 +436,18 @@ function hasUsableGstFetchPayload(dataRes) {
     return false;
 }
 
-// Webhook Receiver (No JWT verify)
+// Webhook Receiver — authenticated via the `wt` token we embedded in the
+// callbackUrl at request-creation time (Signzy itself signs nothing).
 async function handleSignzyCallback(req, res) {
+    let claimedRequestId = null; // set once we successfully claim the row, used to release it if processing crashes
     try {
         const payload = req.body;
-        console.log("GST Webhook Payload: ", payload);
         // e.g., payload = { result: { requestId, status, ... } }
         const resultObj = payload.result || payload;
 
         const providerRequestId = resultObj.requestId;
         if (!providerRequestId) return res.status(400).json({ error: "Missing requestId in webhook payload" });
+        console.log(`[GST Webhook] Received callback for requestId=${providerRequestId}, status=${resultObj.status || 'unknown'}`);
 
         let dbReq = await prisma.gstrAnalyticsRequest.findUnique({
             where: { provider_request_id: providerRequestId }
@@ -452,10 +461,30 @@ async function handleSignzyCallback(req, res) {
             return res.status(200).send("OK");
         }
 
-        if (dbReq.status === 'COMPLETED' || dbReq.status === 'REPORT_READY') {
-            console.log(`[Webhook] Duplicate callback ignored for DB ID: ${dbReq.id}`);
+        if (!verifyWebhookToken(dbReq.webhook_token, req.query.wt)) {
+            console.warn(`[GST Webhook] Invalid/missing webhook token for requestId=${providerRequestId}. Rejecting.`);
+            return res.status(403).json({ error: 'Invalid webhook token' });
+        }
+
+        // Atomic claim: a plain read-then-branch (the old `dbReq.status === ...`
+        // check alone) is a TOCTOU race — Signzy retries webhooks liberally, and
+        // two near-simultaneous deliveries could both read a non-terminal status
+        // and both proceed to re-download + re-process. This single UPDATE only
+        // succeeds for whichever request is first to move the row out of every
+        // non-terminal state; Postgres row locking guarantees only one concurrent
+        // UPDATE can win that WHERE clause.
+        const claim = await prisma.gstrAnalyticsRequest.updateMany({
+            where: {
+                provider_request_id: providerRequestId,
+                status: { notIn: ['COMPLETED', 'REPORT_READY', 'CALLBACK_RECEIVED'] }
+            },
+            data: { status: 'CALLBACK_RECEIVED' }
+        });
+        if (claim.count === 0) {
+            console.log(`[Webhook] Duplicate/concurrent callback ignored (already claimed or terminal) for DB ID: ${dbReq.id}`);
             return res.status(200).send("OK");
         }
+        claimedRequestId = providerRequestId;
 
         const jUrl = resultObj.data?.jsonDataUrl || resultObj.jsonDataUrl;
         const pUrl = resultObj.data?.pdfUrl || resultObj.pdfUrl;
@@ -465,8 +494,7 @@ async function handleSignzyCallback(req, res) {
         let dataDownloaded = false;
         if (jUrl) {
             try {
-                const axios = require('axios');
-                const downloader = await axios.get(jUrl);
+                const downloader = await safeGet(jUrl, { timeout: 30000 });
                 rawReportData = downloader.data;
                 dataDownloaded = true;
                 console.log(`[Webhook] Successfully downloaded JSON data. Size: ${JSON.stringify(rawReportData).length} chars`);
@@ -555,6 +583,15 @@ async function handleSignzyCallback(req, res) {
         return res.status(200).json({ received: true });
     } catch (error) {
         console.error("Signzy GST Webhook Error:", error);
+        if (claimedRequestId) {
+            // Release the claim so Signzy's retry (it gets a 500 here) can
+            // actually reprocess instead of being permanently stuck at
+            // CALLBACK_RECEIVED by the atomic-claim check above.
+            await prisma.gstrAnalyticsRequest.updateMany({
+                where: { provider_request_id: claimedRequestId, status: 'CALLBACK_RECEIVED' },
+                data: { status: 'PROCESSING' }
+            }).catch((releaseErr) => console.error('[GST Webhook] Failed to release claim:', releaseErr.message));
+        }
         return res.status(500).json({ error: "Internal processing error" });
     }
 }

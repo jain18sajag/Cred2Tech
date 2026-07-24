@@ -1,4 +1,5 @@
 const prisma = require('../../config/db');
+const { Decimal } = require('@prisma/client');
 const { markEsrInputsChanged } = require('./esrSnapshotMutation.service');
 const { dedupeObligations } = require('../utils/obligationDedup');
 
@@ -124,7 +125,9 @@ async function getObligations(case_id, tenant_id) {
   // Group by applicant
   const grouped = caseRecord.applicants.map(app => {
     const appObligations = caseRecord.obligations.filter(o => o.applicant_id === app.id);
-    const totalEmi = appObligations.reduce((sum, o) => sum + (Number(o.emi_per_month) || 0), 0);
+    const totalEmi = appObligations
+      .reduce((sum, o) => sum.plus(new Decimal(o.emi_per_month || 0)), new Decimal(0))
+      .toNumber();
     return {
       applicant: {
         id:            app.id,
@@ -142,7 +145,9 @@ async function getObligations(case_id, tenant_id) {
 
   const allActive = caseRecord.obligations;
   const dedupedActive = dedupeObligations(allActive);
-  const combinedEmi = dedupedActive.obligations.reduce((sum, o) => sum + (Number(o.emi_per_month) || 0), 0);
+  const combinedEmi = dedupedActive.obligations
+    .reduce((sum, o) => sum.plus(new Decimal(o.emi_per_month || 0)), new Decimal(0))
+    .toNumber();
   const allScores = caseRecord.applicants.map(a => a.cibil_score).filter(Boolean);
   const lowestCibil = allScores.length ? Math.min(...allScores) : null;
 

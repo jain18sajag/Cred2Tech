@@ -1,6 +1,7 @@
 const prisma = require('../../../config/db');
 const { updateStage } = require('../case.service');
 const EsrTraceLogger = require('./esrTraceLogger');
+const { safeJsonParse } = require('../../utils/safeJsonParse');
 const EsrCalculationLogBuilder = require('./esrCalculationLogBuilder');
 const { buildIncomeCalculationLog } = require('./incomeCalculationLogBuilder');
 const { persistEsrCalculationLog } = require('./esrCalculationLog.service');
@@ -2535,7 +2536,7 @@ function getApplicantAge(app) {
             const check = app.bureau_checks[0];
             if (check.raw_response) {
                 try {
-                    const rawBureau = typeof check.raw_response === 'string' ? JSON.parse(check.raw_response) : check.raw_response;
+                    const rawBureau = safeJsonParse(check.raw_response, {});
                     const ageVal = rawBureau?.verifiedData?.ResponseData?.data?.age;
                     if (ageVal) appAge = Number(ageVal);
                 } catch { }

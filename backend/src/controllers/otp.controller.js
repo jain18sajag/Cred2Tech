@@ -11,10 +11,13 @@ const otpController = {
         return res.status(400).json({ error: 'Missing required OTP send parameters' });
       }
 
-      const result = await otpService.sendOtp(mobile, purpose, target_type, parseInt(target_id), tenantId, userId);
+      const targetId = parseInt(target_id, 10);
+      await otpService.assertOtpTargetOwnership(target_type, targetId, req.user);
+
+      const result = await otpService.sendOtp(mobile, purpose, target_type, targetId, tenantId, userId);
       res.json(result);
     } catch (error) {
-      next(error);
+      res.status(error.status || 400).json({ error: error.message });
     }
   },
 
@@ -27,10 +30,13 @@ const otpController = {
         return res.status(400).json({ error: 'Missing required OTP verification parameters' });
       }
 
-      const result = await otpService.verifyOtp(otp, target_type, parseInt(target_id), tenantId);
+      const targetId = parseInt(target_id, 10);
+      await otpService.assertOtpTargetOwnership(target_type, targetId, req.user);
+
+      const result = await otpService.verifyOtp(otp, target_type, targetId, tenantId);
       res.json(result);
     } catch (error) {
-      res.status(400).json({ error: error.message });
+      res.status(error.status || 400).json({ error: error.message });
     }
   },
 
@@ -44,10 +50,13 @@ const otpController = {
         return res.status(400).json({ error: 'Missing required OTP resend parameters' });
       }
 
-      const result = await otpService.resendOtp(mobile, purpose, target_type, parseInt(target_id), tenantId, userId);
+      const targetId = parseInt(target_id, 10);
+      await otpService.assertOtpTargetOwnership(target_type, targetId, req.user);
+
+      const result = await otpService.resendOtp(mobile, purpose, target_type, targetId, tenantId, userId);
       res.json(result);
     } catch (error) {
-      res.status(400).json({ error: error.message });
+      res.status(error.status || 400).json({ error: error.message });
     }
   }
 };

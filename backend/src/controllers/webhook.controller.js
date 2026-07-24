@@ -35,11 +35,22 @@ async function handleRazorpayWebhook(req, res) {
       });
     } catch (dbError) {
       if (dbError.code === 'P2002') {
-        // Unique constraint violation -> Already processed this event ID.
-        // Return 200 to acknowledge Razorpay safely without reprocessing.
-        return res.status(200).send('Event already processed');
+        // A row for this event ID already exists — but that only means a
+        // PRIOR delivery reached this point, not that it finished. If the
+        // process crashed/errored between here and the `processed: true`
+        // update below (e.g. mid wallet-credit), short-circuiting on the row's
+        // mere existence would ack Razorpay with 200 and silently drop the
+        // credit forever, since Razorpay never retries a 200. Only skip
+        // reprocessing when `processed` is actually true.
+        const existing = await prisma.razorpayWebhookEvent.findUnique({ where: { razorpay_event_id: eventId } });
+        if (existing?.processed) {
+          return res.status(200).send('Event already processed');
+        }
+        // else: fall through and reprocess — all downstream steps below are
+        // themselves idempotent (status-checked topup updates, dedup'd wallet credit).
+      } else {
+        throw dbError; // unexpected db error
       }
-      throw dbError; // unexpected db error
     }
 
     const paymentEntity = payload.payload.payment.entity;

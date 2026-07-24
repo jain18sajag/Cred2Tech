@@ -1,8 +1,10 @@
 const express = require('express');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const router = express.Router();
 const externalApiController = require('../controllers/externalApi.controller');
 const panController = require('../controllers/external.pan.controller');
 const { authenticate } = require('../middleware/auth.middleware');
+const { requireRole } = require('../middleware/role.middleware');
 
 const gstController = require('../controllers/external.gst.controller');
 const itrAnalyticsController = require('../controllers/external.itrAnalytics.controller');
@@ -13,6 +15,22 @@ router.post('/webhooks/signzy/gst', express.json(), gstController.handleSignzyCa
 router.post('/webhooks/signzy/bank', express.json(), bankController.handleSignzyCallback);
 
 router.use(authenticate);
+
+// Every route below hits a paid/costly vendor API (bureau, PAN, ITR, bank,
+// GST). Previously these had no role gate and no rate limit at all — any
+// authenticated user (including a self-registered customer) could drive
+// unlimited paid vendor calls. Keyed per-user (not per-IP) since the concern
+// is one account hammering the vendor, not one network address.
+const costlyApiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.user?.id ? `user:${req.user.id}` : ipKeyGenerator(req.ip)),
+  message: { error: 'Too many external verification requests. Please try again after 15 minutes.' }
+});
+router.use(costlyApiLimiter);
+router.use(requireRole('SUPER_ADMIN', 'CRED2TECH_MEMBER', 'DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA', 'MSME_CUSTOMER'));
 
 router.post('/bureau-pull', externalApiController.bureauPull);
 

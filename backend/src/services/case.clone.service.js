@@ -1,6 +1,14 @@
 // backend/src/services/case.clone.service.js
 
+const crypto = require('crypto');
 const prisma = require('../../config/db');
+
+// Math.random().toString(36) isn't cryptographically random; these suffixes
+// aren't security tokens (just collision-avoidance on cloned record IDs),
+// but there's no reason not to use a properly random source. Keeps the same
+// short length as the old suffix rather than a full UUID, since these are
+// interpolated into columns that historically only ever held ~7-char suffixes.
+const cloneSuffix = () => crypto.randomBytes(6).toString('hex');
 
 /**
  * Deep clones a parent ESR case into a lender-specific child case.
@@ -303,7 +311,7 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
           applicant_id: childApplicantId,
           applicant_type: b.applicant_type,
           // request_id must be unique — append clone marker
-          request_id: `${b.request_id}_CLONE_${Math.random().toString(36).substring(2, 9)}`,
+          request_id: `${b.request_id}_CLONE_${cloneSuffix()}`,
           stan: b.stan,
           mobile_number: b.mobile_number,
           score: b.score,
@@ -323,7 +331,7 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
           case_id: childCase.id,
           applicant_id: b.applicant_id ? (applicantIdMap[b.applicant_id] || null) : null,
           // report_id must be unique — append clone marker
-          report_id: b.report_id ? `${b.report_id}_CLONE_${Math.random().toString(36).substring(2, 9)}` : null,
+          report_id: b.report_id ? `${b.report_id}_CLONE_${cloneSuffix()}` : null,
           status: b.status,
           provider_message: b.provider_message,
           report_json_url: b.report_json_url,
@@ -348,7 +356,7 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
           applicant_id: i.applicant_id ? (applicantIdMap[i.applicant_id] || null) : null,
           pan: i.pan,
           // reference_id must be unique — append clone marker
-          reference_id: i.reference_id ? `${i.reference_id}_CLONE_${Math.random().toString(36).substring(2, 9)}` : null,
+          reference_id: i.reference_id ? `${i.reference_id}_CLONE_${cloneSuffix()}` : null,
           status: i.status,
           provider_message: i.provider_message,
           excel_url: i.excel_url,
@@ -382,7 +390,7 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
           pdf_url_requested: g.pdf_url_requested ?? false,
           // provider_request_id must be unique — append clone marker
           provider_request_id: g.provider_request_id
-            ? `${g.provider_request_id}_CLONE_${Math.random().toString(36).substring(2, 9)}`
+            ? `${g.provider_request_id}_CLONE_${cloneSuffix()}`
             : null,
           status: g.status,
           provider_message: g.provider_message,

@@ -2,8 +2,8 @@ const prisma = require('../../config/db');
 const { comparePassword, hashPassword } = require('../utils/hash');
 const { generateToken } = require('../utils/jwt');
 const crypto = require('crypto');
-// We would usually import a mailer service here:
-// const mailer = require('./mailer.service');
+const { sendMail } = require('../utils/mailer');
+const { validatePasswordPolicy } = require('../utils/passwordPolicy');
 
 async function loginUser(email, password, ipAddress) {
   const normalizedEmail = email.toLowerCase().trim();
@@ -121,8 +121,19 @@ async function initiatePasswordReset(email) {
     }
   });
 
-  console.log(`[Email Service Mock] Password reset link sent to ${email}: /reset-password?token=${rawToken}`);
-  // In production: mailer.sendPasswordReset(email, rawToken);
+  // Previously just console.log'd the raw reset token (H-2/M-2) — never
+  // functional in prod, and the token itself ended up in application logs.
+  const resetUrl = `${(process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '')}/reset-password?token=${rawToken}`;
+  const sent = await sendMail({
+    from: `"${process.env.SMTP_FROM_NAME || 'Cred2Tech Platform'}" <${process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER}>`,
+    to: email,
+    subject: 'Reset your Cred2Tech password',
+    text: `Reset your password using this link (valid for 1 hour): ${resetUrl}\n\nIf you didn't request this, you can safely ignore this email.`,
+    html: `<p>Reset your password using the link below (valid for 1 hour):</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>If you didn't request this, you can safely ignore this email.</p>`,
+  });
+  if (!sent) {
+    console.warn(`[auth.service] Password reset email could not be sent to ${email} — SMTP not configured or send failed. Token was still issued.`);
+  }
 }
 
 async function resetPassword(rawToken, newPassword) {
@@ -136,6 +147,7 @@ async function resetPassword(rawToken, newPassword) {
     throw new Error('Invalid or expired token');
   }
 
+  validatePasswordPolicy(newPassword);
   const newHash = await hashPassword(newPassword);
 
   await prisma.$transaction([

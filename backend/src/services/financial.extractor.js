@@ -1,6 +1,6 @@
 /**
  * financial.extractor.js
- * 
+ *
  * Centralized service for extracting structured financial values from raw JSON payloads.
  * Used by:
  *   - GST callback/sync     → extractGstDetails()
@@ -8,12 +8,14 @@
  *   - Bank webhook/sync     → extractBankDetails()
  *   - Bureau callback       → extractBureauDetails()
  *   - proposal.service.js   → backfillFromRaw() fallback
- * 
+ *
  * Principles:
  *   - Raw JSON is ALWAYS preserved for audit (never deleted)
  *   - Structured columns are the application source (fast, stable)
  *   - If structured columns are null, parse raw once and backfill (never parse repeatedly)
  */
+
+const { safeJsonParse } = require('../utils/safeJsonParse');
 
 const toNum = (v) => {
     if (v === undefined || v === null || v === '') return null;
@@ -77,7 +79,7 @@ function extractItrDetails(analyticsData) {
             _ignored: []
         };
 
-        const rawItr = typeof payload === 'string' ? JSON.parse(payload) : payload;
+        const rawItr = safeJsonParse(payload, {});
         if (!rawItr || typeof rawItr !== 'object') return rawResult;
 
         const yearKeys = Object.keys(rawItr)
@@ -436,7 +438,7 @@ function extractBureauDetails(rawResponse) {
 
     if (!rawResponse) return result;
 
-    const raw = typeof rawResponse === 'string' ? JSON.parse(rawResponse) : rawResponse;
+    const raw = safeJsonParse(rawResponse, {});
 
     // Top-level score (Veri5 / Experian / CRIF shape)
     result.score = toNum(
@@ -518,7 +520,7 @@ async function loadCaseFinancialSnapshot(prisma, case_id) {
         // Backfill if avg_monthly_turnover is null but turnover_latest exists
         if (g.avg_monthly_turnover === null && g.turnover_latest_year !== null) {
             const extracted = g.raw_gst_data
-                ? extractGstDetails(typeof g.raw_gst_data === 'string' ? JSON.parse(g.raw_gst_data) : g.raw_gst_data)
+                ? extractGstDetails(safeJsonParse(g.raw_gst_data, {}))
                 : { avg_monthly_turnover: Number(g.turnover_latest_year) / 12, months_filed_12m: null, nil_return_months: null };
 
             await prisma.$executeRawUnsafe(
@@ -556,7 +558,7 @@ async function loadCaseFinancialSnapshot(prisma, case_id) {
 
         if (r.analytics_payload) {
             const extracted = extractItrDetails(
-                typeof r.analytics_payload === 'string' ? JSON.parse(r.analytics_payload) : r.analytics_payload
+                safeJsonParse(r.analytics_payload, {})
             );
             filing_status_latest = extracted.filing_status_latest || 'Filed';
             filing_status_previous = extracted.filing_status_previous || 'Filed';
@@ -597,7 +599,7 @@ async function loadCaseFinancialSnapshot(prisma, case_id) {
 
             if (b.raw_retrieve_response || b.raw_download_response || b.raw_response_json) {
                 const rawBank = b.raw_retrieve_response || b.raw_download_response || b.raw_response_json;
-                const raw = typeof rawBank === 'string' ? JSON.parse(rawBank) : rawBank;
+                const raw = safeJsonParse(rawBank, {});
                 inMemoryExtracted = extractBankDetails(raw);
             }
 
@@ -635,7 +637,7 @@ async function loadCaseFinancialSnapshot(prisma, case_id) {
         };
 
         if (bv.raw_response) {
-            const raw = typeof bv.raw_response === 'string' ? JSON.parse(bv.raw_response) : bv.raw_response;
+            const raw = safeJsonParse(bv.raw_response, {});
             inMemoryBureau = extractBureauDetails(raw);
         }
 

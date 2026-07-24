@@ -1,6 +1,17 @@
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 
+// Constant-time comparison of two hex-encoded HMAC digests. Guards the
+// length mismatch case explicitly since crypto.timingSafeEqual throws
+// (rather than returning false) when buffer lengths differ.
+function timingSafeEqualHex(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const bufA = Buffer.from(a, 'hex');
+  const bufB = Buffer.from(b, 'hex');
+  if (bufA.length !== bufB.length || bufA.length === 0) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 let razorpayInstance = null;
 
 function getRazorpayInstance() {
@@ -49,7 +60,7 @@ function verifyCheckoutSignature(orderId, paymentId, signature) {
     .update(orderId + "|" + paymentId)
     .digest('hex');
 
-  return generatedSignature === signature;
+  return timingSafeEqualHex(generatedSignature, signature);
 }
 
 /**
@@ -67,7 +78,7 @@ function verifyWebhookSignature(rawBody, signature) {
     .update(rawBody)
     .digest('hex');
 
-  return expectedSignature === signature;
+  return timingSafeEqualHex(expectedSignature, signature);
 }
 
 /**

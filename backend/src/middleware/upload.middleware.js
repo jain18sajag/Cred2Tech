@@ -20,6 +20,19 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ storage });
+// Previously unbounded — no file-size cap or type filter, unlike the multer
+// config in document.routes.js. Shared by bulk case/disbursement Excel
+// uploads and salary-slip uploads, so the allowlist covers both.
+const ALLOWED_EXTENSIONS = ['.pdf', '.xlsx', '.xls', '.csv', '.zip', '.jpg', '.jpeg', '.png', '.docx', '.doc'];
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 15 * 1024 * 1024 }, // 15 MB
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ALLOWED_EXTENSIONS.includes(ext)) cb(null, true);
+    else cb(new Error(`File type not allowed: ${ext}`));
+  },
+});
 
 module.exports = upload;

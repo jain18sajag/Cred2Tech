@@ -4,12 +4,13 @@ const prisma = require('../../config/db');
 async function authenticate(req, res, next) {
   let token = null;
   const authHeader = req.headers['authorization'];
-  
+
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.split(' ')[1];
-  } else if (req.query.token) {
-    token = req.query.token;
   }
+  // NOTE: a `?token=` query-string fallback used to exist here — dropped
+  // because bearer tokens in URLs leak into access logs, browser history,
+  // and Referer headers on outbound links.
 
   if (!token) {
     return res.status(401).json({ error: 'Access denied. No token provided.' });
@@ -29,6 +30,28 @@ async function authenticate(req, res, next) {
 
     if (!user) {
       return res.status(401).json({ error: 'User not found.' });
+    }
+
+    if (user.status !== 'ACTIVE') {
+      return res.status(401).json({ error: 'Account is not active.' });
+    }
+
+    // Session revocation check: a token surviving until its JWT expiry is
+    // otherwise unstoppable even after "Revoke session" / logout / password
+    // change flip is_active=false on the matching UserSession row.
+    const session = await prisma.userSession.findUnique({
+      where: { session_token: token },
+      select: { is_active: true }
+    });
+    if (session && !session.is_active) {
+      return res.status(401).json({ error: 'Session has been revoked. Please log in again.' });
+    }
+    if (session) {
+      // Best-effort activity heartbeat — don't block the request if this fails.
+      prisma.userSession.update({
+        where: { session_token: token },
+        data: { last_activity_at: new Date() }
+      }).catch(() => {});
     }
 
     req.user = {

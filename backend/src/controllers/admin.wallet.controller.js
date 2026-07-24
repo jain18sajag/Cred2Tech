@@ -1,6 +1,7 @@
 const prisma = require('../../config/db');
 const walletService = require('../services/wallet.service');
 const pricingService = require('../services/pricing.service');
+const { sendError } = require('../utils/sendError');
 
 // Admin side management for Wallets
 
@@ -79,7 +80,7 @@ async function topupWallet(req, res) {
 
     res.json({ message: 'Topup successful', wallet });
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Failed to topup wallet' });
+    sendError(res, 500, error, 'Failed to topup wallet');
   }
 }
 
@@ -120,7 +121,7 @@ async function deductWallet(req, res) {
 
     res.json({ message: 'Deduction successful', wallet: deduction });
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Failed to deduct wallet' });
+    sendError(res, 500, error, 'Failed to deduct wallet');
   }
 }
 

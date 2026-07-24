@@ -1,6 +1,7 @@
 const prisma = require('../../config/db');
 const { executePaidApi } = require('../services/wallet.service');
 const panService = require('../services/externalApis/pan.service');
+const { logSensitiveAccess } = require('../utils/auditLog');
 
 exports.fetchPanIntelligence = async (req, res) => {
     try {
@@ -22,6 +23,15 @@ exports.fetchPanIntelligence = async (req, res) => {
         if (!customer || customer.tenant_id !== tenantId) {
             return res.status(403).json({ error: 'Access denied to this customer' });
         }
+        // Direct MSME customers share one tenant with every other direct customer,
+        // so tenant_id alone doesn't isolate them from each other's customer records.
+        if (req.user.role === 'MSME_CUSTOMER' && customer.created_by_user_id !== userId) {
+            return res.status(403).json({ error: 'Access denied to this customer' });
+        }
+
+        await logSensitiveAccess({
+            tenantId, userId, resourceType: 'PAN_INTELLIGENCE', resourceId: customer_id, action: 'VIEW', ip: req.ip
+        });
 
         await prisma.customerConsent.create({
             data: {
@@ -36,9 +46,18 @@ exports.fetchPanIntelligence = async (req, res) => {
 
         const idempotencyKey = `${customer_id}_${pan}`;
         
-        // Native Idempotency Check first
-        const existingProfile = await prisma.customerPanProfile.findUnique({ where: { pan }});
-        if (existingProfile) {
+        // Native Idempotency Check first — but a PAN cache hit belonging to a
+        // DIFFERENT tenant (or, for MSME requesters, a different customer) must
+        // never be served: `pan` is globally unique, so without this check any
+        // authenticated user could read another tenant's PAN dossier for free.
+        const existingProfile = await prisma.customerPanProfile.findUnique({
+            where: { pan },
+            include: { customer: { select: { tenant_id: true, created_by_user_id: true } } }
+        });
+        const cacheHitOwnedByRequester = existingProfile
+            && existingProfile.customer?.tenant_id === tenantId
+            && (req.user.role !== 'MSME_CUSTOMER' || existingProfile.customer?.created_by_user_id === userId);
+        if (cacheHitOwnedByRequester) {
             const records = await prisma.customerPanGstinRecord.findMany({ where: { pan_profile_id: existingProfile.id } });
             return res.json({
                 status: "SUCCESS",
@@ -46,7 +65,7 @@ exports.fetchPanIntelligence = async (req, res) => {
                 constitution_of_business: existingProfile.constitution_of_business,
                 director_names: existingProfile.director_names,
                 turnover_range: existingProfile.annual_turnover_range,
-                gst_records: records, 
+                gst_records: records,
                 raw_response: existingProfile.raw_response
             });
         }
@@ -311,6 +330,24 @@ exports.verifyPan = async (req, res) => {
         if (!customer || customer.tenant_id !== tenantId) {
             return res.status(403).json({ error: 'Access denied to this customer' });
         }
+        if (req.user.role === 'MSME_CUSTOMER' && customer.created_by_user_id !== userId) {
+            return res.status(403).json({ error: 'Access denied to this customer' });
+        }
+
+        // case_id is caller-supplied and used below to locate/update the primary
+        // applicant — without this check it's an IDOR letting anyone mark another
+        // tenant's case as PAN-verified as long as they own *some* customer_id.
+        const targetCase = await prisma.case.findUnique({ where: { id: parseInt(case_id, 10) } });
+        if (!targetCase || targetCase.tenant_id !== tenantId || targetCase.customer_id !== customer_id) {
+            return res.status(403).json({ error: 'Access denied to this case' });
+        }
+        if (req.user.role === 'MSME_CUSTOMER' && targetCase.msme_customer_user_id !== userId) {
+            return res.status(403).json({ error: 'Access denied to this case' });
+        }
+
+        await logSensitiveAccess({
+            tenantId, userId, resourceType: 'PAN_VERIFY', resourceId: customer_id, action: 'VIEW', ip: req.ip
+        });
 
         // Security check and lock check for co-applicant
         if (is_coapplicant && applicant_id) {
@@ -319,6 +356,9 @@ exports.verifyPan = async (req, res) => {
                 include: { case: true }
             });
             if (!applicant || applicant.case_id !== parseInt(case_id, 10) || applicant.case.tenant_id !== tenantId) {
+                return res.status(403).json({ error: 'Access denied to this applicant' });
+            }
+            if (req.user.role === 'MSME_CUSTOMER' && applicant.case.msme_customer_user_id !== userId) {
                 return res.status(403).json({ error: 'Access denied to this applicant' });
             }
             if (applicant.pan_verified) {

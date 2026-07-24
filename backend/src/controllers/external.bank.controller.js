@@ -5,6 +5,8 @@ const documentService = require('../services/document.service');
 const { determineNotificationRecipient } = require('../services/notification.service');
 
 const { extractBankFySnapshot } = require('../services/bankParser.service');
+const { safeGet } = require('../utils/ssrf');
+const { verifyWebhookToken } = require('../utils/webhookToken');
 
 // Note: Pre-analysis is optional and can be skipped. We will directly analyze here.
 async function analyze(req, res) {
@@ -40,6 +42,10 @@ async function analyze(req, res) {
                     throw new Error(`Failed to extract reportId from provider response. Provider returned: ${JSON.stringify(providerRes).substring(0, 150)}`);
                 }
 
+                // Never persist the webhook auth secret inside the raw vendor-response
+                // blob — it gets stored/returned as opaque JSON elsewhere.
+                const { __webhookToken: webhookToken, ...rawAnalyzeResponse } = providerRes;
+
                 const bankRequest = await prisma.bankStatementAnalysisRequest.create({
                     data: {
                         tenant_id: tenantId,
@@ -47,9 +53,10 @@ async function analyze(req, res) {
                         case_id: case_id ? parseInt(case_id, 10) : null,
                         applicant_id: applicant_id ? parseInt(applicant_id, 10) : null,
                         report_id: reportId.toString(),
+                        webhook_token: webhookToken,
                         status: 'ANALYZING',
                         files_payload: files,
-                        raw_analyze_response: providerRes,
+                        raw_analyze_response: rawAnalyzeResponse,
                         created_by_user_id: userId
                     }
                 });
@@ -177,8 +184,7 @@ async function syncStatus(req, res) {
             // User dynamically requested raw JSON bytes natively loaded into raw_retrieve_response field
             if (jsonUrl) {
                 try {
-                    const axios = require('axios');
-                    const downRes = await axios.get(jsonUrl);
+                    const downRes = await safeGet(jsonUrl, { timeout: 30000 });
                     rawRetrieveData = downRes.data;
                 } catch (e) {
                     console.error("[Bank Sync] Failed to buffer json payload into string:", e.message);
@@ -280,8 +286,7 @@ async function downloadData(req, res) {
         let rawRetrieveData = null;
         if (jsonUrl) {
             try {
-                const axios = require('axios');
-                const jsonRes = await axios.get(jsonUrl, { timeout: 30000 });
+                const jsonRes = await safeGet(jsonUrl, { timeout: 30000 });
                 rawRetrieveData = jsonRes.data;
             } catch (e) {
                 console.error("[Bank Download] Failed to buffer json payload into string:", e.message);
@@ -381,9 +386,9 @@ async function downloadData(req, res) {
 }
 
 async function handleSignzyCallback(req, res) {
+    let claimedReportId = null; // set once we successfully claim the row, used to release it if processing crashes
     try {
         const payload = req.body;
-        console.log('[Bank Webhook] Received payload:', JSON.stringify(payload));
 
         // Extract reportId — Signzy sends it in multiple possible shapes
         const resultObj = payload.result || payload;
@@ -394,7 +399,7 @@ async function handleSignzyCallback(req, res) {
             || req.query.report_id;
 
         if (!reportId) {
-            console.error('[Bank Webhook] Could not deduce reportId. Payload:', JSON.stringify(payload));
+            console.error('[Bank Webhook] Could not deduce reportId from payload');
             return res.status(400).json({ error: 'reportId missing from webhook payload' });
         }
 
@@ -409,6 +414,13 @@ async function handleSignzyCallback(req, res) {
             return res.status(200).json({ received: true, note: 'Unknown report_id, ignored' });
         }
 
+        // Signzy webhooks carry no signature scheme — this is the only thing
+        // authenticating the callback (see `webhook_token`, set at request time).
+        if (!verifyWebhookToken(existingRequest.webhook_token, req.query.wt)) {
+            console.warn(`[Bank Webhook] Invalid/missing webhook token for report_id=${reportId}. Rejecting.`);
+            return res.status(403).json({ error: 'Invalid webhook token' });
+        }
+
         if (
             existingRequest.status === 'COMPLETED' &&
             existingRequest.raw_retrieve_response &&
@@ -417,6 +429,22 @@ async function handleSignzyCallback(req, res) {
             console.log(`[Bank Webhook] Duplicate callback ignored for report_id: ${reportId}`);
             return res.status(200).json({ received: true, note: 'Already completed with raw JSON stored' });
         }
+
+        // Atomic claim: the read-then-branch check above is a TOCTOU race —
+        // Signzy retries webhooks liberally, and two near-simultaneous
+        // deliveries could both read a non-completed state and both proceed
+        // to re-download + re-process. This single UPDATE only succeeds for
+        // whichever request is first to claim the row; Postgres row locking
+        // guarantees only one concurrent UPDATE can win the WHERE clause.
+        const claim = await prisma.bankStatementAnalysisRequest.updateMany({
+            where: { report_id: reportId.toString(), webhook_claimed_at: null },
+            data: { webhook_claimed_at: new Date() }
+        });
+        if (claim.count === 0) {
+            console.log(`[Bank Webhook] Duplicate/concurrent callback ignored (already claimed) for report_id: ${reportId}`);
+            return res.status(200).json({ received: true, note: 'Already being processed' });
+        }
+        claimedReportId = reportId.toString();
 
         // Extract file URLs — Signzy bank webhook format:
         // { result: { json: "url", excel: "url", accountLevelAnalysis: [...] } }
@@ -436,8 +464,7 @@ async function handleSignzyCallback(req, res) {
         let rawRetrieveData = null;
         if (jsonUrl) {
             try {
-                const axios = require('axios');
-                const response = await axios.get(jsonUrl, { timeout: 30000 });
+                const response = await safeGet(jsonUrl, { timeout: 30000 });
                 rawRetrieveData = response.data;
                 console.log(`[Bank Webhook] JSON downloaded. Size: ${JSON.stringify(rawRetrieveData).length} chars`);
             } catch (dlErr) {
@@ -560,6 +587,15 @@ async function handleSignzyCallback(req, res) {
 
     } catch (err) {
         console.error('[Bank Webhook] Unhandled error:', err);
+        if (claimedReportId) {
+            // Release the claim so Signzy's retry (it gets a 500 here) can
+            // actually reprocess instead of being silently swallowed forever
+            // by the atomic-claim check above.
+            await prisma.bankStatementAnalysisRequest.updateMany({
+                where: { report_id: claimedReportId },
+                data: { webhook_claimed_at: null }
+            }).catch((releaseErr) => console.error('[Bank Webhook] Failed to release claim:', releaseErr.message));
+        }
         return res.status(500).json({ error: 'Internal processing error' });
     }
 }

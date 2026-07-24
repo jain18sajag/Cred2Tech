@@ -3,7 +3,7 @@ import { toast } from 'react-hot-toast';
 import { CheckCircle2, AlertCircle, RefreshCw, FileText, Download, FileSpreadsheet, FileJson } from 'lucide-react';
 import FormField from './ui/FormField';
 import api from '../api/axiosInstance';
-import { downloadDocument } from '../api/documentHelper';
+import { downloadDocument, viewDocument } from '../api/documentHelper';
 
 const GstAnalyticsForm = ({ caseId, customerId, applicantId = null, linkedGstins = [], onComplete, onboardingMode }) => {
     const isMsme = onboardingMode === 'MSME_SELF_SERVICE';
@@ -323,9 +323,7 @@ const GstAnalyticsForm = ({ caseId, customerId, applicantId = null, linkedGstins
                                                 <button
                                                     type="button"
                                                     onClick={() => {
-                                                        const token = localStorage.getItem('token');
-                                                        const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
-                                                        window.open(`${baseUrl}/documents/${req.gst_pdf_document_id}/view?token=${token}`, '_blank');
+                                                        viewDocument(req.gst_pdf_document_id).catch(() => toast.error('Failed to open document'));
                                                     }}
                                                     className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                                     <FileText size={14} /> PDF

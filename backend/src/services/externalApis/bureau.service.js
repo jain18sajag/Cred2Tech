@@ -56,7 +56,6 @@ async function runBureauCheck({ caseId, applicantId, mobileNumber, firstName, la
     }
   };
 
-  console.log("payload", payload);
   // Inject panNumber. Note: In Veri5 Sandbox, you MUST use their specific test PANs
   // (like ABCDE1234F) otherwise the sandbox may throw a 500 error.
   // We'll omit it in the sandbox to match the working Postman payload unless it's explicitly a sandbox test PAN.

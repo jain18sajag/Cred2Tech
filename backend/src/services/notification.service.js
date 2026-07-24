@@ -28,9 +28,12 @@ exports.determineNotificationRecipient = async (tenantId, caseId, initiatorId = 
         return { recipient_user_id: initiatorId, audience_type: 'USER' };
     }
 
-    // Fallback to Tenant Admin
+    // Fallback to the tenant's admin. 'role' is a relation (Role), not a scalar
+    // string, so `role: 'TENANT_ADMIN'` was a type mismatch that threw at runtime
+    // whenever this branch was reached — and 'TENANT_ADMIN' isn't a seeded role
+    // name anyway (real tenant-admin roles are DSA_ADMIN / CRED2TECH_MEMBER).
     const tenantAdmin = await prisma.user.findFirst({
-        where: { tenant_id: tenantId, role: 'TENANT_ADMIN' },
+        where: { tenant_id: tenantId, role: { name: { in: ['DSA_ADMIN', 'CRED2TECH_MEMBER'] } } },
         orderBy: { id: 'asc' }
     });
 

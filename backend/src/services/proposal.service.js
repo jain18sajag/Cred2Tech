@@ -1,5 +1,6 @@
 // proposal.service.js
 const prisma = require('../../config/db');
+const { safeJsonParse } = require('../utils/safeJsonParse');
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -296,7 +297,7 @@ async function getProposalForPrep({ proposal_id, case_id, tenant_id }) {
         let bankDetails = {};
         if (b.raw_retrieve_response) {
             try {
-                const raw = typeof b.raw_retrieve_response === 'string' ? JSON.parse(b.raw_retrieve_response) : b.raw_retrieve_response;
+                const raw = safeJsonParse(b.raw_retrieve_response, {});
                 const accs = raw?.result?.accountLevelAnalysis || raw?.accountLevelAnalysis || [];
                 if (accs[0]) {
                     bankDetails = {
@@ -523,14 +524,21 @@ async function attachDocumentsToProposal({ proposal_id, case_id, tenant_id, docu
 // ──────────────────────────────────────────────────────────────────────────────
 // detachDocumentFromProposal
 // ──────────────────────────────────────────────────────────────────────────────
-async function detachDocumentFromProposal({ proposal_id, document_id, tenant_id }) {
-    await prisma.proposalDocument.deleteMany({
+async function detachDocumentFromProposal({ proposal_id, document_id, case_id, tenant_id }) {
+    // proposal_id/document_id alone let any authenticated user detach a document
+    // link belonging to a completely different tenant's (or case's) proposal —
+    // scope through the owning Proposal's tenant_id/case_id, same as submitProposal.
+    const result = await prisma.proposalDocument.deleteMany({
         where: {
             proposal_id: Number(proposal_id),
-            document_id: Number(document_id)
+            document_id: Number(document_id),
+            proposal: {
+                tenant_id: Number(tenant_id),
+                ...(case_id ? { case_id: Number(case_id) } : {})
+            }
         }
     });
-    return { success: true };
+    return { success: result.count > 0 };
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

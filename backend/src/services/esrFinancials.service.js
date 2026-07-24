@@ -25,6 +25,7 @@
 const prisma = require('../../config/db');
 const { extractBankFySnapshot, extractBankSalary } = require('./bankParser.service');
 const { extractGstDetails, extractItrDetails } = require('./financial.extractor');
+const { safeJsonParse } = require('../utils/safeJsonParse');
 const { dedupeObligations } = require('../utils/obligationDedup');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1084,7 +1085,7 @@ function resolveGstIndustryMargin(industryType, lenderPolicyKey = 'ICICI') {
 
 function _parseGstIndustryType(raw_gst_data) {
     try {
-        const rawGst = typeof raw_gst_data === 'string' ? JSON.parse(raw_gst_data) : raw_gst_data;
+        const rawGst = safeJsonParse(raw_gst_data, {});
 
         let nature = null;
         let constitution = null;
@@ -1128,7 +1129,7 @@ function _parseGstIndustryType(raw_gst_data) {
 function _parseBureauFromRaw(raw_response) {
     const result = { score: null, age: null };
     try {
-        const rawBureau = typeof raw_response === 'string' ? JSON.parse(raw_response) : raw_response;
+        const rawBureau = safeJsonParse(raw_response, {});
         const data = rawBureau?.verifiedData?.ResponseData?.data;
         result.score = toNum(data?.score) ?? toNum(data?.cibilScore) ?? toNum(data?.creditScore);
         result.age = toNum(data?.age);

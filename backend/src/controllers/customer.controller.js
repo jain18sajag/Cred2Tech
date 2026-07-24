@@ -1,6 +1,7 @@
 const customerService = require('../services/customer.service');
 const caseService = require('../services/case.service');
 const prisma = require('../../config/db');
+const { logSensitiveAccess } = require('../utils/auditLog');
 
 async function checkCustomer(req, res) {
   try {
@@ -119,7 +120,7 @@ async function createSalariedCustomer(req, res) {
     res.status(201).json({ success: true, data: newCase });
   } catch (error) {
     console.error('[customer.controller] createSalariedCustomer error:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error while creating customer.' });
   }
 }
 
@@ -144,9 +145,12 @@ async function getProfile(req, res) {
   try {
     const customerId = parseInt(req.params.customer_id, 10);
     const tenantId = req.user.tenant_id;
+    const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
 
-    const customer = await prisma.customer.findUnique({
-      where: { id: customerId },
+    const customer = await prisma.customer.findFirst({
+      // Scope by tenant at the query itself (not just the response check below) —
+      // SUPER_ADMIN is the only role allowed to look across tenants.
+      where: isSuperAdmin ? { id: customerId } : { id: customerId, tenant_id: tenantId },
       include: {
         pan_profiles: { take: 1, orderBy: { created_at: 'desc' } },
         cases: {
@@ -193,10 +197,21 @@ async function getProfile(req, res) {
 
     if (!customer) return res.status(404).json({ error: 'Customer not found' });
 
-    // Tenant isolation
-    if (req.user.role !== 'SUPER_ADMIN' && customer.tenant_id !== tenantId) {
+    // Tenant isolation (defense-in-depth — already enforced in the query above)
+    if (!isSuperAdmin && customer.tenant_id !== tenantId) {
        return res.status(403).json({ error: 'Forbidden. Customer belongs to different tenant.' });
     }
+
+    // Direct MSME customers share one tenant with every other direct customer,
+    // so tenant_id alone doesn't isolate them from each other's profiles.
+    if (req.user.role === 'MSME_CUSTOMER' && customer.created_by_user_id !== req.user.id) {
+       return res.status(403).json({ error: 'Forbidden. You do not have access to this customer.' });
+    }
+
+    await logSensitiveAccess({
+      tenantId: customer.tenant_id, userId: req.user.id, resourceType: 'CUSTOMER_PROFILE',
+      resourceId: customerId, action: 'VIEW', ip: req.ip
+    });
 
     const panProfile = customer.pan_profiles?.[0] || null;
     const latestCase = customer.cases?.[0] || null;
@@ -320,13 +335,17 @@ async function getApiAvailability(req, res) {
   // #swagger.summary = 'Check API Action Button states'
   try {
      const customerId = parseInt(req.params.customer_id, 10);
-     const customer = await prisma.customer.findUnique({
-       where: { id: customerId },
+     const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
+     const customer = await prisma.customer.findFirst({
+       where: isSuperAdmin ? { id: customerId } : { id: customerId, tenant_id: req.user.tenant_id },
        include: { api_logs: true, cases: { include: { applicants: true } } }
      });
 
      if (!customer) return res.status(404).json({ error: 'Customer not found' });
-     if (req.user.role !== 'SUPER_ADMIN' && customer.tenant_id !== req.user.tenant_id) {
+     if (!isSuperAdmin && customer.tenant_id !== req.user.tenant_id) {
+       return res.status(403).json({ error: 'Forbidden.' });
+     }
+     if (req.user.role === 'MSME_CUSTOMER' && customer.created_by_user_id !== req.user.id) {
        return res.status(403).json({ error: 'Forbidden.' });
      }
 

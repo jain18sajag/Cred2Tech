@@ -10,12 +10,12 @@
  * Controllers/callers deal only with document IDs and metadata.
  */
 
-const axios = require('axios');
 const crypto = require('crypto');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const prisma = require('../../config/db');
 const { getStorageProvider } = require('./storage/index');
+const { safeGet } = require('../utils/ssrf');
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -33,62 +33,7 @@ const MIME_EXTENSION_MAP = {
     'application/octet-stream': '.bin',
 };
 
-// Known Signzy domains we trust for VENDOR_DOWNLOAD origin
-const ALLOWED_VENDOR_DOMAINS = [
-    'signzy.tech',
-    'signzy.app',
-    'signzy.com',
-    's3.amazonaws.com',         // Signzy may use S3-backed CDNs
-    's3.ap-south-1.amazonaws.com',
-    'amazonaws.com',
-];
-
-// Private/loopback IP prefixes to block (SSRF prevention)
-const PRIVATE_IP_PREFIXES = [
-    '10.', '172.16.', '172.17.', '172.18.', '172.19.',
-    '172.20.', '172.21.', '172.22.', '172.23.', '172.24.',
-    '172.25.', '172.26.', '172.27.', '172.28.', '172.29.',
-    '172.30.', '172.31.', '192.168.', '127.', '0.', '169.254.',
-    '::1', 'fc00:', 'fe80:'
-];
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Validate a vendor URL before we attempt to download it (SSRF prevention).
- * Throws with a descriptive message if invalid.
- */
-function validateVendorUrl(rawUrl) {
-    let parsed;
-    try {
-        parsed = new URL(rawUrl);
-    } catch {
-        throw new Error(`Invalid vendor URL format: ${rawUrl}`);
-    }
-
-    if (parsed.protocol !== 'https:') {
-        throw new Error(`Vendor URL must use HTTPS. Got: ${parsed.protocol}`);
-    }
-
-    const hostname = parsed.hostname.toLowerCase();
-
-    // Block localhost and numeric private ranges
-    if (hostname === 'localhost' || hostname === '0.0.0.0') {
-        throw new Error(`Blocked: vendor URL targets localhost`);
-    }
-    if (PRIVATE_IP_PREFIXES.some(prefix => hostname.startsWith(prefix))) {
-        throw new Error(`Blocked: vendor URL targets private/internal IP range: ${hostname}`);
-    }
-
-    // Soft-check against known vendor domains (log warning if unknown, but don't hard-block
-    // because Signzy CDN hostnames may vary; hard block only for obvious private ranges above)
-    const isKnownVendor = ALLOWED_VENDOR_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d));
-    if (!isKnownVendor) {
-        console.warn(`[document.service] ingestFromUrl: URL from unknown domain "${hostname}" — proceeding but verify vendor config`);
-    }
-
-    return parsed;
-}
 
 /**
  * Detect a safe file extension from mime type or fallback.
@@ -148,18 +93,15 @@ async function ingestFromUrl({
     metadata = null,
     headers = null,
 }) {
-    // 1. SSRF / URL validation
-    validateVendorUrl(vendorUrl);
-
     let buffer;
     let detectedMime;
 
-    // 2. Download with strict limits
+    // 1+2. SSRF-validated download (URL shape, allowlist, resolved-IP check on
+    // every redirect hop, pinned connection) with strict size/time limits.
     try {
         const axiosConfig = {
             responseType: 'arraybuffer',
             timeout: 30000,                          // 30s timeout
-            maxRedirects: 3,
             maxContentLength: MAX_FILE_SIZE_BYTES,
             maxBodyLength: MAX_FILE_SIZE_BYTES,
             headers: {
@@ -170,7 +112,7 @@ async function ingestFromUrl({
             axiosConfig.headers = { ...axiosConfig.headers, ...headers };
         }
 
-        const response = await axios.get(vendorUrl, axiosConfig);
+        const response = await safeGet(vendorUrl, axiosConfig);
 
         buffer = Buffer.from(response.data);
         detectedMime = response.headers['content-type'] || 'application/octet-stream';
@@ -240,7 +182,36 @@ async function ingestFromUrl({
  * @param {number} requestingTenantId - From req.user.tenant_id (JWT)
  * @returns {Promise<{ doc: object, stream: NodeJS.ReadableStream }>}
  */
-async function streamDocument(documentId, requestingTenantId) {
+/**
+ * MSME_CUSTOMER users share one tenant with every other direct customer, so
+ * tenant_id alone is not isolation for them — they may only reach documents
+ * belonging to a case or customer record they themselves own. Mirrors the
+ * ownership check in middleware/msmeCaseOwnership.middleware.js.
+ */
+async function assertMsmeOwnsDocument(doc, userId) {
+    let owned = false;
+    if (doc.case_id) {
+        const caseRecord = await prisma.case.findUnique({
+            where: { id: doc.case_id },
+            select: { msme_customer_user_id: true }
+        });
+        owned = caseRecord?.msme_customer_user_id === userId;
+    }
+    if (!owned && doc.customer_id) {
+        const customer = await prisma.customer.findUnique({
+            where: { id: doc.customer_id },
+            select: { created_by_user_id: true }
+        });
+        owned = customer?.created_by_user_id === userId;
+    }
+    if (!owned) {
+        const err = new Error('Access denied');
+        err.statusCode = 403;
+        throw err;
+    }
+}
+
+async function streamDocument(documentId, requestingTenantId, requestingUser = null) {
     const doc = await prisma.document.findUnique({
         where: { id: documentId }
     });
@@ -256,6 +227,10 @@ async function streamDocument(documentId, requestingTenantId) {
         const err = new Error('Access denied');
         err.statusCode = 403;
         throw err;
+    }
+
+    if (requestingUser && requestingUser.role === 'MSME_CUSTOMER') {
+        await assertMsmeOwnsDocument(doc, requestingUser.id);
     }
 
     if (doc.status === 'DELETED') {
@@ -299,4 +274,4 @@ async function deleteDocument(documentId, requestingTenantId) {
     });
 }
 
-module.exports = { ingestFromUrl, streamDocument, deleteDocument };
+module.exports = { ingestFromUrl, streamDocument, deleteDocument, assertMsmeOwnsDocument };

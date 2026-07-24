@@ -21,8 +21,10 @@ router.post('/topups/:id/cancel', dsaWalletController.cancelTopup);
 // Wallet Overview & Employee Allocation
 router.get('/summary', dsaWalletController.getWalletSummary);
 router.get('/employees', dsaWalletController.getEmployees);
-router.post('/employees/:userId/allocate', dsaWalletController.allocateEmployeeCredits);
-router.post('/employees/:userId/revoke', dsaWalletController.revokeEmployeeCredits);
+// Non-admin DSA_MEMBER/SUB_DSA staff could otherwise move the tenant wallet
+// balance into any employee's wallet (incl. their own) — restrict to admins.
+router.post('/employees/:userId/allocate', requireRole('DSA_ADMIN'), dsaWalletController.allocateEmployeeCredits);
+router.post('/employees/:userId/revoke', requireRole('DSA_ADMIN'), dsaWalletController.revokeEmployeeCredits);
 router.get('/employees/:userId/transactions', dsaWalletController.getEmployeeTransactions);
 
 module.exports = router;

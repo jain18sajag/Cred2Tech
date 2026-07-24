@@ -83,7 +83,7 @@ async function getPlatformFunnel(req, res) {
 async function getTopDsas(req, res) {
   try {
     const { period = 'mtd', custom_start, custom_end, limit = 5 } = req.query;
-    const data = await svc.getTopDsas(period, custom_start, custom_end, parseInt(limit));
+    const data = await svc.getTopDsas(period, custom_start, custom_end, parseInt(limit, 10));
     res.json(data);
   } catch (err) {
     console.error('[dashboard/platform/top-dsas]', err);
@@ -94,7 +94,7 @@ async function getTopDsas(req, res) {
 async function getTopLenders(req, res) {
   try {
     const { period = 'mtd', custom_start, custom_end, limit = 5 } = req.query;
-    const data = await svc.getTopLenders(period, custom_start, custom_end, parseInt(limit));
+    const data = await svc.getTopLenders(period, custom_start, custom_end, parseInt(limit, 10));
     res.json(data);
   } catch (err) {
     console.error('[dashboard/platform/top-lenders]', err);

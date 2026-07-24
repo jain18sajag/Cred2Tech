@@ -1,13 +1,42 @@
 const prisma = require('../../config/db');
 const { hashPassword } = require('../utils/hash');
 const { isValidManager } = require('../utils/hierarchy');
+const { validatePasswordPolicy } = require('../utils/passwordPolicy');
+
+// Fields a caller may set directly on another user's record via PATCH /users/:id.
+// Anything not in this list (password_hash, tenant_id, failed_login_attempts,
+// locked_until, id, created_by, hierarchy_path, ...) is never client-settable —
+// role_id and status are handled separately below with their own validation.
+const ALLOWED_USER_UPDATE_FIELDS = ['name', 'email', 'mobile', 'hierarchy_level', 'manager_id', 'designation'];
+const VALID_USER_STATUSES = ['ACTIVE', 'INACTIVE', 'SUSPENDED'];
+
+// Mirrors the RBAC matrix documented below in createUser — which target role names
+// a given currentUser is allowed to assign to someone else.
+function assertRoleAssignable(currentUser, targetRoleName) {
+  if (currentUser.role === 'SUPER_ADMIN') {
+    const SUPER_ADMIN_ALLOWED_ROLES = ['SUPER_ADMIN', 'CRED2TECH_MEMBER', 'DSA_ADMIN'];
+    if (!SUPER_ADMIN_ALLOWED_ROLES.includes(targetRoleName)) {
+      throw Object.assign(
+        new Error(`SUPER_ADMIN cannot assign role "${targetRoleName}". Only SUPER_ADMIN, CRED2TECH_MEMBER, and DSA_ADMIN are permitted.`),
+        { status: 403 }
+      );
+    }
+  } else if (currentUser.role === 'DSA_ADMIN' || currentUser.role === 'CRED2TECH_MEMBER') {
+    const DSA_ADMIN_ALLOWED_ROLES = ['DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA'];
+    if (currentUser.role === 'DSA_ADMIN' && !DSA_ADMIN_ALLOWED_ROLES.includes(targetRoleName)) {
+      throw Object.assign(new Error(`DSA_ADMIN cannot assign role "${targetRoleName}"`), { status: 403 });
+    }
+  } else {
+    throw Object.assign(new Error('You do not have permission to assign roles'), { status: 403 });
+  }
+}
 
 async function createUser(data, currentUser) {
-  console.log('CREATE USER PAYLOAD:', JSON.stringify(data));
-
   const { name, email, mobile, password, role_id, tenant_id, hierarchy_level, manager_id, designation } = data;
+  console.log('CREATE USER PAYLOAD:', JSON.stringify({ name, email, mobile, role_id, tenant_id, hierarchy_level, manager_id, designation }));
 
   if (!role_id) throw Object.assign(new Error('role_id is required'), { status: 400 });
+  validatePasswordPolicy(password);
 
   const parsedRoleId = parseInt(role_id, 10);
   const parsedManagerId = manager_id ? parseInt(manager_id, 10) : null;
@@ -33,16 +62,9 @@ async function createUser(data, currentUser) {
 
   let parsedTenantId;
 
+  assertRoleAssignable(currentUser, roleExists.name);
+
   if (currentUser.role === 'SUPER_ADMIN') {
-    const SUPER_ADMIN_ALLOWED_ROLES = ['SUPER_ADMIN', 'CRED2TECH_MEMBER', 'DSA_ADMIN'];
-
-    if (!SUPER_ADMIN_ALLOWED_ROLES.includes(roleExists.name)) {
-      throw Object.assign(
-        new Error(`SUPER_ADMIN cannot create users with role "${roleExists.name}". Only SUPER_ADMIN, CRED2TECH_MEMBER, and DSA_ADMIN are permitted.`),
-        { status: 403 }
-      );
-    }
-
     if (roleExists.name === 'DSA_ADMIN') {
       // Creating initial admin for a DSA tenant — payload tenant_id required and must be DSA type
       if (!tenant_id) {
@@ -62,19 +84,8 @@ async function createUser(data, currentUser) {
     }
 
   } else if (currentUser.role === 'DSA_ADMIN' || currentUser.role === 'CRED2TECH_MEMBER') {
-    const DSA_ADMIN_ALLOWED_ROLES = ['DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA'];
-
-    if (currentUser.role === 'DSA_ADMIN' && !DSA_ADMIN_ALLOWED_ROLES.includes(roleExists.name)) {
-      throw Object.assign(
-        new Error(`DSA_ADMIN cannot create users with role "${roleExists.name}"`),
-        { status: 403 }
-      );
-    }
     // Always locked to own tenant
     parsedTenantId = currentUser.tenant_id;
-
-  } else {
-    throw Object.assign(new Error('You do not have permission to create users'), { status: 403 });
   }
 
   // Manager/tenant validation
@@ -131,8 +142,11 @@ async function getUsers(currentUser) {
   if (currentUser.role === 'SUPER_ADMIN') {
     // SUPER_ADMIN can see everyone across all tenants
     whereClause = {};
-  } else if (currentUser.role === 'DSA_ADMIN' || currentUser.role === 'TENANT_ADMIN') {
-    // Admin for a specific tenant sees everyone in that tenant
+  } else if (currentUser.role === 'DSA_ADMIN' || currentUser.role === 'CRED2TECH_MEMBER') {
+    // Admin for a specific tenant sees everyone in that tenant.
+    // ('TENANT_ADMIN' was referenced here previously but is not a seeded role —
+    // it could never match, silently forcing every non-SUPER_ADMIN/DSA_ADMIN caller
+    // into the narrower hierarchy-only branch below.)
     whereClause = { tenant_id: currentUser.tenant_id };
   } else {
     // Sub-roles (DSA_MEMBER, SUB_DSA) only see themselves and their subordinates
@@ -226,13 +240,39 @@ async function updateUser(id, data, currentUser) {
     }
   }
 
+  // Explicit allow-list — never spread raw client input into Prisma (mass-assignment guard).
+  const updateData = {};
+  for (const field of ALLOWED_USER_UPDATE_FIELDS) {
+    if (data[field] !== undefined) updateData[field] = data[field];
+  }
+  if (updateData.manager_id !== undefined) updateData.manager_id = parsedManagerId;
+
+  if (data.status !== undefined) {
+    if (!VALID_USER_STATUSES.includes(data.status)) {
+      throw Object.assign(new Error(`Invalid status "${data.status}"`), { status: 400 });
+    }
+    updateData.status = data.status;
+  }
+
+  if (data.role_id !== undefined) {
+    if (Number(id) === currentUser.id) {
+      throw Object.assign(new Error('You cannot change your own role'), { status: 403 });
+    }
+    const parsedRoleId = parseInt(data.role_id, 10);
+    const roleExists = await prisma.role.findUnique({ where: { id: parsedRoleId } });
+    if (!roleExists) {
+      throw Object.assign(new Error(`Role with id ${parsedRoleId} does not exist`), { status: 400 });
+    }
+    assertRoleAssignable(currentUser, roleExists.name);
+    updateData.role_id = parsedRoleId;
+  }
+
+  updateData.updated_by = currentUser.id;
+
   return await prisma.$transaction(async (tx) => {
     const updatedUser = await tx.user.update({
       where: { id: Number(id) },
-      data: {
-        ...data,
-        updated_by: currentUser.id
-      }
+      data: updateData
     });
 
     if (data.manager_id !== undefined && data.manager_id !== user.manager_id) {

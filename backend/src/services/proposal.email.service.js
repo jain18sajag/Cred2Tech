@@ -477,11 +477,19 @@ async function dispatchProposalEmailByProposalId({ proposalId, tenantId, userId,
   let emailSent = false;
 
   if (transporter) {
-    // Fire and forget to improve response time
-    transporter.sendMail(mailOptions)
-      .then(info => console.log(`[PROPOSAL SEND] ✅ Email actually dispatched! MsgId: ${info.messageId}`))
-      .catch(err => console.error('[PROPOSAL SEND] ❌ Email Send failed:', err.message));
-    emailSent = true;
+    // The caller (proposal.controller.js `send`) already awaits this whole
+    // function before responding to the HTTP request, so the old
+    // fire-and-forget here bought no real latency win — it just meant a
+    // failed send was reported to the client/DB as a success. Await it for real.
+    try {
+      const info = await transporter.sendMail(mailOptions);
+      messageId = info.messageId;
+      emailSent = true;
+      console.log(`[PROPOSAL SEND] ✅ Email dispatched. MsgId: ${info.messageId}`);
+    } catch (err) {
+      console.error('[PROPOSAL SEND] ❌ Email send failed:', err.message);
+      emailSent = false;
+    }
   } else {
     console.log('[PROPOSAL SEND] MOCK SEND (No SMTP):', subject);
     emailSent = true;

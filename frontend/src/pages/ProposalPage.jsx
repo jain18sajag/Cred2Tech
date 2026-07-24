@@ -9,7 +9,7 @@ import {
   X, Mail, Phone
 } from 'lucide-react';
 import { getTenantLenders, sendCaseToOtherLender } from '../api/tenantLenderService';
-import { uploadDocument } from '../api/documentHelper';
+import { uploadDocument, viewDocument } from '../api/documentHelper';
 import { useAuth } from '../context/AuthContext';
 import { msmeApi } from '../api/directMsme';
 
@@ -606,9 +606,7 @@ function DocCard({ label, uploaded, doc, onToggle, required = true, isSubmitted,
             </button>
             <button
               onClick={() => {
-                const token = localStorage.getItem('token');
-                const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
-                window.open(`${baseUrl}/documents/${doc.id}/view?token=${token}`, '_blank');
+                viewDocument(doc.id).catch(() => toast.error('Failed to open document'));
               }}
               style={{
                 flex: 1, padding: '5px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer',

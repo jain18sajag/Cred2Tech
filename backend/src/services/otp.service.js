@@ -7,6 +7,41 @@ const generateOtp = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
+/**
+ * OTP endpoints accept an arbitrary target_id in the request body. Without this
+ * check, any authenticated tenant user could send/verify/resend an OTP against
+ * a customer or applicant they don't own (IDOR) — e.g. an MSME_CUSTOMER forcing
+ * verification on another customer's mobile-verification record. `user` is the
+ * req.user object (role, tenant_id, id).
+ */
+async function assertOtpTargetOwnership(targetType, targetId, user) {
+  if (targetType === 'CUSTOMER') {
+    const customer = await prisma.customer.findUnique({
+      where: { id: targetId },
+      select: { tenant_id: true, created_by_user_id: true }
+    });
+    if (!customer || customer.tenant_id !== user.tenant_id) {
+      throw Object.assign(new Error('Target not found or access denied'), { status: 403 });
+    }
+    if (user.role === 'MSME_CUSTOMER' && customer.created_by_user_id !== user.id) {
+      throw Object.assign(new Error('Target not found or access denied'), { status: 403 });
+    }
+  } else if (targetType === 'APPLICANT') {
+    const applicant = await prisma.applicant.findUnique({
+      where: { id: targetId },
+      include: { case: { select: { tenant_id: true, msme_customer_user_id: true } } }
+    });
+    if (!applicant || !applicant.case || applicant.case.tenant_id !== user.tenant_id) {
+      throw Object.assign(new Error('Target not found or access denied'), { status: 403 });
+    }
+    if (user.role === 'MSME_CUSTOMER' && applicant.case.msme_customer_user_id !== user.id) {
+      throw Object.assign(new Error('Target not found or access denied'), { status: 403 });
+    }
+  } else {
+    throw Object.assign(new Error('Unsupported OTP target type'), { status: 400 });
+  }
+}
+
 const otpService = {
   sendOtp: async (mobile, purpose, targetType, targetId, tenantId, userId) => {
     // 5 minutes expiry
@@ -142,3 +177,4 @@ return response;
 };
 
 module.exports = otpService;
+module.exports.assertOtpTargetOwnership = assertOtpTargetOwnership;

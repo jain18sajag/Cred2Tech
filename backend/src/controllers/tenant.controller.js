@@ -1,5 +1,6 @@
 const prisma = require('../../config/db');
 const bcrypt = require('bcrypt');
+const { validatePasswordPolicy } = require('../utils/passwordPolicy');
 
 async function createTenant(req, res) {
   console.log('CREATE TENANT PAYLOAD:', JSON.stringify(req.body));
@@ -110,12 +111,24 @@ async function publicRegisterDSA(req, res) {
       pan_number, gst_number, company_type,
       state, city, pincode,
       admin_name, admin_email, admin_mobile, admin_password,
+      website, // honeypot — a hidden field real users never fill; the frontend
+               // must render (and CSS-hide) an input named exactly this
     } = req.body;
+
+    // Honeypot: bots that blindly fill every form field trip this; real
+    // browsers submit it empty since it's hidden from human users. Respond
+    // as if registration succeeded so the bot doesn't learn it was caught,
+    // without actually creating anything.
+    if (website) {
+      console.warn('[publicRegisterDSA] Honeypot field filled — likely bot, silently rejecting.');
+      return res.status(201).json({ message: 'DSA registered successfully. You can now log in.' });
+    }
 
     // --- Basic validation ---
     if (!name || !email || !admin_name || !admin_email || !admin_password) {
       return res.status(400).json({ error: 'name, email, admin_name, admin_email and admin_password are required.' });
     }
+    validatePasswordPolicy(admin_password);
 
     // --- Check for duplicate tenant email ---
     const existingTenant = await prisma.tenant.findUnique({ where: { email } });
@@ -185,6 +198,9 @@ async function publicRegisterDSA(req, res) {
       const field = error.meta?.target?.[0] || 'field';
       return res.status(409).json({ error: `A record with this ${field} already exists.` });
     }
+    if (error.status && error.status < 500) {
+      return res.status(error.status).json({ error: error.message });
+    }
     console.error('[publicRegisterDSA]', error);
     res.status(500).json({ error: 'Registration failed. Please try again.' });
   }
@@ -195,7 +211,7 @@ async function updateTenant(req, res) {
     const tenantId = parseInt(req.params.id, 10);
 
     // Authorization check: if not SUPER_ADMIN, they can only edit their own tenant
-    if (req.user.role?.name !== 'SUPER_ADMIN') {
+    if (req.user.role !== 'SUPER_ADMIN') {
       if (req.user.tenant_id !== tenantId) {
         return res.status(403).json({ error: 'You are not authorized to edit this DSA profile.' });
       }

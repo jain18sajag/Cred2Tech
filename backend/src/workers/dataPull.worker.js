@@ -44,6 +44,18 @@ class DataPullWorker {
 
     async processDueJobs() {
         this.isRunning = true;
+        // Watchdog: if a hung awaited call (vendor API, DB) never
+        // resolves/rejects, the try/finally below never runs and isRunning
+        // stays true forever, silently halting all future polling ticks with
+        // no alert. This independently forces isRunning back to false after
+        // one lease period so new ticks aren't permanently blocked, even
+        // though the original hung call may still be running in the background.
+        const watchdogMs = pollingConfig.PULL_JOB_LEASE_SECONDS * 1000;
+        const watchdog = setTimeout(() => {
+            console.error(`[DataPullWorker] WATCHDOG: processDueJobs exceeded ${watchdogMs}ms without completing — forcing isRunning=false so polling resumes.`);
+            this.isRunning = false;
+        }, watchdogMs);
+
         try {
             // 0. Expire jobs that exceeded max attempts or deadlines
             await this.expireJobs();
@@ -53,7 +65,7 @@ class DataPullWorker {
 
             if (jobs.length > 0) {
                 console.log(`[DataPullWorker] Acquired ${jobs.length} jobs for processing.`);
-                
+
                 // Process sequentially to be safe for wallet deduction and rate limits
                 for (const job of jobs) {
                     await this.processJob(job);
@@ -62,6 +74,7 @@ class DataPullWorker {
         } catch (error) {
             console.error('[DataPullWorker] Error during job processing loop:', error);
         } finally {
+            clearTimeout(watchdog);
             this.isRunning = false;
         }
     }

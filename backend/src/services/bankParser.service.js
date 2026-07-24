@@ -4,6 +4,8 @@
  * Centralized logic for parsing raw bank JSON payloads from Signzy and other vendors.
  * Handles various JSON wrappers, date formats, and financial year snapshots.
  */
+const { safeJsonParse } = require('../utils/safeJsonParse');
+
 const toNum = (v) => {
     if (v === undefined || v === null || v === '') return null;
     const n = Number(String(v).replace(/,/g, '').replace(/₹/g, '').trim());
@@ -51,7 +53,7 @@ function extractBankFySnapshot(rawPayload, options = {}) {
     };
     if (!rawPayload) return result;
 
-    const rawBank = typeof rawPayload === 'string' ? JSON.parse(rawPayload) : rawPayload;
+    const rawBank = safeJsonParse(rawPayload, {});
 
     // Support various nested paths for overview in different Signzy/Bank response shapes
     const overview =
@@ -274,7 +276,7 @@ function extractBankSalary(rawPayload) {
     };
     if (!rawPayload) return result;
 
-    const rawBank = typeof rawPayload === 'string' ? JSON.parse(rawPayload) : rawPayload;
+    const rawBank = safeJsonParse(rawPayload, {});
 
     // Vendor wrappers
     const salaryObj = rawBank?.salary || rawBank?.result?.salary || rawBank?.data?.salary || rawBank?.result?.[0]?.salary || rawBank?.[0]?.salary;
