@@ -1,6 +1,7 @@
 const prisma = require('../../config/db');
 const bcrypt = require('bcrypt');
 const { validatePasswordPolicy } = require('../utils/passwordPolicy');
+const { sendCaughtError } = require('../utils/sendError');
 
 async function createTenant(req, res) {
   console.log('CREATE TENANT PAYLOAD:', JSON.stringify(req.body));
@@ -53,7 +54,7 @@ async function createTenant(req, res) {
       const field = error.meta?.target?.[0] || 'field';
       return res.status(409).json({ error: `A tenant with this ${field} already exists.` });
     }
-    res.status(400).json({ error: error.message });
+    sendCaughtError(res, error, 'Failed to create tenant');
   }
 }
 
@@ -96,7 +97,7 @@ async function updateTenantStatus(req, res) {
     });
     res.json(tenant);
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    sendCaughtError(res, error, 'Failed to update tenant status');
   }
 }
 
@@ -255,8 +256,7 @@ async function updateTenant(req, res) {
       const field = error.meta?.target?.[0] || 'field';
       return res.status(409).json({ error: `A record with this ${field} already exists.` });
     }
-    console.error('[updateTenant]', error);
-    res.status(400).json({ error: error.message });
+    sendCaughtError(res, error, 'Failed to update tenant');
   }
 }
 

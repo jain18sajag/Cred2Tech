@@ -2,6 +2,7 @@ const authService = require('../services/auth.service');
 const prisma = require('../../config/db');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
+const { sendCaughtError } = require('../utils/sendError');
 
 async function login(req, res) {
   try {
@@ -25,7 +26,7 @@ async function login(req, res) {
 
     res.json({ message: 'Login successful', user, token });
   } catch (error) {
-    res.status(401).json({ error: error.message || 'Authentication failed' });
+    sendCaughtError(res, error, 'Authentication failed', 401);
   }
 }
 
@@ -75,7 +76,7 @@ async function resetPassword(req, res) {
     await authService.resetPassword(token, newPassword);
     res.json({ message: 'Password has been successfully reset.' });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    sendCaughtError(res, error, 'Failed to reset password');
   }
 }
 

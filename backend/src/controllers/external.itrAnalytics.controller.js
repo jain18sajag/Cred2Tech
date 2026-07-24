@@ -2,6 +2,7 @@ const prisma = require('../../config/db');
 const itrAnalyticsService = require('../services/externalApis/itrAnalytics.service');
 const { executePaidApi } = require('../services/wallet.service');
 const documentService = require('../services/document.service');
+const { sendCaughtError } = require('../utils/sendError');
 
 // Helper: extract latest & previous FY net profit / gross receipts from ITR analytics payload
 function extractItrFySnapshot(analyticsData) {
@@ -225,7 +226,8 @@ async function analyze(req, res) {
     } catch (error) {
         console.error('ITR Analytics Analyze Error:', error);
         const code = error.status === 401 ? 502 : error.status === 402 ? 402 : 500;
-        res.status(code).json({ error: error.message || 'Failed to initiate ITR analytics' });
+        const safeMessage = error.status && error.name === 'Error' ? error.message : 'Failed to initiate ITR analytics';
+        res.status(code).json({ error: safeMessage });
     }
 }
 
@@ -290,7 +292,7 @@ async function initiate(req, res) {
         });
     } catch (error) {
         console.error('ITR Initiate Error:', error);
-        res.status(500).json({ error: error.message || 'Failed to initiate ITR request' });
+        sendCaughtError(res, error, 'Failed to initiate ITR request', 500);
     }
 }
 
@@ -329,7 +331,7 @@ async function authorise(req, res) {
         });
     } catch (error) {
         console.error('ITR Authorise Error:', error);
-        res.status(500).json({ error: error.message || 'Failed to authorise ITR session' });
+        sendCaughtError(res, error, 'Failed to authorise ITR session', 500);
     }
 }
 
@@ -462,7 +464,8 @@ async function sync(req, res) {
         }
 
         const statusCode = error.status === 401 ? 502 : (error.status || 500);
-        res.status(statusCode).json({ error: error.message || 'Failed to sync ITR analytics' });
+        const safeMessage = error.status && error.name === 'Error' ? error.message : 'Failed to sync ITR analytics';
+        res.status(statusCode).json({ error: safeMessage });
     }
 }
 
@@ -500,7 +503,7 @@ async function download(req, res) {
         });
     } catch (error) {
         console.error('ITR Analytics Download Error:', error);
-        res.status(500).json({ error: error.message || 'Failed to retrieve ITR analytics data' });
+        sendCaughtError(res, error, 'Failed to retrieve ITR analytics data', 500);
     }
 }
 

@@ -1,11 +1,12 @@
 // proposal.controller.js
 const proposalService = require('../services/proposal.service');
+const { sendCaughtError } = require('../utils/sendError');
 
 async function create(req, res) {
     try {
         const case_id = parseInt(req.params.id, 10);
         const { lender_id, tenant_lender_id, scheme_id, other_lender } = req.body;
-        
+
         // At least one must be provided
         if (!lender_id && !tenant_lender_id && !other_lender) {
             return res.status(400).json({ error: 'lender_id, tenant_lender_id, or other_lender is required' });
@@ -23,8 +24,7 @@ async function create(req, res) {
 
         res.status(201).json({ success: true, proposal });
     } catch (err) {
-        console.error('[Proposal] create error:', err.message);
-        res.status(500).json({ error: err.message });
+        sendCaughtError(res, err, 'Failed to create proposal', 500);
     }
 }
 
@@ -37,8 +37,7 @@ async function listAll(req, res) {
         });
         res.json({ success: true, proposals });
     } catch (err) {
-        console.error('[Proposal] listAll error:', err.message);
-        res.status(500).json({ error: err.message });
+        sendCaughtError(res, err, 'Failed to list proposals', 500);
     }
 }
 
@@ -53,9 +52,11 @@ async function getOne(req, res) {
         });
         res.json({ success: true, ...data });
     } catch (err) {
-        console.error('[Proposal] getOne error:', err.message);
-        const status = err.message.includes('not found') ? 404 : 500;
-        res.status(status).json({ error: err.message });
+        if (err.name === 'Error') {
+            const status = err.message.includes('not found') ? 404 : 500;
+            return res.status(status).json({ error: err.message });
+        }
+        sendCaughtError(res, err, 'Failed to fetch proposal', 500);
     }
 }
 
@@ -73,8 +74,7 @@ async function update(req, res) {
         });
         res.json({ success: true, proposal: updated });
     } catch (err) {
-        console.error('[Proposal] update error:', err.message);
-        res.status(400).json({ error: err.message });
+        sendCaughtError(res, err, 'Failed to update proposal');
     }
 }
 
@@ -94,8 +94,7 @@ async function attachDocs(req, res) {
         });
         res.json({ success: true, documents: docs });
     } catch (err) {
-        console.error('[Proposal] attachDocs error:', err.message);
-        res.status(500).json({ error: err.message });
+        sendCaughtError(res, err, 'Failed to attach documents to proposal', 500);
     }
 }
 
@@ -115,8 +114,7 @@ async function detachDoc(req, res) {
         }
         res.json({ success: true });
     } catch (err) {
-        console.error('[Proposal] detachDoc error:', err.message);
-        res.status(500).json({ error: err.message });
+        sendCaughtError(res, err, 'Failed to detach document from proposal', 500);
     }
 }
 
@@ -133,7 +131,10 @@ async function submit(req, res) {
         res.json(result);
     } catch (err) {
         console.error('[Proposal] submit error:', err.message);
-        res.status(err.message.includes('already submitted') ? 409 : 500).json({ error: err.message });
+        if (err.name === 'Error') {
+            return res.status(err.message.includes('already submitted') ? 409 : 500).json({ error: err.message });
+        }
+        sendCaughtError(res, err, 'Failed to submit proposal', 500);
     }
 }
 
@@ -141,10 +142,10 @@ async function send(req, res) {
     try {
         const case_id = parseInt(req.params.id, 10);
         const proposal_id = parseInt(req.params.pid, 10);
-        
+
         // dispatchProposalEmailByProposalId is the new orchestrator
         const { dispatchProposalEmailByProposalId } = require('../services/proposal.email.service');
-        
+
         const result = await dispatchProposalEmailByProposalId({
             proposalId: proposal_id,
             tenantId: req.user.tenant_id,
@@ -174,7 +175,7 @@ async function clone(req, res) {
         const case_id = parseInt(req.params.id, 10);
         const proposal_id = parseInt(req.params.pid, 10);
         const { new_lender_id, new_tenant_lender_id, other_lender } = req.body;
-        
+
         if (!new_lender_id && !new_tenant_lender_id && !other_lender) {
             return res.status(400).json({ error: 'new_lender_id, new_tenant_lender_id, or other_lender is required' });
         }
@@ -189,8 +190,7 @@ async function clone(req, res) {
         });
         res.status(201).json({ success: true, proposal: cloned });
     } catch (err) {
-        console.error('[Proposal] clone error:', err);
-        res.status(500).json({ error: err.message });
+        sendCaughtError(res, err, 'Failed to clone proposal', 500);
     }
 }
 

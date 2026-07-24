@@ -1,4 +1,5 @@
 const prisma = require('../../config/db');
+const { sendCaughtError } = require('../utils/sendError');
 
 async function listDirectCases(req, res) {
   try {
@@ -14,7 +15,7 @@ async function listDirectCases(req, res) {
     });
     return res.status(200).json(cases);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return sendCaughtError(res, err, 'Failed to fetch direct MSME cases', 500);
   }
 }
 
@@ -41,7 +42,7 @@ async function getDirectCaseDetail(req, res) {
     }
     return res.status(200).json(caseData);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return sendCaughtError(res, err, 'Failed to fetch direct MSME case detail', 500);
   }
 }
 
@@ -55,7 +56,7 @@ async function getAllocationTargets(req, res) {
     });
     return res.status(200).json(tenants);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return sendCaughtError(res, err, 'Failed to fetch allocation targets', 500);
   }
 }
 
@@ -89,7 +90,7 @@ async function allocateDirectCase(req, res) {
 
     return res.status(200).json(updatedCase);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return sendCaughtError(res, err, 'Failed to allocate direct case', 500);
   }
 }
 

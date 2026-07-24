@@ -1,5 +1,6 @@
 const prisma = require('../../config/db');
 const path = require('path');
+const { sendCaughtError } = require('../utils/sendError');
 const {
     processSalarySlipSync,
     processSalarySlipBatchSync,
@@ -400,7 +401,7 @@ async function processSalarySlipOcrBatch(req, res) {
         if (error.statusCode === 409) {
             return res.status(409).json({ error: error.message, validation: { duplicate_salary_period: true } });
         }
-        res.status(500).json({ error: error.message || 'Failed to process salary slip batch.' });
+        sendCaughtError(res, error, 'Failed to process salary slip batch.', 500);
     }
 }
 
@@ -554,8 +555,7 @@ async function getSalarySummary(req, res) {
 
         res.json({ success: true, data: results });
     } catch (error) {
-        console.error('[salaryOcr.controller] getSalarySummary error:', error);
-        res.status(500).json({ error: error.message });
+        sendCaughtError(res, error, 'Failed to fetch salary summary', 500);
     }
 }
 

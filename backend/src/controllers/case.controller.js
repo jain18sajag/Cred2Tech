@@ -2,6 +2,7 @@ const caseService = require('../services/case.service');
 const prisma = require('../../config/db');
 const { buildReportFileName, generateLoanApplicationSummaryWorkbook } = require('../services/reports/loanApplicationSummary.service');
 const { buildBulkUploadResponse } = require('../utils/bulkUploadResponse');
+const { sendCaughtError } = require('../utils/sendError');
 
 async function createCase(req, res) {
   try {
@@ -476,8 +477,7 @@ async function allocateDsaUser(req, res) {
 
     res.json(updatedCase);
   } catch (error) {
-    console.error('[allocateDsaUser] Error:', error);
-    res.status(400).json({ error: error.message || 'Failed to allocate case' });
+    sendCaughtError(res, error, 'Failed to allocate case');
   }
 }
 

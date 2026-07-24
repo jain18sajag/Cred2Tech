@@ -1,4 +1,5 @@
 const sanctionService = require('../services/sanction.service');
+const { sendCaughtError } = require('../utils/sendError');
 
 async function sanctionCase(req, res) {
     try {
@@ -19,8 +20,11 @@ async function sanctionCase(req, res) {
         res.status(200).json(result);
     } catch (error) {
         console.error('[SANCTION CONTROLLER] Error:', error);
-        const status = error.message.includes('not found') ? 404 : 400;
-        res.status(status).json({ error: error.message });
+        if (error.name === 'Error') {
+            const status = error.message.includes('not found') ? 404 : 400;
+            return res.status(status).json({ error: error.message });
+        }
+        sendCaughtError(res, error, 'Failed to sanction case');
     }
 }
 

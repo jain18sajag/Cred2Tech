@@ -1,6 +1,7 @@
 const prisma = require('../../config/db');
 const walletService = require('../services/wallet.service');
 const pricingService = require('../services/pricing.service');
+const { sendCaughtError } = require('../utils/sendError');
 
 async function getBalance(req, res) {
   try {
@@ -141,8 +142,9 @@ async function verifyCheckout(req, res) {
          const creditResult = await walletService.creditWalletForRazorpayTopup(topup.id, payment, payment.id);
          return res.json({ status: creditResult.status, message: 'Payment verified and wallet credited successfully.' });
        } catch (err) {
-         console.error("Credit error:", err.message);
-         return res.json({ status: 'FAILED', message: err.message });
+         console.error("Credit error:", err);
+         const safeMessage = err.name === 'Error' ? err.message : 'Failed to credit wallet';
+         return res.json({ status: 'FAILED', message: safeMessage });
        }
     }
 
@@ -256,7 +258,7 @@ async function allocateEmployeeCredits(req, res) {
 
     res.json({ message: 'Credits allocated successfully' });
   } catch (error) {
-    res.status(error.message === 'Insufficient unallocated tenant credits' ? 400 : 500).json({ error: error.message });
+    sendCaughtError(res, error, 'Failed to allocate credits');
   }
 }
 
@@ -321,7 +323,7 @@ async function revokeEmployeeCredits(req, res) {
 
     res.json({ message: 'Credits revoked successfully' });
   } catch (error) {
-    res.status(error.message === 'Insufficient employee credits to revoke' ? 400 : 500).json({ error: error.message });
+    sendCaughtError(res, error, 'Failed to revoke credits');
   }
 }
 

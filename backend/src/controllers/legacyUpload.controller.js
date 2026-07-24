@@ -186,7 +186,8 @@ async function bulkUploadLegacyCases(req, res) {
         results.success++;
       } catch (err) {
         results.failed++;
-        results.errors.push(`Row ${i + 1} (${row.business_pan || 'Unknown'}): ${err.message}`);
+        const safeMessage = err.name === 'Error' ? err.message : 'Failed to process row';
+        results.errors.push(`Row ${i + 1} (${row.business_pan || 'Unknown'}): ${safeMessage}`);
       }
     }
 

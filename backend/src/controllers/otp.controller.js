@@ -1,4 +1,5 @@
 const otpService = require('../services/otp.service');
+const { sendCaughtError } = require('../utils/sendError');
 
 const otpController = {
   send: async (req, res, next) => {
@@ -17,7 +18,7 @@ const otpController = {
       const result = await otpService.sendOtp(mobile, purpose, target_type, targetId, tenantId, userId);
       res.json(result);
     } catch (error) {
-      res.status(error.status || 400).json({ error: error.message });
+      sendCaughtError(res, error, 'Failed to send OTP');
     }
   },
 
@@ -36,7 +37,7 @@ const otpController = {
       const result = await otpService.verifyOtp(otp, target_type, targetId, tenantId);
       res.json(result);
     } catch (error) {
-      res.status(error.status || 400).json({ error: error.message });
+      sendCaughtError(res, error, 'Failed to verify OTP');
     }
   },
 
@@ -56,7 +57,7 @@ const otpController = {
       const result = await otpService.resendOtp(mobile, purpose, target_type, targetId, tenantId, userId);
       res.json(result);
     } catch (error) {
-      res.status(error.status || 400).json({ error: error.message });
+      sendCaughtError(res, error, 'Failed to resend OTP');
     }
   }
 };

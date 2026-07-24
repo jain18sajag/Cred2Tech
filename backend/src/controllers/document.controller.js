@@ -14,6 +14,7 @@ const path = require('path');
 const prisma = require('../../config/db');
 const { streamDocument } = require('../services/document.service');
 const { logSensitiveAccess } = require('../utils/auditLog');
+const { sendCaughtError } = require('../utils/sendError');
 
 /**
  * List documents scoped to the requesting user's tenant.
@@ -69,8 +70,7 @@ async function listDocuments(req, res) {
 
         res.json({ success: true, data: documents });
     } catch (error) {
-        console.error('[document.controller] listDocuments error:', error);
-        res.status(500).json({ error: error.message });
+        sendCaughtError(res, error, 'Failed to list documents');
     }
 }
 
@@ -114,12 +114,8 @@ async function serveDocument(req, res, disposition) {
 
         stream.pipe(res);
     } catch (error) {
-        const status = error.statusCode || 500;
         if (!res.headersSent) {
-            res.status(status).json({ error: error.message });
-        }
-        if (status === 500) {
-            console.error('[document.controller] serveDocument error:', error);
+            sendCaughtError(res, error, 'Failed to retrieve document');
         }
     }
 }
@@ -210,8 +206,7 @@ async function uploadDocument(req, res) {
         console.log(`[document.controller] Upload: doc #${doc.id} (${docType}) for case=${case_id}, applicant=${applicant_id || 'none'}, path=${storagePath}`);
         res.status(201).json({ success: true, data: doc });
     } catch (error) {
-        console.error('[document.controller] uploadDocument error:', error);
-        res.status(500).json({ error: error.message });
+        sendCaughtError(res, error, 'Failed to upload document');
     }
 }
 

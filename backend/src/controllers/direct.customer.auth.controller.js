@@ -1,4 +1,5 @@
 const directCustomerAuthService = require('../services/direct.customer.auth.service');
+const { sendCaughtError } = require('../utils/sendError');
 
 async function sendOtp(req, res) {
   try {
@@ -10,7 +11,7 @@ async function sendOtp(req, res) {
     const result = await directCustomerAuthService.sendOtp(String(mobile).trim());
     return res.status(200).json(result);
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    sendCaughtError(res, err, 'Failed to send OTP');
   }
 }
 
@@ -24,7 +25,7 @@ async function verifyOtp(req, res) {
     const result = await directCustomerAuthService.verifyOtp(String(mobile).trim(), String(otp).trim());
     return res.status(200).json(result);
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    sendCaughtError(res, err, 'Failed to verify OTP');
   }
 }
 

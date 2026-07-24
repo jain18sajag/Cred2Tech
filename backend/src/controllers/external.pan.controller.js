@@ -307,9 +307,10 @@ exports.fetchPanIntelligence = async (req, res) => {
     } catch (error) {
         console.error('PAN Fetch error:', error);
         const statusCode = error.status === 401 ? 502 : (error.status || 500);
+        const safeMessage = error.status && error.name === 'Error' ? error.message : 'Failed to fetch PAN details';
         res.status(statusCode).json({
             status: "FAILED",
-            error_message: error.message
+            error_message: safeMessage
         });
     }
 };
@@ -457,7 +458,8 @@ exports.verifyPan = async (req, res) => {
         res.json(result);
     } catch (error) {
         console.error('PAN Verify error:', error);
-        res.status(500).json({ status: "FAILED", error_message: error.message });
+        const safeMessage = error.name === 'Error' ? error.message : 'Failed to verify PAN';
+        res.status(500).json({ status: "FAILED", error_message: safeMessage });
     }
 };
 

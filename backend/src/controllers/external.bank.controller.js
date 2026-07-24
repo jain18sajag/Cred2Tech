@@ -100,7 +100,8 @@ async function analyze(req, res) {
         else if (error.status === 409) statusCode = 409;
         else if (error.status >= 400 && error.status < 500) statusCode = error.status;
 
-        res.status(statusCode).json({ error: error.message || "Failed to start bank analysis" });
+        const safeMessage = error.status && error.name === 'Error' ? error.message : "Failed to start bank analysis";
+        res.status(statusCode).json({ error: safeMessage });
     }
 }
 
@@ -241,7 +242,8 @@ async function syncStatus(req, res) {
     } catch (error) {
         console.error("Bank Sync Error: ", error);
         const statusCode = error.status === 401 ? 502 : (error.status || 500);
-        res.status(statusCode).json({ error: error.message || "Failed to sync status" });
+        const safeMessage = error.status && error.name === 'Error' ? error.message : "Failed to sync status";
+        res.status(statusCode).json({ error: safeMessage });
     }
 }
 
@@ -381,7 +383,8 @@ async function downloadData(req, res) {
     } catch (error) {
         console.error("Bank Download Error: ", error);
         const statusCode = error.status === 401 ? 502 : (error.status || 500);
-        res.status(statusCode).json({ error: error.message || "Failed to download URLs" });
+        const safeMessage = error.status && error.name === 'Error' ? error.message : "Failed to download URLs";
+        res.status(statusCode).json({ error: safeMessage });
     }
 }
 

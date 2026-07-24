@@ -1,4 +1,5 @@
 const disbursementService = require('../services/disbursement.service');
+const { sendCaughtError } = require('../utils/sendError');
 
 async function recordDisbursement(req, res) {
     try {
@@ -15,8 +16,7 @@ async function recordDisbursement(req, res) {
         const result = await disbursementService.recordDisbursement(caseId, tenantId, payload, userId, idempotencyKey);
         res.status(201).json(result);
     } catch (error) {
-        console.error('[DISBURSEMENT CONTROLLER] Error:', error);
-        res.status(400).json({ error: error.message });
+        sendCaughtError(res, error, 'Failed to record disbursement');
     }
 }
 
@@ -27,8 +27,7 @@ async function getCaseSummary(req, res) {
         const result = await disbursementService.getCaseDisbursementSummary(caseId, tenantId);
         res.json(result);
     } catch (error) {
-        console.error('[DISBURSEMENT CONTROLLER] Error:', error);
-        res.status(404).json({ error: error.message });
+        sendCaughtError(res, error, 'Failed to fetch disbursement summary', 404);
     }
 }
 
@@ -68,8 +67,7 @@ async function uploadBulkDisbursements(req, res) {
         const result = await bulkDisbursementUploadService.processUpload(req.file.buffer, tenantId, userId);
         res.json(result);
     } catch (error) {
-        console.error('[DISBURSEMENT CONTROLLER] Upload Error:', error);
-        res.status(400).json({ error: error.message });
+        sendCaughtError(res, error, 'Failed to upload disbursements');
     }
 }
 

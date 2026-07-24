@@ -6,6 +6,7 @@ const { extractGstDetails } = require('../services/financial.extractor');
 const { determineNotificationRecipient } = require('../services/notification.service');
 const { safeGet } = require('../utils/ssrf');
 const { generateWebhookToken, appendWebhookToken, verifyWebhookToken } = require('../utils/webhookToken');
+const { sendCaughtError } = require('../utils/sendError');
 
 
 // Helper: extract latest + previous financial year turnover from raw GST JSON
@@ -243,8 +244,11 @@ async function createGstRequest(req, res) {
 
         res.json({ success: true, data: result });
     } catch (error) {
-        if (error.status === 402) return res.status(402).json({ error: error.message });
-        res.status(500).json({ error: error.message, status: "FAILED" });
+        const explicitStatus = error?.status || error?.statusCode;
+        if (explicitStatus) return res.status(explicitStatus).json({ error: error.message, status: "FAILED" });
+        if (error?.name === 'Error') return res.status(500).json({ error: error.message, status: "FAILED" });
+        console.error('[createGstRequest]', error);
+        res.status(500).json({ error: 'Failed to create GST request', status: "FAILED" });
     }
 }
 
@@ -281,7 +285,7 @@ async function submitGstOtp(req, res) {
 
         res.json({ success: true, status: 'PROCESSING', message: providerRes.message });
     } catch (error) {
-        res.status(400).json({ error: error.message });
+        sendCaughtError(res, error, 'Failed to submit GST OTP');
     }
 }
 
@@ -424,7 +428,7 @@ async function syncGstData(req, res) {
 
         res.json({ success: true, status: currentStatus, dataSynced });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        sendCaughtError(res, error, 'Failed to sync GST data', 500);
     }
 }
 
@@ -615,7 +619,7 @@ async function getRequestDetails(req, res) {
 
         res.json({ success: true, data: requests });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        sendCaughtError(res, error, 'Failed to fetch GST request details', 500);
     }
 }
 

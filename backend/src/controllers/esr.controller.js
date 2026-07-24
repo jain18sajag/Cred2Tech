@@ -134,7 +134,7 @@ function _setNoStoreHeaders(res) {
 }
 
 function _sendEsrError(res, fallbackMessage, err) {
-  const message = err?.message || fallbackMessage;
+  const message = err?.name === 'Error' ? err.message : fallbackMessage;
   res.status(500).json({
     error: message,
     fallback_error: fallbackMessage
