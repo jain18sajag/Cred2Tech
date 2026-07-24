@@ -10,6 +10,23 @@ const { validatePasswordPolicy } = require('../utils/passwordPolicy');
 const ALLOWED_USER_UPDATE_FIELDS = ['name', 'email', 'mobile', 'hierarchy_level', 'manager_id', 'designation'];
 const VALID_USER_STATUSES = ['ACTIVE', 'INACTIVE', 'SUSPENDED'];
 
+// Fields safe to return to an API client — excludes password_hash and other
+// internal-only columns. Matches the select already used in getUserById.
+const SAFE_USER_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  mobile: true,
+  role_id: true,
+  tenant_id: true,
+  hierarchy_level: true,
+  manager_id: true,
+  hierarchy_path: true,
+  status: true,
+  designation: true,
+  last_login_at: true,
+};
+
 // Mirrors the RBAC matrix documented below in createUser — which target role names
 // a given currentUser is allowed to assign to someone else.
 function assertRoleAssignable(currentUser, targetRoleName) {
@@ -135,6 +152,7 @@ async function createUser(data, currentUser) {
     return await tx.user.update({
       where: { id: newUser.id },
       data: { hierarchy_path: hierarchyPath },
+      select: SAFE_USER_SELECT,
     });
   });
 }
@@ -278,7 +296,8 @@ async function updateUser(id, data, currentUser) {
   return await prisma.$transaction(async (tx) => {
     const updatedUser = await tx.user.update({
       where: { id: Number(id) },
-      data: updateData
+      data: updateData,
+      select: SAFE_USER_SELECT,
     });
 
     if (data.manager_id !== undefined && data.manager_id !== user.manager_id) {
