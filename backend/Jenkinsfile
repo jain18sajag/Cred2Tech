@@ -278,7 +278,17 @@ pipeline {
                             cd ${BACKEND_DIR}
                             npm ci
                             npx prisma generate
-                            node -e "require('./src/app.js'); console.log('app.js loads OK')"
+                            # This is a pure code-load check (require('./app.js') has no
+                            # .env of its own here — dotenv only runs in server.js, and
+                            # the staged secrets aren't copied into this checkout dir
+                            # until the 'Create Release' stage). JWT_SECRET is required
+                            # at module-load time (fail-fast, no insecure fallback), so
+                            # give this validation-only run a throwaway placeholder — it
+                            # is NOT what production runs on. The real secret from the
+                            # Jenkins credential is what lands in the release .env, and
+                            # is what Health Check / Version Verification actually
+                            # exercise against the live PM2 process further down.
+                            JWT_SECRET=ci-validate-placeholder node -e "require('./src/app.js'); console.log('app.js loads OK')"
                             echo "Dependencies installed, Prisma client generated, app loads."
                         """
                     }
