@@ -3,6 +3,19 @@ const { executePaidApi } = require('../services/wallet.service');
 const panService = require('../services/externalApis/pan.service');
 const { logSensitiveAccess } = require('../utils/auditLog');
 
+// A GST registration still awaiting approval only has a TRN (Temporary Reference
+// Number), not a real legal/trade name yet — some vendor responses put that TRN
+// string into the name fields as a placeholder. Never treat such an entry as the
+// business's display name; prefer an entry that's actually registered.
+function isTrnStatus(entry) {
+    const status = (entry?.gstinStatus || entry?.applicationStatus || '').toString().toUpperCase();
+    return status.includes('TRN');
+}
+function pickPrimaryGstEntry(list) {
+    if (!Array.isArray(list) || list.length === 0) return {};
+    return list.find(d => !isTrnStatus(d)) || list[0];
+}
+
 exports.fetchPanIntelligence = async (req, res) => {
     try {
         const { customer_id, case_id, consentMethod, pan } = req.body;
@@ -103,7 +116,7 @@ exports.fetchPanIntelligence = async (req, res) => {
                 const grossIncomeYr = apiResponse.grossTotalIncomeFinancialYear || null;
 
                 const detailed = apiResponse.gstnDetailed || [];
-                const primaryGst = detailed[0] || {};
+                const primaryGst = pickPrimaryGstEntry(detailed);
                 
                 const constitutionOfBusiness = primaryGst.constitutionOfBusiness || null;
                 const legalName = primaryGst.legalNameOfBusiness || null;
