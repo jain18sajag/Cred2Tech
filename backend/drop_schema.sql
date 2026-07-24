@@ -1,1 +1,0 @@
-DROP SCHEMA IF EXISTS empty_test CASCADE;
