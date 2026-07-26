@@ -122,7 +122,8 @@ export default function CaseDetailPage() {
     remarks: '',
     pdd_pending: false,
     pdd_documents: [{ document_name: '', due_date: '' }],
-    loan_account_number: ''
+    loan_account_number: '',
+    subvention_amount: ''
   });
 
   const fetchDisbursementSummary = useCallback(async () => {
@@ -384,6 +385,9 @@ export default function CaseDetailPage() {
 
   // Stage progress calculation
   const currentStepIndex = STAGE_STEPS.findIndex(s => s.id === caseData.stage);
+
+  // Check if any subvention has already been applied in a past disbursement
+  const hasExistingSubvention = disbursementSummary?.disbursements?.some(d => d.subvention_amount && Number(d.subvention_amount) > 0);
 
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 20px 60px', fontFamily: "'Manrope', sans-serif" }}>
@@ -1010,6 +1014,25 @@ export default function CaseDetailPage() {
                           style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1.5px solid #FED7AA' }}
                         />
                         <div style={{ fontSize: 10, color: '#C2410C', marginTop: 4 }}>Expected date for the remaining balance</div>
+                      </div>
+                    )}
+
+                    {!hasExistingSubvention && (
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#9A3412', marginBottom: 6 }}>Subvention Amount (₹)</label>
+                        <input
+                          type="number"
+                          value={disbursementForm.subvention_amount}
+                          onChange={(e) => setDisbursementForm({ ...disbursementForm, subvention_amount: e.target.value })}
+                          placeholder="e.g. 5000"
+                          style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1.5px solid #FED7AA' }}
+                        />
+                        <div style={{ fontSize: 10, color: '#C2410C', marginTop: 4 }}>Deducted from Lender Commission</div>
+                      </div>
+                    )}
+                    {hasExistingSubvention && (
+                      <div style={{ gridColumn: 'span 2', fontSize: 11, color: '#64748B', fontStyle: 'italic', padding: '8px 0' }}>
+                        * Subvention was already applied in a previous tranche. It can only be taken once per case.
                       </div>
                     )}
 

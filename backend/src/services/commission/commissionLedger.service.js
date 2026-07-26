@@ -1,5 +1,6 @@
 const prisma = require('../../../config/db');
 const { calculateCommission } = require('./commissionCalculator.service');
+const { Decimal } = require('@prisma/client');
 // const subDsaPayoutService = require('../subDsaPayout.service');
 
 /**
@@ -86,6 +87,13 @@ async function processDisbursementCommission(tenantId, caseId, disbursement, san
         return null;
     }
 
+    let finalCommission = calculationResult.calculated_commission;
+    if (disbursement.subvention_amount) {
+        const subvention = new Decimal(disbursement.subvention_amount);
+        finalCommission = Decimal.max(0, finalCommission.minus(subvention));
+        console.log(`[COMMISSION] Subvention of ${subvention.toNumber()} applied. Commission reduced from ${calculationResult.calculated_commission.toNumber()} to ${finalCommission.toNumber()}`);
+    }
+
     // 3. Insert Commission Ledger Entry (Append-only BASE_COMMISSION)
     const ledgerEntry = await tx.commissionLedger.create({
         data: {
@@ -101,7 +109,7 @@ async function processDisbursementCommission(tenantId, caseId, disbursement, san
             commission_type: rule.commission_type,
 
             disbursed_amount: calculationResult.disbursed_amount,
-            calculated_commission: calculationResult.calculated_commission,
+            calculated_commission: finalCommission,
 
             slab_snapshot: calculationResult.slab_snapshot,
             calculation_snapshot: calculationResult.calculation_snapshot,
@@ -111,7 +119,7 @@ async function processDisbursementCommission(tenantId, caseId, disbursement, san
         }
     });
 
-    console.log(`[COMMISSION] BASE_COMMISSION created for disbursement ${disbursement.id} (Case ${caseId}) - Amount: ${calculationResult.calculated_commission.toNumber()}`);
+    console.log(`[COMMISSION] BASE_COMMISSION created for disbursement ${disbursement.id} (Case ${caseId}) - Amount: ${finalCommission.toNumber()}`);
 
     // 4. Trigger SubDSA payout atomically when the partner's rule is configured for disbursement-time payout.
     const subDsaPayoutService = require('../subDsaPayout.service');

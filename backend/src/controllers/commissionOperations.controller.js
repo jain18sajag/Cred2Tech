@@ -287,7 +287,7 @@ exports.getLenderCommissions = async (req, res) => {
 
         const allLedgers = await prisma.commissionLedger.findMany({
             where: { tenant_id },
-            include: { disbursement: { select: { disbursement_date: true } }, case_entity: { include: { customer: true } } },
+            include: { disbursement: { select: { disbursement_date: true, subvention_amount: true } }, case_entity: { include: { customer: true } } },
             orderBy: { created_at: 'desc' }
         });
 
@@ -397,7 +397,9 @@ exports.getLenderCommissions = async (req, res) => {
             if (l.entry_type === 'BASE_COMMISSION' && !l.is_reversed) lenderObj.metrics.volume += parseFloat(l.disbursed_amount || 0);
             
             const comm = parseFloat(l.calculated_commission || 0);
-            lenderObj.metrics.gross_commission += comm;
+            const subvention = (l.entry_type === 'BASE_COMMISSION' && !l.is_reversed && l.disbursement?.subvention_amount) ? parseFloat(l.disbursement.subvention_amount) : 0;
+            
+            lenderObj.metrics.gross_commission += comm + subvention;
             if (l.status === 'PENDING' || l.status === 'INVOICED') lenderObj.metrics.pending_amount += comm;
 
             if (!lenderObj.casesMap.has(l.case_id)) {
@@ -419,7 +421,8 @@ exports.getLenderCommissions = async (req, res) => {
             const caseRow = lenderObj.casesMap.get(l.case_id);
             caseRow.ledgers.push(l);
             caseRow.netPayable += comm;
-            caseRow.payout += comm;
+            caseRow.payout += comm + subvention;
+            caseRow.subvention += subvention;
             if (l.entry_type === 'BASE_COMMISSION' && !l.is_reversed) caseRow.disbAmt += parseFloat(l.disbursed_amount || 0);
             caseRow.status = l.status;
         });

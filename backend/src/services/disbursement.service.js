@@ -32,7 +32,8 @@ async function recordDisbursementOnce(caseId, tenantId, payload, userId, idempot
         disbursement_date,
         next_disbursement_due_date,
         remarks,
-        pdd_tasks = []
+        pdd_tasks = [],
+        subvention_amount
     } = payload;
 
     const disbursement = await prisma.$transaction(async (tx) => {
@@ -112,6 +113,7 @@ async function recordDisbursementOnce(caseId, tenantId, payload, userId, idempot
                 product_type: sanction.product_type,
                 tranche_number: trancheNumber,
                 amount: disbursementAmount,
+                subvention_amount: subvention_amount ? new Decimal(subvention_amount) : null,
                 disbursement_date: new Date(disbursement_date),
                 next_disbursement_due_date: next_disbursement_due_date ? new Date(next_disbursement_due_date) : null,
                 remarks,
