@@ -113,8 +113,12 @@ async function selectLender(req, res) {
 
 async function submitCase(req, res) {
   try {
-    const { caseId } = req.body || {};
-    const result = await directCustomerService.submitCase(req.user.id, caseId);
+    const { caseId, requested_amount, tenure_months, interest_rate } = req.body || {};
+    const result = await directCustomerService.submitCase(req.user.id, caseId, {
+      requested_amount,
+      tenure_months,
+      interest_rate
+    });
     return res.status(200).json(result);
   } catch (err) {
     sendCaughtError(res, err, 'Failed to submit case');

@@ -66,7 +66,7 @@ async function checkCustomer(req, res) {
 async function createOrAttach(req, res) {
   try {
     let { business_pan, business_mobile, business_email, business_name, customer_id, is_professional, profession_type } = req.body;
-    
+
     business_pan = business_pan?.trim().toUpperCase();
     const mobileStr = business_mobile ? business_mobile.toString().replace(/\D/g, '') : null;
 
@@ -97,7 +97,7 @@ async function createOrAttach(req, res) {
 async function createSalariedCustomer(req, res) {
   try {
     let { business_pan, business_name, business_mobile, business_email, product_type } = req.body;
-    
+
     business_pan = business_pan?.trim().toUpperCase();
 
     if (!business_pan) {
@@ -125,10 +125,10 @@ async function createSalariedCustomer(req, res) {
 }
 
 function resolveApiStatus(logs, apiCode) {
-    const apiLogs = logs.filter(l => l.api_code === apiCode);
-    if (apiLogs.some(l => l.status === 'SUCCESS')) return 'COMPLETE';
-    if (apiLogs.some(l => l.status === 'FAILED')) return 'PENDING';
-    return 'NOT_STARTED';
+  const apiLogs = logs.filter(l => l.api_code === apiCode);
+  if (apiLogs.some(l => l.status === 'SUCCESS')) return 'COMPLETE';
+  if (apiLogs.some(l => l.status === 'FAILED')) return 'PENDING';
+  return 'NOT_STARTED';
 }
 
 const toINR = (v) => {
@@ -199,13 +199,13 @@ async function getProfile(req, res) {
 
     // Tenant isolation (defense-in-depth — already enforced in the query above)
     if (!isSuperAdmin && customer.tenant_id !== tenantId) {
-       return res.status(403).json({ error: 'Forbidden. Customer belongs to different tenant.' });
+      return res.status(403).json({ error: 'Forbidden. Customer belongs to different tenant.' });
     }
 
     // Direct MSME customers share one tenant with every other direct customer,
     // so tenant_id alone doesn't isolate them from each other's profiles.
     if (req.user.role === 'MSME_CUSTOMER' && customer.created_by_user_id !== req.user.id) {
-       return res.status(403).json({ error: 'Forbidden. You do not have access to this customer.' });
+      return res.status(403).json({ error: 'Forbidden. You do not have access to this customer.' });
     }
 
     await logSensitiveAccess({
@@ -334,41 +334,48 @@ async function getApiAvailability(req, res) {
   // #swagger.tags = ['Customers']
   // #swagger.summary = 'Check API Action Button states'
   try {
-     const customerId = parseInt(req.params.customer_id, 10);
-     const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
-     const customer = await prisma.customer.findFirst({
-       where: isSuperAdmin ? { id: customerId } : { id: customerId, tenant_id: req.user.tenant_id },
-       include: { api_logs: true, cases: { include: { applicants: true } } }
-     });
+    const customerId = parseInt(req.params.customer_id, 10);
+    const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
+    const customer = await prisma.customer.findFirst({
+      where: isSuperAdmin ? { id: customerId } : { id: customerId, tenant_id: req.user.tenant_id },
+      include: { api_logs: true, cases: { include: { applicants: true } } }
+    });
 
-     if (!customer) return res.status(404).json({ error: 'Customer not found' });
-     if (!isSuperAdmin && customer.tenant_id !== req.user.tenant_id) {
-       return res.status(403).json({ error: 'Forbidden.' });
-     }
-     if (req.user.role === 'MSME_CUSTOMER' && customer.created_by_user_id !== req.user.id) {
-       return res.status(403).json({ error: 'Forbidden.' });
-     }
+    if (!customer) return res.status(404).json({ error: 'Customer not found' });
+    if (!isSuperAdmin && customer.tenant_id !== req.user.tenant_id) {
+      return res.status(403).json({ error: 'Forbidden.' });
+    }
+    if (req.user.role === 'MSME_CUSTOMER' && customer.created_by_user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden.' });
+    }
 
-     const apiStatus = {
-        bureau: resolveApiStatus(customer.api_logs, 'BUREAU_PULL'),
-        gst: resolveApiStatus(customer.api_logs, 'GST_FETCH'),
-        itr: resolveApiStatus(customer.api_logs, 'ITR_ANALYTICS')
-     };
+    if (req.user.role === 'MSME_CUSTOMER') {
+      const ownsCustomer = await prisma.case.findFirst({
+        where: { customer_id: customerId, msme_customer_user_id: req.user.id }
+      });
+      if (!ownsCustomer) return res.status(403).json({ error: 'Forbidden. MSME does not own this customer.' });
+    }
 
-     const latestCase = customer.cases[0] || {};
-     const primaryApplicant = latestCase.applicants?.find(a => a.type === 'PRIMARY');
-     const otpVerified = primaryApplicant ? primaryApplicant.otp_verified : false;
+    const apiStatus = {
+      bureau: resolveApiStatus(customer.api_logs, 'BUREAU_PULL'),
+      gst: resolveApiStatus(customer.api_logs, 'GST_FETCH'),
+      itr: resolveApiStatus(customer.api_logs, 'ITR_ANALYTICS')
+    };
 
-     res.json({
-        case_id: latestCase.id,
-        can_pull_gst: apiStatus.gst !== 'COMPLETE',
-        can_pull_itr: apiStatus.itr !== 'COMPLETE',
-        can_pull_bureau: apiStatus.bureau !== 'COMPLETE' && otpVerified,
-        bureau_reason: !otpVerified ? "OTP not verified yet" : (apiStatus.bureau === 'COMPLETE' ? "Already pulled" : null)
-     });
+    const latestCase = customer.cases[0] || {};
+    const primaryApplicant = latestCase.applicants?.find(a => a.type === 'PRIMARY');
+    const otpVerified = primaryApplicant ? primaryApplicant.otp_verified : false;
+
+    res.json({
+      case_id: latestCase.id,
+      can_pull_gst: apiStatus.gst !== 'COMPLETE',
+      can_pull_itr: apiStatus.itr !== 'COMPLETE',
+      can_pull_bureau: apiStatus.bureau !== 'COMPLETE' && otpVerified,
+      bureau_reason: !otpVerified ? "OTP not verified yet" : (apiStatus.bureau === 'COMPLETE' ? "Already pulled" : null)
+    });
   } catch (error) {
-     console.error(error);
-     res.status(500).json({ error: 'Failed resolving availability' });
+    console.error(error);
+    res.status(500).json({ error: 'Failed resolving availability' });
   }
 }
 

@@ -154,28 +154,129 @@ async function runExperianCheck({ caseId, applicantId, payloadData }) {
         return 'ACTIVE';
       };
 
+      // Constants for EMI Calculation Mapping
+      const BUREAU_TO_CRED2TECH_MAP = {
+        "AUTO LOAN": "Auto Loan",
+        "HOUSING LOAN": "Housing Loan",
+        "PROPERTY LOAN": "Loan Against Property",
+        "LOAN AGAINST SHARES/SECURITIES": "Loan Against Shares",
+        "PERSONAL LOAN": "Personal Loan",
+        "CONSUMER LOAN": "Consumer Loan",
+        "GOLD LOAN": "Gold Loan",
+        "EDUCATIONAL LOAN": "Education Loan",
+        "LOAN TO PROFESSIONAL": "Personal Loan",
+        "CREDIT CARD": "Credit Card",
+        "LEASING": "Lease",
+        "OVERDRAFT": "Overdraft",
+        "TWO-WHEELER LOAN": "Two Wheeler Loan",
+        "NON-FUNDED CREDIT FACILITY": "Bank Guarantee",
+        "LOAN AGAINST BANK DEPOSITS": "Loan against FD",
+        "FLEET CARD": "Credit Card",
+        "Commercial Vehicle Loan": "Commercial Vehicle",
+        "Telco - Wireless": "Consumer Loan",
+        "Telco - Broadband": "Consumer Loan",
+        "Telco - Landline": "Consumer Loan",
+        "GECL Secured": "GECL",
+        "GECL Unsecured": "GECL",
+        "Secured Credit Card": "Credit Card",
+        "Used Car Loan": "Auto Loan",
+        "Construction Equipment Loan": "Construction Equipment Loan",
+        "Tractor Loan": "Commercial Vehicle",
+        "Corporate Credit Card": "Credit Card",
+        "Kisan Credit Card": "Credit Card",
+        "Loan on Credit Card": "Personal Loan",
+        "Prime Minister Jaan Dhan Yojana - Overdraft": "Overdraft",
+        "Mudra Loans - Shishu / Kishor / Tarun": "Business Loan",
+        "Microfinance - Business Loan": "Business Loan",
+        "Microfinance - Personal Loan": "Personal Loan",
+        "Microfinance - Housing Loan": "Housing Loan",
+        "Microfinance - Others": "Personal Loan",
+        "Pradhan Mantri Awas Yojana - Credit Link Subsidy": "Housing Loan",
+        "P2P Personal Loan": "Personal Loan",
+        "P2P Auto Loan": "Auto Loan",
+        "P2P Education Loan": "Education Loan",
+        "BUSINESS LOAN - GENERAL": "Business Loan",
+        "BUSINESS LOAN -PRIORITY SECTOR - SMALL BUSI": "Business Loan",
+        "BUSINESS LOAN -PRIORITY SECTOR - AGRICULTUI": "Business Loan",
+        "BUSINESS LOAN -PRIORITY SECTOR - OTHERS": "Business Loan",
+        "BUSINESS NON-FUNDED CREDIT FACILITY - GENEI": "Business Loan",
+        "BUSINESS NON-FUNDED CREDIT FACILITY - PRIOF": "Business Loan",
+        "BUSINESS LOANS AGAINST BANK DEPOSITS": "Business Loan",
+        "Staff Loan": "Personal Loan",
+        "Business Loan - Unsecured": "Business Loan",
+        "Others": "Others",
+        "Business Loan - Secured": "Business Loan",
+        "Short Term Personal Loan [Unsecured]": "Personal Loan",
+        "Priority Sector Gold Loan [Secured]": "Gold Loan",
+        "Temporary Overdraft [Unsecured]": "Overdraft"
+      };
+
+      const CRED2TECH_TO_TERMS_MAP = {
+        "Loan Against Property": { roi: 9.50, tenure: 180 },
+        "Housing Loan": { roi: 8.00, tenure: 240 },
+        "Business Loan": { roi: 16.00, tenure: 36 },
+        "Personal Loan": { roi: 13.00, tenure: 36 },
+        "Auto Loan": { roi: 9.00, tenure: 60 },
+        "Two Wheeler Loan": { roi: 9.00, tenure: 60 },
+        "Commercial Vehicle": { roi: 9.00, tenure: 48 },
+        "Consumer Loan": { roi: 8.00, tenure: 12 },
+        "Agri Loan": { roi: 10.00, tenure: 12 },
+        "Education Loan": { roi: 9.00, tenure: 60 },
+        "Term loan": { roi: 9.50, tenure: 180 }
+      };
+
+      // Calculate EMI based on standard formula: [P x R x (1+R)^N]/[(1+R)^N-1]
+      // P = loanAmount, R = ROI / 12 / 100, N = tenureMonths
+      function estimateEmi(loanAmount, roiPercent, tenureMonths) {
+        if (!loanAmount || !roiPercent || !tenureMonths) return 0;
+        const p = parseFloat(loanAmount);
+        const r = (parseFloat(roiPercent) / 100) / 12;
+        const n = parseInt(tenureMonths, 10);
+        if (p <= 0 || r <= 0 || n <= 0) return 0;
+        const numerator = p * r * Math.pow(1 + r, n);
+        const denominator = Math.pow(1 + r, n) - 1;
+        const emi = numerator / denominator;
+        return Math.round(emi);
+      }
+
       let totalEmi = 0;
       const obligations = [];
 
       for (const acc of accounts) {
         const loanAmount = safeFloat(acc.Highest_Credit_or_Original_Loan_Amount);
         const outstandingAmount = safeFloat(acc.Current_Balance);
-        const emi = safeFloat(acc.Scheduled_Monthly_Payment_Amount);
+        let emi = safeFloat(acc.Scheduled_Monthly_Payment_Amount);
 
         const isClosed = acc.accountStatusDescription?.toLowerCase?.().includes('closed') || outstandingAmount <= 0;
 
-        // If it's an active loan but EMI is 0, we flag it for manual verification
-        const needsVerification = !isClosed && emi === 0;
+        // SKIP CLOSED LOANS entirely (filter them out)
+        if (isClosed) continue;
 
-        if (!isClosed) {
-          totalEmi += emi;
+        // If it's an active loan but EMI is 0, we calculate/estimate it based on mapping
+        let needsVerification = false;
+        const experianType = (acc.accountTypeDescription || 'Unknown').trim();
+        
+        if (emi === 0) {
+          const cred2techName = BUREAU_TO_CRED2TECH_MAP[experianType];
+          const terms = cred2techName ? CRED2TECH_TO_TERMS_MAP[cred2techName] : null;
+
+          if (terms) {
+            emi = estimateEmi(loanAmount, terms.roi, terms.tenure);
+            // We successfully estimated the EMI, but still flag it for verification just in case
+            needsVerification = true;
+          } else {
+            // Cannot estimate EMI (e.g. Credit Card, Gold Loan, Overdraft) or unknown
+            needsVerification = true;
+          }
         }
+
+        totalEmi += emi;
 
         obligations.push({
           case_id: caseId,
           applicant_id: applicantId,
           lender_name: acc.Subscriber_Name || acc.Identification_Number || 'Unknown Lender',
-          loan_type: acc.accountTypeDescription || 'Unknown',
+          loan_type: experianType,
           loan_amount: loanAmount,
           outstanding_amount: outstandingAmount,
           emi_per_month: emi,

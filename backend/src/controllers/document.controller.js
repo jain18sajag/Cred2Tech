@@ -92,6 +92,18 @@ async function serveDocument(req, res, disposition) {
             action: disposition === 'attachment' ? 'DOWNLOAD' : 'VIEW', ip: req.ip
         });
 
+        if (req.user.role === 'MSME_CUSTOMER') {
+            if (doc.case_id) {
+                const caseObj = await prisma.case.findFirst({ where: { id: doc.case_id } });
+                if (!caseObj || caseObj.msme_customer_user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden. MSME does not own this document.' });
+            } else if (doc.customer_id) {
+                const caseObj = await prisma.case.findFirst({ where: { customer_id: doc.customer_id, msme_customer_user_id: req.user.id } });
+                if (!caseObj) return res.status(403).json({ error: 'Forbidden. MSME does not own this customer document.' });
+            } else {
+                return res.status(403).json({ error: 'Forbidden' });
+            }
+        }
+
         // Security headers
         res.setHeader('Content-Type', doc.mime_type || 'application/octet-stream');
         res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -137,7 +149,7 @@ async function downloadDocument(req, res) {
 async function uploadDocument(req, res) {
     try {
         if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-        
+
         // Extract from body, or fallback to params (for the semantic routes)
         const case_id = req.body.case_id || req.params.caseId;
         const applicant_id = req.body.applicant_id || req.params.applicantId;

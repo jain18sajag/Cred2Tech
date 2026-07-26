@@ -29,16 +29,13 @@ const MsmeOnboarding = () => {
   const [paymentStatus, setPaymentStatus] = useState('UNPAID');
   
   // Forms
-  const [businessData, setBusinessData] = useState({ business_name: '', business_pan: '', entity_type: 'Proprietorship', industry: '', business_vintage: '' });
+  const [businessData, setBusinessData] = useState({ business_name: '', business_email: '', business_pan: '', entity_type: 'Proprietorship', industry: '', business_vintage: '' });
   const [loanData, setLoanData] = useState({ loan_amount: '', product_type: 'BL', dsa_notes: '' });
   
   // Prepare Application Form (Step 4)
   const [finalAmount, setFinalAmount] = useState('');
   const [finalTenor, setFinalTenor] = useState('12');
-  const [references, setReferences] = useState([
-    { name: '', mobile: '', relationship: 'Colleague', address: '' },
-    { name: '', mobile: '', relationship: 'Colleague', address: '' }
-  ]);
+  const [interestRate, setInterestRate] = useState('11.5');
 
   useEffect(() => {
     fetchCaseState();
@@ -67,6 +64,7 @@ const MsmeOnboarding = () => {
     if (c.customer) {
       setBusinessData({
         business_name: c.customer.business_name || '',
+        business_email: c.customer.business_email || '',
         business_pan: c.customer.business_pan || '',
         entity_type: c.customer.entity_type || 'Proprietorship',
         industry: c.customer.industry || '',
@@ -210,18 +208,14 @@ const MsmeOnboarding = () => {
   const submitToCred2Tech = async () => {
     if (!finalAmount || Number(finalAmount) <= 0) { toast.error('Loan amount is required and must be greater than 0'); return; }
     if (!finalTenor || Number(finalTenor) <= 0) { toast.error('Tenor is required and must be greater than 0'); return; }
-    for (let i = 0; i < 2; i++) {
-       if (!references[i] || !references[i].name || !references[i].mobile || references[i].mobile.length !== 10) {
-           toast.error(`Reference ${i + 1} is incomplete or invalid (Mobile must be 10 digits)`); return;
-       }
-    }
+    if (!interestRate || Number(interestRate) <= 0) { toast.error('Interest Rate is required and must be greater than 0'); return; }
 
     setActionLoading(true);
     try {
       await msmeApi.submitCase({
-        final_amount: finalAmount,
-        final_tenor: finalTenor,
-        references
+        requested_amount: finalAmount,
+        tenure_months: finalTenor,
+        interest_rate: interestRate
       });
       toast.success('Application submitted successfully!');
       fetchCaseState();
@@ -232,11 +226,10 @@ const MsmeOnboarding = () => {
     }
   };
 
-  // EMI Calculation for Prepare Application Step
   const emi = React.useMemo(() => {
-    if (!finalAmount || !finalTenor) return 0;
+    if (!finalAmount || !finalTenor || !interestRate) return 0;
     const P = Number(finalAmount) * 100000;
-    const r = 11.5 / 12 / 100;
+    const r = Number(interestRate) / 12 / 100;
     const n = Number(finalTenor) * 12;
     if (r === 0) return P / n;
     return (P * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
@@ -284,6 +277,10 @@ const MsmeOnboarding = () => {
               <div className="form-group">
                 <label>Business Name</label>
                 <input required type="text" value={businessData.business_name} onChange={e=>setBusinessData({...businessData, business_name: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Business Email</label>
+                <input required type="email" value={businessData.business_email} onChange={e=>setBusinessData({...businessData, business_email: e.target.value})} placeholder="example@business.com" />
               </div>
               <div className="form-group">
                 <label>Business PAN</label>
@@ -466,8 +463,8 @@ const MsmeOnboarding = () => {
                   <input type="number" value={finalTenor} onChange={e => setFinalTenor(e.target.value)} placeholder="e.g. 12" required style={{ padding: '12px', fontSize: '15px' }} />
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label style={{ fontSize: '11px', fontWeight: 700, color: '#475569', letterSpacing: '0.5px' }}>INDICATIVE RATE (% P.A.)</label>
-                  <input type="text" value="11.5" disabled style={{ background: '#F8FAFC', color: '#94A3B8', padding: '12px', fontSize: '15px' }} />
+                  <label style={{ fontSize: '11px', fontWeight: 700, color: '#475569', letterSpacing: '0.5px' }}>INTEREST RATE (% P.A.) *</label>
+                  <input type="number" step="0.1" value={interestRate} onChange={e => setInterestRate(e.target.value)} placeholder="e.g. 11.5" required style={{ padding: '12px', fontSize: '15px' }} />
                 </div>
               </div>
 
@@ -525,44 +522,6 @@ const MsmeOnboarding = () => {
                     <div style={{ fontSize: '13px', fontWeight: 600 }}>{businessData.business_pan}</div>
                   </div>
                 </div>
-              </div>
-            </div>
-
-            <div style={{ marginBottom: '32px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                <span style={{ fontSize: '18px' }}>👥</span>
-                <h4 style={{ margin: 0, fontSize: '16px', fontWeight: '700' }}>References</h4>
-                <span style={{ fontSize: '11px', background: '#F1F5F9', color: '#475569', padding: '4px 10px', borderRadius: '12px', fontWeight: 600 }}>2 required</span>
-              </div>
-              
-              <div style={{ background: 'var(--surface)', padding: '24px', borderRadius: '12px', border: '1px solid var(--border)' }}>
-                {references.map((ref, idx) => (
-                  <div key={idx} style={{ marginBottom: idx === 0 ? '32px' : 0, paddingBottom: idx === 0 ? '32px' : 0, borderBottom: idx === 0 ? '1px solid var(--border)' : 'none' }}>
-                    <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '16px' }}>REFERENCE {idx + 1}</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 200px 240px', gap: '20px', marginBottom: '16px' }}>
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label style={{ fontSize: '11px', fontWeight: 700, color: '#475569' }}>FULL NAME</label>
-                        <input value={ref.name} onChange={e => setReferences(rs => rs.map((r, i) => i === idx ? { ...r, name: e.target.value } : r))} placeholder="e.g. Suhas Kulkarni" style={{ padding: '12px' }} />
-                      </div>
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label style={{ fontSize: '11px', fontWeight: 700, color: '#475569' }}>MOBILE</label>
-                        <input maxLength={10} value={ref.mobile} onChange={e => setReferences(rs => rs.map((r, i) => i === idx ? { ...r, mobile: e.target.value } : r))} placeholder="e.g. 9823456781" style={{ padding: '12px' }} />
-                      </div>
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label style={{ fontSize: '11px', fontWeight: 700, color: '#475569' }}>RELATIONSHIP</label>
-                        <select value={ref.relationship} onChange={e => setReferences(rs => rs.map((r, i) => i === idx ? { ...r, relationship: e.target.value } : r))} style={{ padding: '12px' }}>
-                          <option>Business Associate</option>
-                          <option>Colleague</option>
-                          <option>Relative</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div className="form-group" style={{ marginBottom: 0 }}>
-                      <label style={{ fontSize: '11px', fontWeight: 700, color: '#475569' }}>ADDRESS</label>
-                      <input value={ref.address} onChange={e => setReferences(rs => rs.map((r, i) => i === idx ? { ...r, address: e.target.value } : r))} placeholder="e.g. 12, Kothrud, Pune - 411 038" style={{ padding: '12px' }} />
-                    </div>
-                  </div>
-                ))}
               </div>
             </div>
 

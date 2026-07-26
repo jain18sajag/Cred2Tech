@@ -30,6 +30,10 @@ async function runBureauVerification(req, res) {
          tenantId, userId: req.user.id, resourceType: 'BUREAU_PULL', resourceId: caseId, action: 'VIEW', ip: req.ip
       });
 
+      if (req.user.role === 'MSME_CUSTOMER' && caseRecord.msme_customer_user_id !== req.user.id) {
+         return res.status(403).json({ error: 'Forbidden. MSME does not own this case.' });
+      }
+
       const results = {
          caseId: caseId,
          applicantScore: null,

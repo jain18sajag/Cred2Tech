@@ -30,17 +30,20 @@ const directCustomerService = {
     });
 
     let paymentStatus = 'UNPAID';
-    if (activeCase && activeCase.case_payment?.status === 'PAID') {
+    let responseActiveCase = activeCase;
+
+    if (unlinkedPayment) {
       paymentStatus = 'PAID';
-    } else if (unlinkedPayment) {
+      responseActiveCase = null;
+    } else if (activeCase && activeCase.case_payment?.status === 'PAID') {
       paymentStatus = 'PAID';
     }
 
     return { 
       user, 
-      activeCase, 
+      activeCase: responseActiveCase, 
       paymentStatus,
-      emptyState: !activeCase
+      emptyState: !responseActiveCase
     };
   },
 
@@ -141,10 +144,6 @@ const directCustomerService = {
     });
 
     if (casePayment.case_id) {
-      await prisma.case.update({
-        where: { id: casePayment.case_id },
-        data: { case_payment_id: updatedPayment.id }
-      });
       await prisma.activityLog.create({
         data: {
           case_id: casePayment.case_id,
@@ -205,6 +204,7 @@ const directCustomerService = {
           category: 'MSME',
           business_pan: data.business_pan,
           business_name: data.business_name,
+          business_email: data.business_email,
           entity_type: data.entity_type,
           business_vintage: data.business_vintage,
           industry: data.industry,
@@ -246,10 +246,6 @@ const directCustomerService = {
           where: { id: unlinkedPayment.id },
           data: { case_id: activeCase.id }
         });
-        await prisma.case.update({
-          where: { id: activeCase.id },
-          data: { case_payment_id: unlinkedPayment.id }
-        });
       }
 
       await prisma.activityLog.create({
@@ -268,6 +264,7 @@ const directCustomerService = {
         data: {
           business_pan: data.business_pan,
           business_name: data.business_name,
+          business_email: data.business_email,
           entity_type: data.entity_type,
           business_vintage: data.business_vintage,
           industry: data.industry
@@ -290,6 +287,14 @@ const directCustomerService = {
           performed_by_user_id: userId
         }
       });
+    }
+
+    // Sync real name & email to the User record (replaces dummy placeholders from OTP registration)
+    const userUpdate = {};
+    if (data.business_name) userUpdate.name = data.business_name;
+    if (data.business_email) userUpdate.email = data.business_email;
+    if (Object.keys(userUpdate).length > 0) {
+      await prisma.user.update({ where: { id: userId }, data: userUpdate });
     }
 
     return await directCustomerService.getDashboard(userId).then(d => d.activeCase);
@@ -396,7 +401,7 @@ const directCustomerService = {
     return { success: true };
   },
 
-  submitCase: async (userId, caseId) => {
+  submitCase: async (userId, caseId, submissionData = {}) => {
     let targetCaseId = caseId;
     
     // Fallback to active case if caseId is not provided
@@ -415,6 +420,32 @@ const directCustomerService = {
 
     if (!activeCase) {
       throw new Error("Case not found or unauthorized");
+    }
+
+    // Create Proposal if msme_selected_lender_esr_id exists
+    if (activeCase.msme_selected_lender_esr_id) {
+      const esrLender = await prisma.eligibilityReportLender.findUnique({
+        where: { id: activeCase.msme_selected_lender_esr_id }
+      });
+      
+      if (esrLender) {
+        const { requested_amount, tenure_months, interest_rate } = submissionData;
+        
+        await prisma.proposal.create({
+          data: {
+            tenant_id: activeCase.tenant_id,
+            case_id: activeCase.id,
+            tenant_lender_id: esrLender.tenant_lender_id,
+            lender_id: esrLender.lender_id,
+            proposal_number: `PROP-MSME-${activeCase.id}-${Date.now()}`,
+            proposal_status: 'draft',
+            requested_amount: requested_amount ? parseFloat(requested_amount) : null,
+            tenure_months: tenure_months ? parseInt(tenure_months, 10) : null,
+            roi_min: interest_rate ? parseFloat(interest_rate) : null,
+            roi_max: interest_rate ? parseFloat(interest_rate) : null
+          }
+        });
+      }
     }
 
     const updatedCase = await prisma.case.update({

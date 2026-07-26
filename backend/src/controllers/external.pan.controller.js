@@ -46,6 +46,13 @@ exports.fetchPanIntelligence = async (req, res) => {
             tenantId, userId, resourceType: 'PAN_INTELLIGENCE', resourceId: customer_id, action: 'VIEW', ip: req.ip
         });
 
+        if (req.user.role === 'MSME_CUSTOMER') {
+            const ownsCustomer = await prisma.case.findFirst({
+                where: { customer_id, msme_customer_user_id: req.user.id }
+            });
+            if (!ownsCustomer) return res.status(403).json({ error: 'Access denied. MSME does not own this customer profile.' });
+        }
+
         await prisma.customerConsent.create({
             data: {
                 customer_id,
@@ -362,6 +369,13 @@ exports.verifyPan = async (req, res) => {
         await logSensitiveAccess({
             tenantId, userId, resourceType: 'PAN_VERIFY', resourceId: customer_id, action: 'VIEW', ip: req.ip
         });
+
+        if (req.user.role === 'MSME_CUSTOMER') {
+            const ownsCustomer = await prisma.case.findFirst({
+                where: { customer_id, msme_customer_user_id: req.user.id }
+            });
+            if (!ownsCustomer) return res.status(403).json({ error: 'Access denied. MSME does not own this customer.' });
+        }
 
         // Security check and lock check for co-applicant
         if (is_coapplicant && applicant_id) {

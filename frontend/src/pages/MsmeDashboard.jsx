@@ -15,6 +15,7 @@ const MsmeDashboard = () => {
   const [actionLoading, setActionLoading] = useState(false);
   
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showBranchModal, setShowBranchModal] = useState(false);
   const [paymentConfig, setPaymentConfig] = useState(null);
 
   useEffect(() => {
@@ -35,8 +36,18 @@ const MsmeDashboard = () => {
 
   const handleStartEligibilityClick = async () => {
     if (!dashboardData) return;
-    if (dashboardData.paymentStatus === 'PAID') {
-      navigate(dashboardData.activeCase ? `/msme/onboarding?caseId=${dashboardData.activeCase.id}` : '/msme/onboarding');
+    
+    if (dashboardData.activeCase) {
+      setShowBranchModal(true);
+      return;
+    }
+
+    proceedToPaymentOrOnboarding();
+  };
+
+  const proceedToPaymentOrOnboarding = async (forceNewPayment = false) => {
+    if (dashboardData.paymentStatus === 'PAID' && !forceNewPayment) {
+      navigate('/msme/onboarding');
     } else {
       setActionLoading(true);
       try {
@@ -73,7 +84,7 @@ const MsmeDashboard = () => {
             });
             toast.success("Payment successful!");
             setShowPaymentModal(false);
-            navigate(dashboardData.activeCase ? `/msme/onboarding?caseId=${dashboardData.activeCase.id}` : '/msme/onboarding');
+            navigate('/msme/onboarding');
           } catch (err) {
             toast.error("Payment verification failed");
             setActionLoading(false);
@@ -107,6 +118,37 @@ const MsmeDashboard = () => {
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>
       
+      {/* 0. Branch Modal */}
+      {showBranchModal && (
+        <div className="modal-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div className="modal-content" style={{ background: '#fff', padding: '32px', borderRadius: '16px', width: '100%', maxWidth: '450px', textAlign: 'center', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)' }}>
+            <h3 style={{ fontSize: '20px', fontWeight: 800, marginBottom: '12px', color: 'var(--text)' }}>Existing Application Found</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '24px', lineHeight: 1.5 }}>
+              You already have an active application (CASE-{dashboardData.activeCase?.id}). Would you like to continue with your existing data (GST, Bureau, etc.) or start a completely new application?
+            </p>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <button 
+                onClick={() => navigate(`/msme/onboarding?caseId=${dashboardData.activeCase.id}`)} 
+                className="btn-primary" style={{ padding: '14px', background: '#276749' }}>
+                Continue Existing Application
+              </button>
+              <button 
+                onClick={() => {
+                  setShowBranchModal(false);
+                  proceedToPaymentOrOnboarding(true);
+                }} 
+                className="btn-outline" style={{ padding: '14px' }}>
+                Start New Application (Requires New Fee)
+              </button>
+              <button onClick={() => setShowBranchModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', fontSize: '13px', marginTop: '8px', cursor: 'pointer', textDecoration: 'underline' }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 1. Payment Modal */}
       {showPaymentModal && paymentConfig && (
         <div className="modal-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
