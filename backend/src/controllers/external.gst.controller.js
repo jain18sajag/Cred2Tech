@@ -122,8 +122,15 @@ async function createGstRequest(req, res) {
             customerId: parseInt(customer_id, 10),
             caseId: case_id ? parseInt(case_id, 10) : null,
             requestPayload: req.body,
-            // Provide an idempotency key if we want to guard against rapid doubletaps for same case context. We can use customerId+gstin
-            idempotencyKey: `gst_${customer_id}_${gstin}_${from_date}_${to_date}`,
+            // Guards against rapid double-taps only (not a permanent per-GSTIN lock):
+            // from_date/to_date are a fixed rolling window computed once at server
+            // startup, so without the time bucket this key never changes for a given
+            // customer+gstin — every later legitimate resubmission (retry, retry after
+            // cancelling, a deliberate second pull) would silently replay the FIRST
+            // request's cached result via executePaidApi's idempotency check instead
+            // of actually running again. A 5s bucket still catches genuine doubletaps
+            // (two near-simultaneous clicks) while letting real retries through.
+            idempotencyKey: `gst_${customer_id}_${gstin}_${from_date}_${to_date}_${Math.floor(Date.now() / 5000)}`,
             userRole: req.user.role,
             handlerFunction: async () => {
 
