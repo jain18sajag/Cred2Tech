@@ -34,7 +34,7 @@ async function getIncomeSummary(case_id, tenant_id) {
       },
       bank_statements: { orderBy: { created_at: 'desc' }, take: 1 },
       income_entries:  { orderBy: { created_at: 'asc' } },
-      obligations:     { where: { status: 'ACTIVE' } }
+      obligations:     { where: { status: { in: ['ACTIVE', 'VERIFY'] } } }
     }
   });
 

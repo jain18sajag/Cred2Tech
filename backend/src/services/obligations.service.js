@@ -115,7 +115,12 @@ async function getObligations(case_id, tenant_id) {
     include: {
       applicants: true,
       obligations: {
-        where: { status: 'ACTIVE' },
+        // VERIFY is a real, currently-active obligation the vendor's status
+        // text couldn't be cleanly auto-mapped for - it still needs to be
+        // shown (and counted) so a human can review it here; only CLOSED/NPA
+        // are excluded. Filtering to ACTIVE alone silently hid every
+        // obligation the parser flagged for verification.
+        where: { status: { in: ['ACTIVE', 'VERIFY'] } },
         orderBy: [{ applicant_id: 'asc' }, { created_at: 'asc' }]
       }
     }

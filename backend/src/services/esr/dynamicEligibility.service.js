@@ -4204,7 +4204,11 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
     const rawObligationsList = await prisma.caseCreditObligation.findMany({
         where: {
             case_id,
-            status: 'ACTIVE',
+            // VERIFY is a real, currently-active obligation the vendor's status
+            // text couldn't be cleanly auto-mapped for (not closed/NPA) - excluding
+            // it here silently dropped real EMI burden from the FOIR calculation,
+            // making applicants look more eligible than they actually are.
+            status: { in: ['ACTIVE', 'VERIFY'] },
             case_entity: { tenant_id }
         },
         select: {

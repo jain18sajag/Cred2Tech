@@ -209,8 +209,10 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
             include: {
                 property: true,
                 customer: true,
-                // All ACTIVE obligations — include_in_foir filtering done in code below
-                obligations: { where: { status: 'ACTIVE' } },
+                // ACTIVE + VERIFY obligations (VERIFY = vendor status text the
+                // parser couldn't cleanly auto-map, not a closed/cleared debt) —
+                // include_in_foir filtering done in code below
+                obligations: { where: { status: { in: ['ACTIVE', 'VERIFY'] } } },
                 // Case-level manual income entries entered from Manual Income Addition UI.
                 // Applicant-level entries are still loaded below for OCR/manual salary fallback.
                 income_entries: true,
