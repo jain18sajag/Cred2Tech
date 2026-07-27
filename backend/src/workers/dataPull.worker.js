@@ -84,13 +84,51 @@ class DataPullWorker {
      */
     async expireJobs() {
         try {
-            await prisma.$executeRawUnsafe(`
-                UPDATE "DataPullBackgroundJob"
-                SET status = 'EXPIRED', updated_at = NOW()
+            const toExpire = await prisma.$queryRawUnsafe(`
+                SELECT id, pull_type, module_request_id
+                FROM "DataPullBackgroundJob"
                 WHERE status IN ('PENDING', 'PROCESSING')
                   AND (attempt_count >= maximum_attempts OR processing_deadline_at <= NOW())
                   AND (locked_at IS NULL OR lock_expires_at < NOW())
             `);
+
+            if (!toExpire || toExpire.length === 0) return;
+
+            const ids = toExpire.map(j => j.id);
+            await prisma.dataPullBackgroundJob.updateMany({
+                where: { id: { in: ids } },
+                data: { status: 'EXPIRED', updated_at: new Date() }
+            });
+
+            // This sweep used to only close out the DataPullBackgroundJob row. The
+            // customer/DSA-facing parent record (ItrAnalyticsRequest /
+            // GstrAnalyticsRequest / BankStatementAnalysisRequest) never learned its
+            // background job gave up, so it stayed on "Processing" forever — no
+            // terminal state, no retry option, nothing. Cascade it here instead.
+            for (const job of toExpire) {
+                try {
+                    if (job.pull_type === 'ITR') {
+                        // ItrAnalyticsStatus has no EXPIRED value — FAILED is the closest terminal state.
+                        await prisma.itrAnalyticsRequest.updateMany({
+                            where: { id: job.module_request_id, status: { notIn: ['COMPLETED', 'FAILED'] } },
+                            data: { status: 'FAILED', provider_message: 'Timed out waiting for the provider — please retry.' }
+                        });
+                    } else if (job.pull_type === 'GST') {
+                        await prisma.gstrAnalyticsRequest.updateMany({
+                            where: { id: job.module_request_id, status: { notIn: ['REPORT_READY', 'COMPLETED', 'FAILED'] } },
+                            data: { status: 'EXPIRED', provider_message: 'Timed out waiting for the provider — please retry.' }
+                        });
+                    } else if (job.pull_type === 'BANK') {
+                        // BankStatementStatus has no EXPIRED value either — FAILED is the closest terminal state.
+                        await prisma.bankStatementAnalysisRequest.updateMany({
+                            where: { id: job.module_request_id, status: { notIn: ['COMPLETED', 'FAILED'] } },
+                            data: { status: 'FAILED', provider_message: 'Timed out waiting for the provider — please retry.' }
+                        });
+                    }
+                } catch (cascadeErr) {
+                    console.error(`[DataPullWorker] Failed to cascade expiry for job ${job.id} (${job.pull_type}):`, cascadeErr.message);
+                }
+            }
         } catch (error) {
             console.error('[DataPullWorker] Error expiring jobs:', error);
         }

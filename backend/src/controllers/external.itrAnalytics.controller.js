@@ -469,6 +469,47 @@ async function sync(req, res) {
     }
 }
 
+const TERMINAL_ITR_STATUSES = ['COMPLETED', 'FAILED'];
+
+/**
+ * POST /external/itr/cancel
+ * Lets a stuck "Processing" request be manually abandoned instead of waiting
+ * out the background worker's up-to-2-hour expiry deadline.
+ */
+async function cancel(req, res) {
+    try {
+        const { reference_id } = req.body;
+        if (!reference_id) return res.status(400).json({ error: 'reference_id is required' });
+
+        const dbReq = await prisma.itrAnalyticsRequest.findFirst({
+            where: { reference_id, tenant_id: req.user.tenant_id }
+        });
+        if (!dbReq) return res.status(404).json({ error: 'ITR analytics request not found' });
+        if (TERMINAL_ITR_STATUSES.includes(dbReq.status)) {
+            return res.status(400).json({ error: `Cannot cancel a request that is already ${dbReq.status}` });
+        }
+
+        await prisma.itrAnalyticsRequest.update({
+            where: { id: dbReq.id },
+            data: { status: 'FAILED', provider_message: `Cancelled by ${req.user.name || 'user'}` }
+        });
+
+        await prisma.dataPullBackgroundJob.updateMany({
+            where: {
+                module_request_id: dbReq.id,
+                pull_type: 'ITR',
+                status: { in: ['PENDING', 'PROCESSING', 'AWAITING_CUSTOMER_ACTION'] }
+            },
+            data: { status: 'CANCELLED' }
+        });
+
+        res.status(200).json({ success: true, status: 'FAILED' });
+    } catch (error) {
+        console.error('ITR Cancel Error:', error);
+        sendCaughtError(res, error, 'Failed to cancel ITR request', 500);
+    }
+}
+
 /**
  * POST /external/itr/download
  * Reads from DB only — no vendor call.
@@ -507,4 +548,4 @@ async function download(req, res) {
     }
 }
 
-module.exports = { analyze, initiate, authorise, sync, download };
+module.exports = { analyze, initiate, authorise, sync, cancel, download };

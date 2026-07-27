@@ -39,6 +39,7 @@ router.post('/itr/analyze',   itrAnalyticsController.analyze);
 router.post('/itr/initiate',  itrAnalyticsController.initiate);
 router.post('/itr/authorise', itrAnalyticsController.authorise);
 router.post('/itr/sync',      itrAnalyticsController.sync);
+router.post('/itr/cancel',    itrAnalyticsController.cancel);
 router.post('/itr/download',  itrAnalyticsController.download);
 
 // Bank Statement Integration
