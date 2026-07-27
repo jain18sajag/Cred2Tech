@@ -611,6 +611,42 @@ async function handleSignzyCallback(req, res) {
     }
 }
 
+const TERMINAL_GST_STATUSES = ['REPORT_READY', 'COMPLETED', 'FAILED', 'EXPIRED'];
+
+async function cancelGstRequest(req, res) {
+    try {
+        const { request_id } = req.body;
+        const dbReq = await prisma.gstrAnalyticsRequest.findFirst({
+            where: { id: parseInt(request_id, 10), tenant_id: req.user.tenant_id }
+        });
+
+        if (!dbReq) return res.status(404).json({ error: 'GST Request not found' });
+        if (TERMINAL_GST_STATUSES.includes(dbReq.status)) {
+            return res.status(400).json({ error: `Cannot cancel a request that is already ${dbReq.status}` });
+        }
+
+        // GstrAnalyticsStatus has no CANCELLED value — FAILED is the closest terminal,
+        // non-success state, so polling/UI treats it the same as any other dead end.
+        await prisma.gstrAnalyticsRequest.update({
+            where: { id: dbReq.id },
+            data: { status: 'FAILED', provider_message: `Cancelled by ${req.user.name || 'user'}` }
+        });
+
+        await prisma.dataPullBackgroundJob.updateMany({
+            where: {
+                module_request_id: dbReq.id,
+                pull_type: 'GST',
+                status: { in: ['PENDING', 'PROCESSING', 'AWAITING_CUSTOMER_ACTION'] }
+            },
+            data: { status: 'CANCELLED' }
+        });
+
+        res.json({ success: true, status: 'FAILED' });
+    } catch (error) {
+        sendCaughtError(res, error, 'Failed to cancel GST request', 500);
+    }
+}
+
 async function getRequestDetails(req, res) {
     try {
         const { case_id, applicant_id } = req.query;
@@ -638,6 +674,7 @@ module.exports = {
     createGstRequest,
     submitGstOtp,
     syncGstData,
+    cancelGstRequest,
     handleSignzyCallback,
     getRequestDetails
 };

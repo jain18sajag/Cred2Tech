@@ -50,6 +50,7 @@ router.post('/bank/download', bankController.downloadData);
 router.post('/gst/create', gstController.createGstRequest);
 router.post('/gst/submit-otp', gstController.submitGstOtp);
 router.post('/gst/sync', gstController.syncGstData);
+router.post('/gst/cancel', gstController.cancelGstRequest);
 router.get('/gst/requests', gstController.getRequestDetails);
 
 // 4. PAN Intelligence & Verify
