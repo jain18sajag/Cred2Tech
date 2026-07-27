@@ -883,7 +883,7 @@ const SchemeDiagnosticsPanel = ({ evaluations, lender }) => {
 };
 
 // ─── Lender Action Button (multi-proposal aware) ───────────────────────────────
-function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToLender, onSendToOtherLender, onSendToCred2TechTeam }) {
+function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToLender, onSendToOtherLender, onSubmitForLender, submittingLenderId, submittedLenderId }) {
   const navigate = useNavigate();
   const { hasRole } = useAuth();
   const isMsme = hasRole('MSME_CUSTOMER');
@@ -900,6 +900,30 @@ function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToL
     String(p.lender_id) !== String(lender.lender_id) && p.proposal_status === 'submitted'
   ) || proposals.find(p => String(p.lender_id) !== String(lender.lender_id));
 
+  // MSME self-service customers never create/send proposals directly - picking
+  // a bank here records it as their preferred lender and hands the whole case
+  // to the Cred2Tech admin queue instead (the assigned DSA creates the actual
+  // proposal for that lender after allocation).
+  if (isMsme) {
+    const isSubmittingThis = submittingLenderId === lender.id;
+    const isSubmittedThis = submittedLenderId === lender.id;
+    const anySubmitted = submittedLenderId != null;
+    return (
+      <button
+        className="btn btn-primary"
+        style={{
+          width: '100%', padding: '10px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+          background: isSubmittedThis ? '#276749' : 'linear-gradient(135deg,#2B6CB0,#553C9A)'
+        }}
+        onClick={() => onSubmitForLender(lender.id)}
+        disabled={isSubmittingThis || anySubmitted}
+      >
+        {isSubmittedThis
+          ? <><CheckCircle2 size={15} /> Submitted</>
+          : <><Send size={15} /> {isSubmittingThis ? 'Submitting...' : 'Submit to Cred2Tech Team'}</>}
+      </button>
+    );
+  }
 
   const handlePrepare = async () => {
     // If there are proposals from other lenders, ask to clone
@@ -1062,18 +1086,24 @@ export default function EsrPage() {
   const isMsme = hasRole('MSME_CUSTOMER');
   const [sendConfirmResult, setSendConfirmResult] = useState(null);
   const [showOtherLenderModal, setShowOtherLenderModal] = useState(false);
-  const [submittingToTeam, setSubmittingToTeam] = useState(false);
+  const [submittingLenderId, setSubmittingLenderId] = useState(null);
+  const [submittedLenderId, setSubmittedLenderId] = useState(null);
 
-  const handleSendToCred2TechTeam = async () => {
+  // MSME self-service: picking a bank card records that lender as the
+  // customer's preference, then hands the whole case to the Cred2Tech admin
+  // queue - the assigned DSA prepares and sends the actual proposal for it.
+  const handleSubmitForLender = async (lenderId) => {
     try {
-      setSubmittingToTeam(true);
-      await api.post(`/msme/case/submit`, { caseId });
-      toast.success('Case submitted to Cred2Tech Team successfully!');
+      setSubmittingLenderId(lenderId);
+      await api.post('/msme/lender/select', { esr_lender_id: lenderId });
+      await api.post('/msme/case/submit', { caseId });
+      setSubmittedLenderId(lenderId);
+      toast.success('Application submitted to Cred2Tech Team successfully!');
       navigate('/msme/dashboard');
-    } catch(err) {
-      toast.error('Failed to submit case to team');
+    } catch (err) {
+      toast.error('Failed to submit application');
     } finally {
-      setSubmittingToTeam(false);
+      setSubmittingLenderId(null);
     }
   };
 
@@ -1168,6 +1198,15 @@ export default function EsrPage() {
         </div>
       </div>
 
+      {isMsme && esr && (
+        <div className="card" style={{ marginBottom: 24, padding: '14px 20px', borderLeft: '4px solid var(--primary)', background: 'var(--bg-elevated)' }}>
+          <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            This case cannot be sent to a lender directly from here. Pick your preferred bank below and click <strong>Submit to Cred2Tech Team</strong> to send it to our admin team,
+            who will allocate it to a DSA partner to prepare and send your proposal.
+          </p>
+        </div>
+      )}
+
       {/* Snapshot summary */}
       {esr && (
         <div className="card" style={{ marginBottom: 24, padding: 0 }}>
@@ -1253,7 +1292,9 @@ export default function EsrPage() {
                     onProposalCreated={load}
                     onSendToLender={setSendConfirmResult}
                     onSendToOtherLender={() => setShowOtherLenderModal(true)}
-                    onSendToCred2TechTeam={handleSendToCred2TechTeam}
+                    onSubmitForLender={handleSubmitForLender}
+                    submittingLenderId={submittingLenderId}
+                    submittedLenderId={submittedLenderId}
                   />
                 </div>
               </div>
@@ -1322,7 +1363,9 @@ export default function EsrPage() {
                     onProposalCreated={load}
                     onSendToLender={setSendConfirmResult}
                     onSendToOtherLender={() => setShowOtherLenderModal(true)}
-                    onSendToCred2TechTeam={handleSendToCred2TechTeam}
+                    onSubmitForLender={handleSubmitForLender}
+                    submittingLenderId={submittingLenderId}
+                    submittedLenderId={submittedLenderId}
                   />
                 </div>
               </div>

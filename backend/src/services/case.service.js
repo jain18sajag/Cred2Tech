@@ -356,7 +356,7 @@ async function updateProduct(case_id, product_type, tenant_id) {
 
 async function updateProductProperty(case_id, payload, tenant_id) {
   const { markEsrInputsChanged } = require('./esrSnapshotMutation.service');
-  const { product_type, property } = payload;
+  const { product_type, property, loan_amount } = payload;
   const existingCase = await prisma.case.findFirst({
     where: { id: case_id, tenant_id },
     include: { customer: true }
@@ -373,6 +373,10 @@ async function updateProductProperty(case_id, payload, tenant_id) {
     throw new Error('Market value is required for LAP/HL products.');
   }
 
+  const loanAmountValue = (loan_amount !== undefined && loan_amount !== null && loan_amount !== '')
+    ? parseNumericInput(loan_amount, 'loan_amount')
+    : existingCase.loan_amount;
+
   const propertyPayload = property
     ? {
         ...property,
@@ -387,6 +391,7 @@ async function updateProductProperty(case_id, payload, tenant_id) {
       where: { id: case_id },
       data: {
         product_type,
+        loan_amount: loanAmountValue,
         stage: 'LEAD_CREATED',
         customer_name: existingCase.customer.business_name,
         entity_type: existingCase.customer.entity_type

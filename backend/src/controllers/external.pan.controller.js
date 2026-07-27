@@ -259,8 +259,11 @@ exports.fetchPanIntelligence = async (req, res) => {
                 if (req.body.selected_gstin) {
                     selectedGst = detailed.find(d => d.gstin === req.body.selected_gstin) || primaryGst;
                 }
-                const resolvedTradeName = selectedGst?.tradeNameOfBusiness || null;
-                const resolvedLegalName = selectedGst?.legalNameOfBusiness || null;
+                // A TRN-status entry has no real trade/legal name yet - the vendor
+                // response puts the TRN placeholder string in those fields instead,
+                // so never treat them as a usable name even as a last-resort pick.
+                const resolvedTradeName = !isTrnStatus(selectedGst) ? (selectedGst?.tradeNameOfBusiness || null) : null;
+                const resolvedLegalName = !isTrnStatus(selectedGst) ? (selectedGst?.legalNameOfBusiness || null) : null;
                 const resolvedBusinessName = resolvedTradeName || resolvedLegalName;
                 const source = resolvedTradeName ? 'GST_TRADE_NAME' : (resolvedLegalName ? 'GST_LEGAL_NAME' : 'PAN_VERIFICATION');
 

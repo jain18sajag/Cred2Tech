@@ -47,6 +47,7 @@ const AddCustomerWizardPage = ({ mode = 'DSA' }) => {
     applicants: [],
     linked_gstins: [],
     product_type: '',
+    loan_amount: '',
     is_professional: false,
     profession_type: '',
     // Property (Step 3)
@@ -118,7 +119,10 @@ useEffect(() => {
   restoreSession();
 }, [urlCaseId]);
 
-const restoreSession = async () => {
+// Callers re-syncing data mid-edit (PAN reset, applicant reuse/removal) pass
+// preserveStep=true so the user isn't yanked away from the step they're
+// actively on - only the true initial mount call resolves a starting step.
+const restoreSession = async (preserveStep = false) => {
   try {
     setLoading(true);
     if (!urlCaseId) {
@@ -158,6 +162,7 @@ const restoreSession = async () => {
         linked_gstins: caseData.customer?.pan_profiles?.find(p => p.pan === app.pan_number)?.gstin_records || []
       })),
       product_type: caseData.product_type || '',
+      loan_amount: caseData.loan_amount || '',
       property_type: caseData.property?.property_type || '',
       occupancy_status: caseData.property?.occupancy_status || 'Self Occupied',
       ownership_type: caseData.property?.ownership_type || 'Sole Owner',
@@ -172,15 +177,10 @@ const restoreSession = async () => {
       linked_gstins: caseData.customer?.pan_profiles?.find(p => p.pan === caseData.customer.business_pan)?.gstin_records || []
     });
 
-    // Navigate to step 2 only if step 1 is fully completed (all required fields present)
-    const isStep1Complete = caseData.customer?.mobile_verified && 
-                            caseData.customer?.business_pan && 
-                            caseData.customer?.business_email && 
-                            primaryApp?.pincode;
-
-    if (isStep1Complete) {
-      setCurrentStep(2);
-    } else {
+    // Only dispatch to a step on initial load - never guess a "further along"
+    // step from data already present, since that silently skips the user
+    // past step 1 without them clicking Next.
+    if (!preserveStep) {
       setCurrentStep(1);
     }
 
@@ -389,7 +389,7 @@ const handleResetPan = async (isCoapplicant = false, idx = null) => {
     toast.success("PAN Verification reset successfully.");
     
     // Refresh page details
-    await restoreSession();
+    await restoreSession(true);
   } catch (err) {
     toast.error(err.response?.data?.error || "Failed to reset PAN verification");
   } finally {
@@ -550,7 +550,7 @@ const handleReuseApplicant = async (sourceAppId) => {
     setSaving(true);
     await caseService.reuseApplicant(caseId, sourceAppId);
     toast.success("Applicant added from past case successfully!");
-    await restoreSession(); // Refresh to pull them into current applicants
+    await restoreSession(true); // Refresh to pull them into current applicants
   } catch (error) {
     toast.error(error.response?.data?.error || "Failed to reuse applicant");
   } finally {
@@ -566,7 +566,7 @@ const removeApplicant = async (index) => {
       setSaving(true);
       await caseService.removeApplicant(caseId, app.id);
       toast.success("Applicant removed from case.");
-      await restoreSession();
+      await restoreSession(true);
     } catch (err) {
       toast.error(err.response?.data?.error || "Failed to remove applicant");
     } finally {
@@ -583,6 +583,12 @@ const handleStep1Submit = async (e) => {
   e.preventDefault();
   if (!formData.business_pan) return toast.error("Business PAN is required.");
   if (!formData.mobile_verified && mode !== 'MSME_SELF_SERVICE') return toast.error("Primary Business Mobile must be verified before proceeding.");
+  // Bureau/credit checks need PAN + DOB together for every applicant - PAN
+  // alone isn't enough for the vendor to match a record, which otherwise
+  // only surfaces later as a confusing "no obligations found" bureau error.
+  if (!formData.dob) return toast.error("Date of Birth / Incorporation is required.");
+  const coApplicantMissingDob = formData.applicants.find(a => a.type === 'CO_APPLICANT' && a.pan_number && !a.dob);
+  if (coApplicantMissingDob) return toast.error(`Date of Birth is required for co-applicant ${coApplicantMissingDob.name || coApplicantMissingDob.pan_number}.`);
 
   try {
     setSaving(true);
@@ -592,7 +598,12 @@ const handleStep1Submit = async (e) => {
     for (let app of formData.applicants) {
       if (app.pan_number) {
         if (app.type === 'PRIMARY') {
-          app = { ...app, pincode: formData.pincode };
+          // formData.dob is the customer-level DOB captured from PAN
+          // verification - it never otherwise reaches the primary Applicant
+          // row, which is what the bureau/credit check actually reads.
+          // Without this, the bureau vendor gets a null DOB and silently
+          // returns "no obligations found" for a real applicant.
+          app = { ...app, pincode: formData.pincode, dob: app.dob || formData.dob };
         }
         const savedApp = await caseService.addApplicant(targetCaseId, app);
         savedApps.push(savedApp);
@@ -704,6 +715,7 @@ const PROPERTY_REQUIRED = ['LAP', 'HL'];
 const handleStep3Submit = async (e) => {
   e.preventDefault();
   if (!formData.product_type) return toast.error('Please select a loan product.');
+  if (!formData.loan_amount || Number(formData.loan_amount) <= 0) return toast.error('Please enter the requested loan amount.');
   const needsProperty = PROPERTY_REQUIRED.includes(formData.product_type);
   if (needsProperty && !formData.property_type) return toast.error('Property type is required for LAP/HL.');
   if (needsProperty && !formData.market_value) return toast.error('Market value is required for LAP/HL.');
@@ -712,6 +724,7 @@ const handleStep3Submit = async (e) => {
     setSaving(true);
     const payload = {
       product_type: formData.product_type,
+      loan_amount: parseFloat(formData.loan_amount),
       property: needsProperty ? {
         property_type: formData.property_type,
         occupancy_status: formData.occupancy_status,
@@ -847,12 +860,13 @@ const handleStep3Submit = async (e) => {
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
-                <FormField label="DATE OF BIRTH / INCORPORATION" name="dob">
+                <FormField label="DATE OF BIRTH / INCORPORATION" name="dob" required>
                   <input
                     type="date"
                     value={formData.dob || ''}
                     onChange={e => setFormData({ ...formData, dob: e.target.value })}
                     className="form-control"
+                    required
                   />
                 </FormField>
 
@@ -1058,12 +1072,13 @@ const handleStep3Submit = async (e) => {
                               disabled={app.pan_verified}
                             />
                           </FormField>
-                          <FormField label="DATE OF BIRTH" name={`codob_${realIdx}`}>
+                          <FormField label="DATE OF BIRTH" name={`codob_${realIdx}`} required>
                             <input
                               type="date"
                               value={app.dob || ''}
                               onChange={e => updateApplicantRow(realIdx, 'dob', e.target.value)}
                               className="form-control"
+                              required
                               disabled={app.pan_verified}
                             />
                           </FormField>
@@ -1345,8 +1360,11 @@ const handleStep3Submit = async (e) => {
                     <option value="Other">Other — Specify</option>
                   </select>
                 </FormField>
+                <FormField label="Requested Loan Amount (₹)" name="loan_amount" required>
+                  <input type="number" className="form-control" placeholder="e.g. 5000000" value={formData.loan_amount} onChange={e => setFormData({ ...formData, loan_amount: e.target.value })} required min="1" />
+                </FormField>
                 <div style={{ marginTop: 12, padding: '12px 14px', background: 'var(--primary-subtle)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--primary-dark)' }}>
-                  💡 Loan amount &amp; tenure will be captured after the lender is identified via ESR.
+                  💡 Exact tenure &amp; ROI will be finalized once the lender is identified via ESR.
                 </div>
               </div>
             </div>

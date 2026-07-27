@@ -66,10 +66,10 @@ async function updateProduct(req, res) {
 async function updateProductProperty(req, res) {
   try {
     const caseId = parseInt(req.params.id, 10);
-    const { product_type, property } = req.body;
+    const { product_type, property, loan_amount } = req.body;
     if (!product_type) return res.status(400).json({ error: 'product_type is required.' });
 
-    const result = await caseService.updateProductProperty(caseId, { product_type, property }, req.user.tenant_id);
+    const result = await caseService.updateProductProperty(caseId, { product_type, property, loan_amount }, req.user.tenant_id);
     res.json(result);
   } catch (error) {
     if (error.message === 'Case not found or unauthorized.') return res.status(403).json({ error: error.message });

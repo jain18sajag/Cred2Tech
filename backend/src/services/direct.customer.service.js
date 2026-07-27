@@ -422,37 +422,24 @@ const directCustomerService = {
       throw new Error("Case not found or unauthorized");
     }
 
-    // Create Proposal if msme_selected_lender_esr_id exists
-    if (activeCase.msme_selected_lender_esr_id) {
-      const esrLender = await prisma.eligibilityReportLender.findUnique({
-        where: { id: activeCase.msme_selected_lender_esr_id }
-      });
-      
-      if (esrLender) {
-        const { requested_amount, tenure_months, interest_rate } = submissionData;
-        
-        await prisma.proposal.create({
-          data: {
-            tenant_id: activeCase.tenant_id,
-            case_id: activeCase.id,
-            tenant_lender_id: esrLender.tenant_lender_id,
-            lender_id: esrLender.lender_id,
-            proposal_number: `PROP-MSME-${activeCase.id}-${Date.now()}`,
-            proposal_status: 'draft',
-            requested_amount: requested_amount ? parseFloat(requested_amount) : null,
-            tenure_months: tenure_months ? parseInt(tenure_months, 10) : null,
-            roi_min: interest_rate ? parseFloat(interest_rate) : null,
-            roi_max: interest_rate ? parseFloat(interest_rate) : null
-          }
-        });
-      }
+    // NOTE: We intentionally do NOT create a Proposal here. The MSME customer's
+    // selected lender (msme_selected_lender_esr_id) is kept on the Case as a
+    // preference signal only - the assigned DSA creates the actual Proposal
+    // themselves after the Cred2Tech admin allocates this case to them. The
+    // customer's requested terms are preserved as a note for that DSA to see.
+    const { requested_amount, tenure_months, interest_rate } = submissionData;
+    let dsaNotes = activeCase.dsa_notes || '';
+    if (requested_amount || tenure_months || interest_rate) {
+      const requestedTermsNote = `[MSME Requested Terms] Amount: ₹${requested_amount || '—'}L, Tenure: ${tenure_months || '—'} months, Rate: ${interest_rate || '—'}%`;
+      dsaNotes = dsaNotes ? `${dsaNotes}\n${requestedTermsNote}` : requestedTermsNote;
     }
 
     const updatedCase = await prisma.case.update({
       where: { id: activeCase.id },
       data: {
         msme_submitted_at: new Date(),
-        stage: 'LEAD_CREATED'
+        stage: 'LEAD_CREATED',
+        dsa_notes: dsaNotes || undefined
       }
     });
 
