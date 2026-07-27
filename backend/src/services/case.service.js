@@ -356,7 +356,7 @@ async function updateProduct(case_id, product_type, tenant_id) {
 
 async function updateProductProperty(case_id, payload, tenant_id) {
   const { markEsrInputsChanged } = require('./esrSnapshotMutation.service');
-  const { product_type, property, loan_amount } = payload;
+  const { product_type, property, loan_amount, dsa_notes } = payload;
   const existingCase = await prisma.case.findFirst({
     where: { id: case_id, tenant_id },
     include: { customer: true }
@@ -392,6 +392,7 @@ async function updateProductProperty(case_id, payload, tenant_id) {
       data: {
         product_type,
         loan_amount: loanAmountValue,
+        dsa_notes: dsa_notes !== undefined ? dsa_notes : existingCase.dsa_notes,
         stage: 'LEAD_CREATED',
         customer_name: existingCase.customer.business_name,
         entity_type: existingCase.customer.entity_type

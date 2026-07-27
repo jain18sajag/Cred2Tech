@@ -34,6 +34,7 @@ const LenderConfigPage = lazy(() => import('../pages/LenderConfigPage'));
 const IncomeSummaryPage = lazy(() => import('../pages/IncomeSummaryPage'));
 const BureauObligationsPage = lazy(() => import('../pages/BureauObligationsPage'));
 const EsrPage = lazy(() => import('../pages/EsrPage'));
+const MsmeLoanTermsPage = lazy(() => import('../pages/MsmeLoanTermsPage'));
 const ProposalPage = lazy(() => import('../pages/ProposalPage'));
 const DSALenderContactsPage = lazy(() => import('../pages/DSALenderContactsPage'));
 const CaseDetailPage = lazy(() => import('../pages/CaseDetailPage'));
@@ -213,6 +214,14 @@ const AppRouter = () => (
               element={
                 <ProtectedRoute allowedRoles={['DSA_ADMIN', 'DSA_MEMBER', 'SUPER_ADMIN', 'SUB_DSA', 'MSME_CUSTOMER']}>
                   <EsrPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/cases/:id/esr/apply"
+              element={
+                <ProtectedRoute allowedRoles={['MSME_CUSTOMER']}>
+                  <MsmeLoanTermsPage />
                 </ProtectedRoute>
               }
             />

@@ -48,6 +48,7 @@ const AddCustomerWizardPage = ({ mode = 'DSA' }) => {
     linked_gstins: [],
     product_type: '',
     loan_amount: '',
+    dsa_notes: '',
     is_professional: false,
     profession_type: '',
     // Property (Step 3)
@@ -163,6 +164,7 @@ const restoreSession = async (preserveStep = false) => {
       })),
       product_type: caseData.product_type || '',
       loan_amount: caseData.loan_amount || '',
+      dsa_notes: caseData.dsa_notes || '',
       property_type: caseData.property?.property_type || '',
       occupancy_status: caseData.property?.occupancy_status || 'Self Occupied',
       ownership_type: caseData.property?.ownership_type || 'Sole Owner',
@@ -725,6 +727,7 @@ const handleStep3Submit = async (e) => {
     const payload = {
       product_type: formData.product_type,
       loan_amount: parseFloat(formData.loan_amount),
+      dsa_notes: formData.dsa_notes || null,
       property: needsProperty ? {
         property_type: formData.property_type,
         occupancy_status: formData.occupancy_status,
@@ -1362,6 +1365,9 @@ const handleStep3Submit = async (e) => {
                 </FormField>
                 <FormField label="Requested Loan Amount (₹)" name="loan_amount" required>
                   <input type="number" className="form-control" placeholder="e.g. 5000000" value={formData.loan_amount} onChange={e => setFormData({ ...formData, loan_amount: e.target.value })} required min="1" />
+                </FormField>
+                <FormField label="Additional Requirements / Notes" name="dsa_notes">
+                  <textarea rows={3} className="form-control" placeholder="Any specific requirements..." value={formData.dsa_notes} onChange={e => setFormData({ ...formData, dsa_notes: e.target.value })} />
                 </FormField>
                 <div style={{ marginTop: 12, padding: '12px 14px', background: 'var(--primary-subtle)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--primary-dark)' }}>
                   💡 Exact tenure &amp; ROI will be finalized once the lender is identified via ESR.

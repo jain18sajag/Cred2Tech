@@ -103,6 +103,17 @@ async function createGstRequest(req, res) {
             return res.status(400).json({ error: "Password is required when auth_type is PASSWORD" });
         }
 
+        // AUTH_LINK needs someone to actually deliver the link to — Signzy sends it to
+        // whatever's in emails/mobileNumbers, so an empty payload here means the link
+        // is generated but never reaches the customer (or Signzy rejects it outright).
+        if (mode === 'AUTH_LINK') {
+            const hasEmail = Array.isArray(emails) && emails.some(e => e && e.trim());
+            const hasMobile = Array.isArray(mobile_numbers) && mobile_numbers.some(m => m && m.trim());
+            if (!hasEmail && !hasMobile) {
+                return res.status(400).json({ error: "Enter at least one customer email or mobile number to send the auth link to" });
+            }
+        }
+
         // Use wallet wrapper (charging strictly once for the creation loop)
         const result = await executePaidApi({
             apiCode: 'GST_FETCH',

@@ -9,7 +9,6 @@ import {
 } from 'lucide-react';
 import { sendCaseToLender, sendCaseToOtherLender, getTenantLenders } from '../api/tenantLenderService';
 import { useAuth } from '../context/AuthContext';
-import api from '../api/axiosInstance';
 
 // ─── Send Confirmation Modal ───────────────────────────────────────────────────
 function SendConfirmationModal({ isOpen, onClose, result }) {
@@ -883,7 +882,7 @@ const SchemeDiagnosticsPanel = ({ evaluations, lender }) => {
 };
 
 // ─── Lender Action Button (multi-proposal aware) ───────────────────────────────
-function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToLender, onSendToOtherLender, onSubmitForLender, submittingLenderId, submittedLenderId }) {
+function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToLender, onSendToOtherLender, onApplyForLoan }) {
   const navigate = useNavigate();
   const { hasRole } = useAuth();
   const isMsme = hasRole('MSME_CUSTOMER');
@@ -901,26 +900,20 @@ function LenderActions({ lender, caseId, proposals, onProposalCreated, onSendToL
   ) || proposals.find(p => String(p.lender_id) !== String(lender.lender_id));
 
   // MSME self-service customers never create/send proposals directly - picking
-  // a bank here records it as their preferred lender and hands the whole case
-  // to the Cred2Tech admin queue instead (the assigned DSA creates the actual
-  // proposal for that lender after allocation).
+  // a bank here moves to step 7, a dedicated loan-terms page where they state
+  // how much they need before the case goes to the Cred2Tech admin queue (the
+  // assigned DSA creates the actual proposal for that lender after allocation).
   if (isMsme) {
-    const isSubmittingThis = submittingLenderId === lender.id;
-    const isSubmittedThis = submittedLenderId === lender.id;
-    const anySubmitted = submittedLenderId != null;
     return (
       <button
         className="btn btn-primary"
         style={{
           width: '100%', padding: '10px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-          background: isSubmittedThis ? '#276749' : 'linear-gradient(135deg,#2B6CB0,#553C9A)'
+          background: 'linear-gradient(135deg,#2B6CB0,#553C9A)'
         }}
-        onClick={() => onSubmitForLender(lender.id)}
-        disabled={isSubmittingThis || anySubmitted}
+        onClick={() => onApplyForLoan(lender)}
       >
-        {isSubmittedThis
-          ? <><CheckCircle2 size={15} /> Submitted</>
-          : <><Send size={15} /> {isSubmittingThis ? 'Submitting...' : 'Submit to Cred2Tech Team'}</>}
+        <Send size={15} /> Apply for this Loan
       </button>
     );
   }
@@ -1086,25 +1079,13 @@ export default function EsrPage() {
   const isMsme = hasRole('MSME_CUSTOMER');
   const [sendConfirmResult, setSendConfirmResult] = useState(null);
   const [showOtherLenderModal, setShowOtherLenderModal] = useState(false);
-  const [submittingLenderId, setSubmittingLenderId] = useState(null);
-  const [submittedLenderId, setSubmittedLenderId] = useState(null);
 
-  // MSME self-service: picking a bank card records that lender as the
-  // customer's preference, then hands the whole case to the Cred2Tech admin
-  // queue - the assigned DSA prepares and sends the actual proposal for it.
-  const handleSubmitForLender = async (lenderId) => {
-    try {
-      setSubmittingLenderId(lenderId);
-      await api.post('/msme/lender/select', { esr_lender_id: lenderId });
-      await api.post('/msme/case/submit', { caseId });
-      setSubmittedLenderId(lenderId);
-      toast.success('Application submitted to Cred2Tech Team successfully!');
-      navigate('/msme/dashboard');
-    } catch (err) {
-      toast.error('Failed to submit application');
-    } finally {
-      setSubmittingLenderId(null);
-    }
+  // MSME self-service: picking a bank card moves to a dedicated loan-terms
+  // page where they state how much they need and for how long, before the
+  // case goes to the Cred2Tech admin queue - the assigned DSA prepares and
+  // sends the actual proposal for it.
+  const handleApplyForLoan = (lender) => {
+    navigate(`/cases/${caseId}/esr/apply`, { state: { lender } });
   };
 
   const [loading, setLoading] = useState(true);
@@ -1292,9 +1273,7 @@ export default function EsrPage() {
                     onProposalCreated={load}
                     onSendToLender={setSendConfirmResult}
                     onSendToOtherLender={() => setShowOtherLenderModal(true)}
-                    onSubmitForLender={handleSubmitForLender}
-                    submittingLenderId={submittingLenderId}
-                    submittedLenderId={submittedLenderId}
+                    onApplyForLoan={handleApplyForLoan}
                   />
                 </div>
               </div>
@@ -1363,9 +1342,7 @@ export default function EsrPage() {
                     onProposalCreated={load}
                     onSendToLender={setSendConfirmResult}
                     onSendToOtherLender={() => setShowOtherLenderModal(true)}
-                    onSubmitForLender={handleSubmitForLender}
-                    submittingLenderId={submittingLenderId}
-                    submittedLenderId={submittedLenderId}
+                    onApplyForLoan={handleApplyForLoan}
                   />
                 </div>
               </div>

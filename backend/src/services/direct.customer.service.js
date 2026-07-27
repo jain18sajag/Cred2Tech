@@ -9,25 +9,28 @@ const directCustomerService = {
       select: { id: true, name: true, email: true, mobile: true, status: true, created_at: true }
     });
 
-    const activeCase = await prisma.case.findFirst({
-      where: { 
-        msme_customer_user_id: userId,
-        stage: { notIn: ['CLOSED', 'REJECTED'] }
-      },
-      orderBy: { created_at: 'desc' },
-      include: {
-        customer: true,
-        applicants: { where: { is_primary: true } },
-        case_payment: true,
-        assigned_dsa_user: { select: { name: true } }
-      }
-    });
-
-    // Check if there is an unlinked paid payment (paid but case not started yet)
-    const unlinkedPayment = await prisma.casePayment.findFirst({
-      where: { user_id: userId, case_id: null, status: 'PAID' },
-      orderBy: { created_at: 'desc' }
-    });
+    const [activeCase, unlinkedPayment, totalCasesCount] = await Promise.all([
+      prisma.case.findFirst({
+        where: {
+          msme_customer_user_id: userId,
+          stage: { notIn: ['CLOSED', 'REJECTED'] }
+        },
+        orderBy: { created_at: 'desc' },
+        include: {
+          customer: true,
+          applicants: { where: { is_primary: true } },
+          case_payment: true,
+          assigned_dsa_user: { select: { name: true } }
+        }
+      }),
+      // Unlinked paid payment (paid but case not started yet)
+      prisma.casePayment.findFirst({
+        where: { user_id: userId, case_id: null, status: 'PAID' },
+        orderBy: { created_at: 'desc' }
+      }),
+      // All-time case count for this customer, across every stage (open, closed, rejected)
+      prisma.case.count({ where: { msme_customer_user_id: userId } })
+    ]);
 
     let paymentStatus = 'UNPAID';
     let responseActiveCase = activeCase;
@@ -39,11 +42,12 @@ const directCustomerService = {
       paymentStatus = 'PAID';
     }
 
-    return { 
-      user, 
-      activeCase: responseActiveCase, 
+    return {
+      user,
+      activeCase: responseActiveCase,
       paymentStatus,
-      emptyState: !responseActiveCase
+      emptyState: !responseActiveCase,
+      totalCasesCount
     };
   },
 
@@ -430,7 +434,11 @@ const directCustomerService = {
     const { requested_amount, tenure_months, interest_rate } = submissionData;
     let dsaNotes = activeCase.dsa_notes || '';
     if (requested_amount || tenure_months || interest_rate) {
-      const requestedTermsNote = `[MSME Requested Terms] Amount: ₹${requested_amount || '—'}L, Tenure: ${tenure_months || '—'} months, Rate: ${interest_rate || '—'}%`;
+      // requested_amount is a plain rupee figure from the wizard's amount
+      // field, not lakhs - format it as currency instead of blindly
+      // appending "L" (which previously turned ₹40,00,000 into "₹4000000L").
+      const amountStr = requested_amount ? `₹${Number(requested_amount).toLocaleString('en-IN')}` : '—';
+      const requestedTermsNote = `[MSME Requested Terms] Amount: ${amountStr}, Tenure: ${tenure_months || '—'} months, Rate: ${interest_rate || '—'}%`;
       dsaNotes = dsaNotes ? `${dsaNotes}\n${requestedTermsNote}` : requestedTermsNote;
     }
 
