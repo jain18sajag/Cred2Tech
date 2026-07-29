@@ -85,7 +85,7 @@ async function createOrAttach(req, res) {
       business_name,
       is_professional,
       profession_type
-    }, tenant_id, user_id);
+    }, tenant_id, user_id, req.user.role);
 
     res.status(200).json(customer);
   } catch (error) {

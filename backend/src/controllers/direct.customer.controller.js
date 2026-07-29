@@ -10,6 +10,15 @@ async function getDashboard(req, res) {
   }
 }
 
+async function getCases(req, res) {
+  try {
+    const result = await directCustomerService.getCases(req.user.id);
+    return res.status(200).json(result);
+  } catch (err) {
+    sendCaughtError(res, err, 'Failed to fetch cases');
+  }
+}
+
 async function updateProfile(req, res) {
   try {
     const result = await directCustomerService.updateProfile(req.user.id, req.body);
@@ -126,7 +135,7 @@ async function submitCase(req, res) {
 }
 
 module.exports = {
-  getDashboard, updateProfile, initiateEligibility, startForm, updateBusinessDetails, updateLoanDetails,
+  getDashboard, getCases, updateProfile, initiateEligibility, startForm, updateBusinessDetails, updateLoanDetails,
   getPaymentConfig, createPaymentOrder, verifyPayment, runEligibility, getEligibilityResult,
   selectLender, submitCase
 };

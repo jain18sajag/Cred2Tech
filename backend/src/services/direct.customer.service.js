@@ -51,11 +51,47 @@ const directCustomerService = {
     };
   },
 
-  updateProfile: async (userId, data) => {
-    return await prisma.user.update({
-      where: { id: userId },
-      data: { name: data.name, email: data.email }
+  // Full case history for this MSME customer (dashboard only ever returns the
+  // single most-recent active one) — scoped strictly to msme_customer_user_id
+  // so a customer can never see another customer's cases.
+  getCases: async (userId) => {
+    const cases = await prisma.case.findMany({
+      where: { msme_customer_user_id: userId },
+      orderBy: { created_at: 'desc' },
+      select: {
+        id: true,
+        product_type: true,
+        loan_amount: true,
+        sanctioned_amount: true,
+        total_disbursed_amount: true,
+        stage: true,
+        created_at: true,
+        updated_at: true,
+        assigned_dsa_user: { select: { name: true } },
+        case_payment: { select: { status: true } },
+      },
     });
+    return { cases };
+  },
+
+  updateProfile: async (userId, data) => {
+    const name = data.name?.trim();
+    const email = data.email?.trim().toLowerCase();
+    if (!name) throw new Error('Full name is required.');
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('A valid email address is required.');
+
+    try {
+      const user = await prisma.user.update({
+        where: { id: userId },
+        data: { name, email }
+      });
+      // Never echo password_hash back to the client.
+      const { password_hash, ...safeUser } = user;
+      return safeUser;
+    } catch (err) {
+      if (err.code === 'P2002') throw new Error('That email address is already in use.');
+      throw err;
+    }
   },
 
   initiateEligibility: async (userId) => {

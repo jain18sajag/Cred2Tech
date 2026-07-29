@@ -92,7 +92,29 @@ async function getReusableSummary(customer_id, tenant_id) {
   };
 }
 
-async function createOrAttachCustomer(data, tenant_id, user_id) {
+// Matches the auto-generated placeholder email a User row gets at MSME OTP
+// signup, before any real name/email exists (see direct.customer.auth.service.js).
+const PLACEHOLDER_EMAIL_PATTERN = /^\d+@direct\.cred2tech\.local$/i;
+
+// MSME self-service customers create/update their own Customer record here
+// (this endpoint is shared with DSA staff creating cases on someone else's
+// behalf, where user_id is the DSA staff member — never sync in that case).
+// Once real business name/email become available, replace the still-placeholder
+// User row instead of leaving temp signup data around indefinitely.
+async function syncMsmeUserIdentity(userId, businessName, businessEmail) {
+  if (!businessName && !businessEmail) return;
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, name: true } });
+  if (!user || !PLACEHOLDER_EMAIL_PATTERN.test(user.email)) return;
+
+  const data = {};
+  if (businessEmail) data.email = businessEmail;
+  if (businessName) data.name = businessName;
+  if (Object.keys(data).length === 0) return;
+
+  await prisma.user.update({ where: { id: userId }, data }).catch(err => console.error('MSME identity sync failed:', err));
+}
+
+async function createOrAttachCustomer(data, tenant_id, user_id, userRole) {
   const { business_pan, business_mobile, business_email, business_name, customer_id, is_professional, profession_type } = data;
   const normalizedPan = business_pan?.trim().toUpperCase();
   const verifiedSources = ['GST_LEGAL_NAME', 'GST_TRADE_NAME', 'PAN_VERIFICATION'];
@@ -168,6 +190,10 @@ async function createOrAttachCustomer(data, tenant_id, user_id) {
   // Harden: Sync Case snapshots (customer_name, entity_type) to prevent stale data in Pipeline
   const { syncCustomerSnapshots } = require('./case.service');
   syncCustomerSnapshots(customer.id, tenant_id).catch(err => console.error('Snapshot sync failed:', err));
+
+  if (userRole === 'MSME_CUSTOMER') {
+    await syncMsmeUserIdentity(user_id, customer.business_name, customer.business_email);
+  }
 
   return customer;
 }
