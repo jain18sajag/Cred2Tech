@@ -44,10 +44,16 @@ async function requireCaseAccess(req, res, next) {
 
     const filter = (user.role === 'MSME_CUSTOMER') ? msmeFilter : hierarchyFilter;
 
+    // tenant_id scoping only makes sense for DSA-side hierarchy checks —
+    // allocating a case to a DSA moves it into that DSA's own tenant (see
+    // admin.direct.customer.controller.js#allocateDirectCase), so an MSME
+    // customer's own case stops matching their signup tenant_id as soon as
+    // it's allocated. msme_customer_user_id (already in msmeFilter) is the
+    // ownership signal that survives that reassignment.
     const caseRecord = await prisma.case.findFirst({
       where: {
         id: caseId,
-        tenant_id: user.tenant_id,
+        ...(user.role === 'MSME_CUSTOMER' ? {} : { tenant_id: user.tenant_id }),
         ...filter
       },
       select: { id: true }

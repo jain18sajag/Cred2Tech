@@ -468,6 +468,7 @@ async function getAllCases(tenant_id, currentUser) {
 
 async function getCaseById(case_id, tenant_id, currentUser) {
   const isBypassed = ['DSA_ADMIN', 'SUPER_ADMIN', 'MSME_CUSTOMER'].includes(currentUser.role);
+  const isMsme = currentUser.role === 'MSME_CUSTOMER';
 
   const hierarchyFilter = isBypassed ? {} : {
     created_by: {
@@ -475,10 +476,14 @@ async function getCaseById(case_id, tenant_id, currentUser) {
     }
   };
 
+  // Allocating a case to a DSA moves it into that DSA's own tenant (see
+  // admin.direct.customer.controller.js#allocateDirectCase), so it no longer
+  // matches the MSME customer's own signup tenant_id — scope by ownership
+  // instead of tenant for them, same as getDashboard/getCases already do.
   const existingCase = await prisma.case.findFirst({
     where: {
       id: parseInt(case_id, 10),
-      tenant_id: tenant_id,
+      ...(isMsme ? { msme_customer_user_id: currentUser.id } : { tenant_id: tenant_id }),
       ...hierarchyFilter
     },
     include: {

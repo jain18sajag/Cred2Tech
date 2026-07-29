@@ -18,8 +18,16 @@ async function enforceMsmeCaseOwnership(req, res, next) {
   }
 
   try {
+    // Deliberately NOT scoped by tenant_id: allocating a case to a DSA moves
+    // it into that DSA's own tenant (see admin.direct.customer.controller.js
+    // #allocateDirectCase), which no longer matches the MSME customer's own
+    // signup tenant. msme_customer_user_id is the field that actually tracks
+    // ownership across that reassignment — the same field getDashboard/
+    // getCases already filter on with no tenant_id constraint — so this must
+    // match that, not re-add a tenant check that breaks as soon as a case is
+    // allocated.
     const existingCase = await prisma.case.findFirst({
-      where: { id: parseInt(caseId, 10), tenant_id: req.user.tenant_id }
+      where: { id: parseInt(caseId, 10) }
     });
 
     if (!existingCase) {
