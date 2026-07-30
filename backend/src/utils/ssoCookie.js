@@ -6,20 +6,29 @@ const jwt = require('jsonwebtoken');
 // authenticated with mobile X on the sibling app" and bootstraps a fresh
 // local session; it must never be usable to forge or extend this app's own
 // session tokens, so the two secrets must never be the same value.
-const CRED2TECH_SSO_SECRET = process.env.CRED2TECH_SSO_SECRET;
-if (!CRED2TECH_SSO_SECRET) {
-  throw new Error('CRED2TECH_SSO_SECRET is not set — required for cross-app SSO cookie signing/verification');
-}
+//
+// The secret is read lazily (inside signSsoToken/verifySsoToken), not at
+// module load — a plain `require('./app.js')` sanity check (e.g. CI's
+// "does this app load" step) shouldn't need every downstream secret set,
+// only whichever ones the code path it actually exercises touches.
 const SSO_COOKIE_NAME = 'c2t_sso';
 const SSO_EXPIRES_IN = '10m';
 const SSO_ALGORITHM = 'HS256';
 
+function getSsoSecret() {
+  const secret = process.env.CRED2TECH_SSO_SECRET;
+  if (!secret) {
+    throw new Error('CRED2TECH_SSO_SECRET is not set — required for cross-app SSO cookie signing/verification');
+  }
+  return secret;
+}
+
 function signSsoToken(mobile) {
-  return jwt.sign({ mobile }, CRED2TECH_SSO_SECRET, { expiresIn: SSO_EXPIRES_IN, algorithm: SSO_ALGORITHM });
+  return jwt.sign({ mobile }, getSsoSecret(), { expiresIn: SSO_EXPIRES_IN, algorithm: SSO_ALGORITHM });
 }
 
 function verifySsoToken(token) {
-  const payload = jwt.verify(token, CRED2TECH_SSO_SECRET, { algorithms: [SSO_ALGORITHM] });
+  const payload = jwt.verify(token, getSsoSecret(), { algorithms: [SSO_ALGORITHM] });
   return payload.mobile;
 }
 
