@@ -509,11 +509,12 @@ async function getCaseById(case_id, tenant_id, currentUser) {
       property: true,
       esr_financials: true,
       data_pull_status: true,
-      stage_history: { 
+      assigned_dsa_user: { select: { name: true } },
+      stage_history: {
         orderBy: { changed_at: 'desc' },
         include: { user: { select: { name: true, email: true } } }
       },
-      activity_logs: { 
+      activity_logs: {
         orderBy: { created_at: 'desc' },
         include: { user: { select: { name: true, email: true } } }
       }
