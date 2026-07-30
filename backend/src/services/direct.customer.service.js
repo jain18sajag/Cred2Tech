@@ -2,6 +2,23 @@ const prisma = require('../../config/db');
 const esrService = require('./esr.service');
 const razorpayService = require('./razorpay.service');
 
+// A DSA continuing an MSME customer's case (createCaseFromExisting) creates a
+// brand-new Case row sharing the same customer_id rather than continuing the
+// original one — so the same underlying application ends up as two
+// disconnected rows. Collapse to one per customer_id, keeping whichever was
+// created most recently (the one actually being worked on now). Cases are
+// expected pre-sorted newest-first.
+function dedupeByCustomer(cases) {
+  const seen = new Set();
+  const deduped = [];
+  for (const c of cases) {
+    if (seen.has(c.customer_id)) continue;
+    seen.add(c.customer_id);
+    deduped.push(c);
+  }
+  return deduped;
+}
+
 const directCustomerService = {
   getDashboard: async (userId) => {
     const user = await prisma.user.findUnique({
@@ -9,8 +26,8 @@ const directCustomerService = {
       select: { id: true, name: true, email: true, mobile: true, status: true, created_at: true }
     });
 
-    const [activeCase, unlinkedPayment, totalCasesCount] = await Promise.all([
-      prisma.case.findFirst({
+    const [activeCases, unlinkedPayment, allCases] = await Promise.all([
+      prisma.case.findMany({
         where: {
           msme_customer_user_id: userId,
           stage: { notIn: ['CLOSED', 'REJECTED'] }
@@ -28,9 +45,13 @@ const directCustomerService = {
         where: { user_id: userId, case_id: null, status: 'PAID' },
         orderBy: { created_at: 'desc' }
       }),
-      // All-time case count for this customer, across every stage (open, closed, rejected)
-      prisma.case.count({ where: { msme_customer_user_id: userId } })
+      // All-time cases for this customer, across every stage — deduped the
+      // same way as activeCase so the dashboard's count matches the list.
+      prisma.case.findMany({ where: { msme_customer_user_id: userId }, select: { customer_id: true, created_at: true }, orderBy: { created_at: 'desc' } })
     ]);
+
+    const activeCase = dedupeByCustomer(activeCases)[0] || null;
+    const totalCasesCount = dedupeByCustomer(allCases).length;
 
     let paymentStatus = 'UNPAID';
     let responseActiveCase = activeCase;
@@ -53,13 +74,16 @@ const directCustomerService = {
 
   // Full case history for this MSME customer (dashboard only ever returns the
   // single most-recent active one) — scoped strictly to msme_customer_user_id
-  // so a customer can never see another customer's cases.
+  // so a customer can never see another customer's cases. Deduped by
+  // customer_id (see dedupeByCustomer) so a DSA-continued case doesn't show
+  // up as a second, seemingly-unrelated application.
   getCases: async (userId) => {
     const cases = await prisma.case.findMany({
       where: { msme_customer_user_id: userId },
       orderBy: { created_at: 'desc' },
       select: {
         id: true,
+        customer_id: true,
         product_type: true,
         loan_amount: true,
         sanctioned_amount: true,
@@ -71,7 +95,7 @@ const directCustomerService = {
         case_payment: { select: { status: true } },
       },
     });
-    return { cases };
+    return { cases: dedupeByCustomer(cases) };
   },
 
   updateProfile: async (userId, data) => {
