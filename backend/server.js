@@ -2,6 +2,7 @@ require('dotenv').config({ override: true });
 const app = require('./src/app');
 const prisma = require('./config/db');
 const dataPullWorker = require('./src/workers/dataPull.worker');
+const { initSocket } = require('./src/services/socket.service');
 
 const PORT = process.env.PORT || 5000;
 
@@ -22,6 +23,7 @@ async function startServer() {
     dataPullWorker.start();
 
     const server = app.listen(PORT);
+    initSocket(server);
 
     // Only announce success on the real 'listening' event (not the listen
     // callback, which Express can still invoke when the bind fails).

@@ -1,20 +1,19 @@
 /**
  * Storage Provider Factory
  *
- * Reads STORAGE_PROVIDER env var and returns the appropriate singleton.
+ * Callers writing a NEW document must always pass 'S3' explicitly — every
+ * document this app stores belongs in S3, unconditionally, with no .env
+ * toggle involved. The only reason to ever pass a different provider name is
+ * reading back a document that was stored under a different provider in the
+ * past (doc.storage_provider) — never for deciding where new writes go.
  * Business logic never imports a specific provider directly — always use this factory.
- *
- * To switch to Cloudflare R2 in future:
- *   1. Set STORAGE_PROVIDER=CLOUDFLARE_R2 in .env
- *   2. Configure R2 credentials (see cloudflare.storage.js)
- *   3. No other code changes required
  */
 const LocalStorageProvider = require('./local.storage');
 
 const instances = {};
 
 function getStorageProvider(providerName) {
-    const provider = (providerName || process.env.STORAGE_PROVIDER || 'LOCAL').toUpperCase();
+    const provider = (providerName || 'S3').toUpperCase();
 
     if (instances[provider]) return instances[provider];
 

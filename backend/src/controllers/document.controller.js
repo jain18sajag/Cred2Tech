@@ -11,10 +11,23 @@
  */
 
 const path = require('path');
+const crypto = require('crypto');
+const { v4: uuidv4 } = require('uuid');
 const prisma = require('../../config/db');
 const { streamDocument } = require('../services/document.service');
+const { getStorageProvider } = require('../services/storage/index');
 const { logSensitiveAccess } = require('../utils/auditLog');
 const { sendCaughtError } = require('../utils/sendError');
+
+// Mirrors document.service.js#buildStorageKey — year/month/uuid layout, kept
+// as the one thing recorded in the DB (never an absolute path), consistent
+// regardless of which provider (LOCAL/S3/CLOUDFLARE_R2) actually stores it.
+function buildStorageKey(extension) {
+    const now = new Date();
+    const yyyy = now.getUTCFullYear();
+    const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
+    return path.posix.join(String(yyyy), mm, `${uuidv4()}${extension}`);
+}
 
 /**
  * List documents scoped to the requesting user's tenant.
@@ -159,6 +172,18 @@ async function uploadDocument(req, res) {
         const case_id = req.body.case_id || req.params.caseId;
         const applicant_id = req.body.applicant_id || req.params.applicantId;
         const document_type = req.body.document_type || (req.params.applicantId ? 'SALARY_SLIP' : 'OTHER');
+        // Free-text name for a document that doesn't fit any fixed category
+        // (document_type OTHER) — e.g. "Udyam Registration Certificate".
+        const label = req.body.label ? String(req.body.label).trim().slice(0, 200) : null;
+        // Which KYC category an OTHER-typed upload belongs to — document_type
+        // OTHER alone is ambiguous (shared by several categories' "Others"
+        // option plus the freeform "Other Documents" bucket on the proposal
+        // page), so the frontend tags it explicitly.
+        const category = req.body.category ? String(req.body.category).trim().slice(0, 50) : null;
+        // Display name for a user-created custom category (e.g. "Vehicle
+        // Documents") — stored so the category still shows up, correctly
+        // labeled, after a reload even though it isn't in the fixed list.
+        const categoryLabel = req.body.category_label ? String(req.body.category_label).trim().slice(0, 100) : null;
 
         if (!case_id) return res.status(400).json({ error: 'case_id is required' });
 
@@ -193,12 +218,19 @@ async function uploadDocument(req, res) {
             return res.status(400).json({ error: 'applicant_id is required for SALARY_SLIP documents' });
         }
 
-        const UPLOADS_ROOT = path.resolve(process.env.UPLOADS_ROOT || './uploads');
-        // Store relative key (not absolute) — same as LocalStorageProvider
-        const storagePath = path.relative(UPLOADS_ROOT, req.file.path).replace(/\\/g, '/');
-
         const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '') || 'bin';
         const mimeType = req.file.mimetype || 'application/octet-stream';
+
+        // Uploaded straight from memory to S3 — every document this app
+        // stores goes to S3 unconditionally, no .env toggle involved, and the
+        // file never touches this server's own disk. Same as vendor-
+        // downloaded documents already do via document.service.js#ingestFromUrl.
+        const storageProviderName = 'S3';
+        const storageKey = buildStorageKey(`.${ext}`);
+        const storage = getStorageProvider(storageProviderName);
+        await storage.save(req.file.buffer, storageKey, mimeType);
+        const checksum = crypto.createHash('md5').update(req.file.buffer).digest('hex');
+        const systemFileName = path.basename(storageKey);
 
         const doc = await prisma.document.create({
             data: {
@@ -208,20 +240,23 @@ async function uploadDocument(req, res) {
                 applicant_id: applicant_id ? parseInt(applicant_id, 10) : null,
                 document_type: docType,
                 source_type: 'DIRECT_UPLOAD',
-                storage_provider: 'LOCAL',
-                storage_path: storagePath,    // relative key
-                file_name: req.file.filename,
+                storage_provider: storageProviderName,
+                storage_path: storageKey,
+                file_name: systemFileName,
                 original_file_name: req.file.originalname,
                 mime_type: mimeType,
                 extension: ext,
                 file_size_bytes: req.file.size,
+                checksum_md5: checksum,
                 status: 'ACTIVE',
                 uploaded_by_user_id: userId,
+                metadata: (label || category) ? { custom_label: label, category, category_label: categoryLabel } : undefined,
             },
             select: {
                 id: true, document_type: true, original_file_name: true,
                 file_name: true, mime_type: true, extension: true,
                 file_size_bytes: true, status: true, case_id: true, applicant_id: true, created_at: true,
+                metadata: true,
             }
         });
 

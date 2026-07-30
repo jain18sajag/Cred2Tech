@@ -408,7 +408,10 @@ function isExcelDocument(doc) {
 
 async function readExcelWorkbookFromDocument(doc) {
   if (!doc?.storage_path || !isExcelDocument(doc)) return null;
-  const storage = getStorageProvider();
+  // Read back from wherever this specific document actually lives — not
+  // always S3, since a document uploaded before storage was made S3-only may
+  // still be sitting on local disk.
+  const storage = getStorageProvider(doc.storage_provider);
   const stream = await storage.getStream(doc.storage_path);
   const buffer = await streamToBuffer(stream);
   if (!buffer.length) return null;
@@ -2507,7 +2510,7 @@ async function generateAndSaveLoanApplicationSummary({ caseId, tenantId, user })
   const buffer = await generateLoanApplicationSummaryWorkbook({ caseId, tenantId, user });
   const fileName = buildReportFileName(caseId);
   const storageKey = `reports/loan-application-summary/${tenantId}/${caseId}/${fileName}`;
-  const storage = getStorageProvider();
+  const storage = getStorageProvider('S3');
   const saved = await storage.save(Buffer.from(buffer), storageKey, MIME_XLSX);
 
   return {

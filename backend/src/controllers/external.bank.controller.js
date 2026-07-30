@@ -7,6 +7,8 @@ const { determineNotificationRecipient } = require('../services/notification.ser
 const { extractBankFySnapshot } = require('../services/bankParser.service');
 const { safeGet } = require('../utils/ssrf');
 const { verifyWebhookToken } = require('../utils/webhookToken');
+const pullSync = require('../services/pullSync.service');
+const { notifyCasePullUpdate } = require('../services/socket.service');
 
 // Note: Pre-analysis is optional and can be skipped. We will directly analyze here.
 async function analyze(req, res) {
@@ -90,6 +92,8 @@ async function analyze(req, res) {
             }
         });
 
+        if (case_id) notifyCasePullUpdate(case_id);
+
         res.status(200).json({ success: true, bankRequest: result });
     } catch (error) {
         console.error("Bank Analyze Error: ", error);
@@ -105,12 +109,66 @@ async function analyze(req, res) {
     }
 }
 
+/**
+ * Delete a completed (or otherwise no-longer-wanted) bank statement analysis
+ * so the applicant can upload a fresh one — a soft reset (status back to
+ * INITIATED, result fields cleared) rather than removing the row outright,
+ * consistent with how GST requests are "cancelled" rather than hard-deleted.
+ */
+async function deleteRequest(req, res) {
+    try {
+        const { report_id } = req.body;
+        if (!report_id) return res.status(400).json({ error: 'report_id is required' });
+
+        const dbReq = await prisma.bankStatementAnalysisRequest.findFirst({
+            where: { report_id, tenant_id: req.user.tenant_id }
+        });
+        if (!dbReq) return res.status(404).json({ error: 'Bank statement request not found' });
+
+        await prisma.$transaction(async (tx) => {
+            await tx.bankStatementAnalysisRequest.update({
+                where: { id: dbReq.id },
+                data: {
+                    status: 'INITIATED',
+                    provider_message: `Deleted by ${req.user.name || 'user'}`,
+                    report_json_url: null,
+                    report_excel_url: null,
+                    files_payload: null,
+                    avg_bank_balance_latest_year: null,
+                    avg_bank_balance_previous_year: null,
+                    financial_year_latest: null,
+                    financial_year_previous: null,
+                }
+            });
+
+            const docIds = [dbReq.bank_excel_document_id, dbReq.bank_json_document_id].filter(Boolean);
+            if (docIds.length) {
+                await tx.document.updateMany({
+                    where: { id: { in: docIds } },
+                    data: { status: 'DELETED' }
+                });
+            }
+            await tx.bankStatementAnalysisRequest.update({
+                where: { id: dbReq.id },
+                data: { bank_excel_document_id: null, bank_json_document_id: null }
+            });
+        });
+
+        if (dbReq.case_id) notifyCasePullUpdate(dbReq.case_id);
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('[Bank] deleteRequest error:', error.message);
+        res.status(500).json({ error: 'Failed to delete bank statement request' });
+    }
+}
+
 async function syncStatus(req, res) {
     try {
         const { report_id } = req.body;
 
         if (!report_id) {
-            return res.status(400).json({ error: "report_id is required" });
+            return res.status(400).json({ error: 'report_id is required' });
         }
 
         const existingRequest = await prisma.bankStatementAnalysisRequest.findUnique({
@@ -118,131 +176,29 @@ async function syncStatus(req, res) {
         });
 
         if (!existingRequest) {
-            return res.status(404).json({ error: "Bank request log not found" });
+            return res.status(404).json({ error: 'Bank request log not found' });
         }
 
-        const providerRes = await bankService.retrieveWorkOrder(report_id);
-        const resultPayload = providerRes.result || providerRes;
-        const statusStr = providerRes.report?.reportStatus || providerRes.status || resultPayload.status;
-
-        // Map provider status
-        let mappedStatus = existingRequest.status;
-        if (statusStr === 'COMPLETED' || statusStr === 'ANALYSED') mappedStatus = 'COMPLETED';
-        else if (statusStr === 'IN PROGRESS') mappedStatus = 'ANALYZING';
-        else if (statusStr === 'FAILED' || statusStr === 'REJECTED') mappedStatus = 'FAILED';
-
-        let excelDocId = existingRequest.bank_excel_document_id;
-        let jsonDocId = existingRequest.bank_json_document_id;
-        const excelUrl = resultPayload.excelUrl || resultPayload.excel;
-        const jsonUrl = resultPayload.jsonUrl || resultPayload.json;
-
-        let rawRetrieveData = providerRes;
-
-        // Automatically download URLs just like the Webhooks do!
-        if (mappedStatus === 'COMPLETED') {
-            const ingestionJobs = [];
-
-            // Note: Since syncStatus is authenticated in our route, req.user is guaranteed.
-            // When building true webhooks, you pull tenant_id from the existingRequest instead.
-            const tenantId = req.user ? req.user.tenant_id : existingRequest.tenant_id;
-            const userId = req.user ? req.user.id : existingRequest.created_by_user_id;
-
-            if (excelUrl && !excelDocId) {
-                ingestionJobs.push(documentService.ingestFromUrl({
-                    vendorUrl: excelUrl,
-                    documentType: 'BANK_EXCEL',
-                    tenantId,
-                    customerId: existingRequest.customer_id,
-                    caseId: existingRequest.case_id,
-                    applicantId: existingRequest.applicant_id,
-                    uploadedByUserId: userId,
-                    originalFileName: `bank_statement_${report_id}.xlsx`,
-                    metadata: { report_id, source: 'bank_sync_auto_download' }
-                }).then(doc => { excelDocId = doc.id; }).catch(err => {
-                    console.error('[bank.controller] Auto-Excel ingestion failed:', err.message);
-                }));
-            }
-
-            if (jsonUrl && !jsonDocId) {
-                ingestionJobs.push(documentService.ingestFromUrl({
-                    vendorUrl: jsonUrl,
-                    documentType: 'BANK_JSON',
-                    tenantId,
-                    customerId: existingRequest.customer_id,
-                    caseId: existingRequest.case_id,
-                    applicantId: existingRequest.applicant_id,
-                    uploadedByUserId: userId,
-                    originalFileName: `bank_statement_${report_id}.json`,
-                    metadata: { report_id, source: 'bank_sync_auto_download' }
-                }).then(doc => { jsonDocId = doc.id; }).catch(err => {
-                    console.error('[bank.controller] Auto-JSON ingestion failed:', err.message);
-                }));
-            }
-
-            // Await parallel system injections
-            await Promise.allSettled(ingestionJobs);
-
-            // User dynamically requested raw JSON bytes natively loaded into raw_retrieve_response field
-            if (jsonUrl) {
-                try {
-                    const downRes = await safeGet(jsonUrl, { timeout: 30000 });
-                    rawRetrieveData = downRes.data;
-                } catch (e) {
-                    console.error("[Bank Sync] Failed to buffer json payload into string:", e.message);
-                }
-            }
-        }
-
-        // Extract FY ABB snapshot and persist alongside the regular fields
-        let bankFySnapshot = { latest: null, previous: null, fy_latest: null, fy_previous: null };
-        if (mappedStatus === 'COMPLETED') {
-            try {
-                bankFySnapshot = extractBankFySnapshot(rawRetrieveData);
-                console.log('[Bank JSON] latest ABB:', bankFySnapshot.latest);
-            } catch (fyErr) {
-                console.error('[Bank FY Snapshot] Extraction error:', fyErr.message);
-            }
-        }
-
-        const updated = await prisma.bankStatementAnalysisRequest.update({
-            where: { report_id },
-            data: {
-                status: mappedStatus,
-                provider_message: statusStr,
-                raw_retrieve_response: rawRetrieveData,
-                raw_download_response: rawRetrieveData,
-                bank_excel_document_id: excelDocId || undefined,
-                bank_json_document_id: jsonDocId || undefined,
-                report_excel_url: excelUrl,
-                report_json_url: jsonUrl,
-                avg_bank_balance_latest_year: bankFySnapshot.latest,
-                avg_bank_balance_previous_year: bankFySnapshot.previous,
-                financial_year_latest: bankFySnapshot.fy_latest,
-                financial_year_previous: bankFySnapshot.fy_previous,
-            }
+        // Shared with the realtime supervisor, which now drives this loop
+        // server-side — this endpoint stays for manual retries and for the
+        // background worker.
+        const result = await pullSync.syncBankRequest(existingRequest, {
+            tenantId: req.user?.tenant_id,
+            userId: req.user?.id
         });
 
-        if (mappedStatus === 'COMPLETED' || mappedStatus === 'FAILED') {
-            if (existingRequest.case_id) {
-                await prisma.caseDataPullStatus.upsert({
-                    where: { case_id: existingRequest.case_id },
-                    create: { case_id: existingRequest.case_id, bank_status: mappedStatus === 'COMPLETED' ? 'COMPLETE' : 'FAILED' },
-                    update: { bank_status: mappedStatus === 'COMPLETED' ? 'COMPLETE' : 'FAILED' }
-                });
+        if (existingRequest.case_id) notifyCasePullUpdate(existingRequest.case_id);
 
-                if (mappedStatus === 'COMPLETED') {
-                    // Extract ESR financials asynchronously
-                    const { extractEsrFinancials } = require('../services/esrFinancials.service');
-                    extractEsrFinancials(existingRequest.case_id, existingRequest.tenant_id).catch(err => console.error(err));
-                }
-            }
-        }
-
-        res.status(200).json({ success: true, status: mappedStatus, rawStatus: statusStr, requestData: updated });
+        res.status(200).json({
+            success: true,
+            status: result.status,
+            rawStatus: result.rawStatus,
+            requestData: result.requestData
+        });
     } catch (error) {
-        console.error("Bank Sync Error: ", error);
+        console.error('Bank Sync Error: ', error);
         const statusCode = error.status === 401 ? 502 : (error.status || 500);
-        const safeMessage = error.status && error.name === 'Error' ? error.message : "Failed to sync status";
+        const safeMessage = error.status && error.name === 'Error' ? error.message : 'Failed to sync status';
         res.status(statusCode).json({ error: safeMessage });
     }
 }
@@ -252,139 +208,45 @@ async function downloadData(req, res) {
         const { report_id } = req.body;
 
         if (!report_id) {
-            return res.status(400).json({ error: "report_id is required" });
+            return res.status(400).json({ error: 'report_id is required' });
         }
 
         const existingRequest = await prisma.bankStatementAnalysisRequest.findUnique({
             where: { report_id }
         });
 
-        if (!existingRequest || existingRequest.status !== 'COMPLETED') {
-            return res.status(400).json({ error: "Report is not yet completed natively." });
+        if (!existingRequest) {
+            return res.status(404).json({ error: 'Bank request log not found' });
         }
 
-        const providerRes = await bankService.downloadReport(report_id, 'excel and json');
-
-        const resultPayload = providerRes.result || providerRes;
-
-        if (resultPayload.statusCode === 202 || resultPayload.status === 'IN PROGRESS') {
-            return res.status(202).json({
-                success: false,
-                message: resultPayload.message || "Report is still generating. Please try again in a few moments."
-            });
-        }
-
-        const excelUrl = resultPayload.excelUrl || resultPayload.excel;
-        const jsonUrl = resultPayload.jsonUrl || resultPayload.json;
-
-        if (!excelUrl && !jsonUrl) {
-            return res.status(400).json({
-                error: "Download links are missing from vendor response.",
-                response: resultPayload
-            });
-        }
-
-        // Buffer raw JSON natively into DB if available
-        let rawRetrieveData = null;
-        if (jsonUrl) {
-            try {
-                const jsonRes = await safeGet(jsonUrl, { timeout: 30000 });
-                rawRetrieveData = jsonRes.data;
-            } catch (e) {
-                console.error("[Bank Download] Failed to buffer json payload into string:", e.message);
-            }
-        }
-
-        // Re-extract FY snapshot from downloaded JSON if we have it
-        let bankFySnapshot = { latest: null, previous: null, fy_latest: null, fy_previous: null };
-        if (rawRetrieveData) {
-            try {
-                bankFySnapshot = extractBankFySnapshot(rawRetrieveData);
-                console.log('[Bank JSON] downloaded:', !!rawRetrieveData);
-                console.log('[Bank JSON] latest ABB:', bankFySnapshot.latest);
-            } catch (fyErr) {
-                console.error('[Bank JSON] FY Extraction error:', fyErr.message);
-            }
-        }
-
-        // Ingest vendor URLs into our own storage (runs in parallel for speed)
-        const tenantId = req.user.tenant_id;
-        const userId = req.user.id;
-
-        let excelDocId = existingRequest.bank_excel_document_id;
-        let jsonDocId = existingRequest.bank_json_document_id;
-
-        const ingestionJobs = [];
-
-        if (excelUrl && !excelDocId) {
-            ingestionJobs.push(
-                documentService.ingestFromUrl({
-                    vendorUrl: excelUrl,
-                    documentType: 'BANK_EXCEL',
-                    tenantId,
-                    customerId: existingRequest.customer_id,
-                    caseId: existingRequest.case_id,
-                    applicantId: existingRequest.applicant_id,
-                    uploadedByUserId: userId,
-                    originalFileName: `bank_statement_${report_id}.xlsx`,
-                    metadata: { report_id, source: 'signzy_bank_download' }
-                }).then(doc => { excelDocId = doc.id; }).catch(err => {
-                    console.error('[bank.controller] Excel ingestion failed:', err.message);
-                })
-            );
-        }
-
-        if (jsonUrl && !jsonDocId) {
-            ingestionJobs.push(
-                documentService.ingestFromUrl({
-                    vendorUrl: jsonUrl,
-                    documentType: 'BANK_JSON',
-                    tenantId,
-                    customerId: existingRequest.customer_id,
-                    caseId: existingRequest.case_id,
-                    applicantId: existingRequest.applicant_id,
-                    uploadedByUserId: userId,
-                    originalFileName: `bank_statement_${report_id}.json`,
-                    metadata: { report_id, source: 'signzy_bank_download' }
-                }).then(doc => { jsonDocId = doc.id; }).catch(err => {
-                    console.error('[bank.controller] JSON ingestion failed:', err.message);
-                })
-            );
-        }
-
-        await Promise.allSettled(ingestionJobs);
-
-        // Persist document IDs + keep vendor URLs in source fields for audit
-        const updated = await prisma.bankStatementAnalysisRequest.update({
-            where: { report_id },
-            data: {
-                report_excel_url: excelUrl,        // Audit/source — NOT used for serving
-                report_json_url: jsonUrl,          // Audit/source — NOT used for serving
-                raw_retrieve_response: rawRetrieveData || existingRequest.raw_retrieve_response,
-                raw_download_response: providerRes,
-                bank_excel_document_id: excelDocId || undefined,
-                bank_json_document_id: jsonDocId || undefined,
-                avg_bank_balance_latest_year: bankFySnapshot.latest || existingRequest.avg_bank_balance_latest_year,
-                financial_year_latest: bankFySnapshot.fy_latest || existingRequest.financial_year_latest,
-            }
+        const result = await pullSync.fetchBankReportLinks(existingRequest, {
+            tenantId: req.user?.tenant_id,
+            userId: req.user?.id
         });
+
+        // The vendor keeps answering "in progress" for a while after analysis
+        // itself completes; 202 tells the caller to come back later. The
+        // realtime supervisor retries this automatically, so the UI no longer
+        // has to.
+        if (result.pending) {
+            return res.status(202).json({ success: false, message: result.message });
+        }
+
+        if (existingRequest.case_id) notifyCasePullUpdate(existingRequest.case_id);
 
         // Return document IDs for frontend to use our endpoints — NOT vendor URLs
         res.status(200).json({
             success: true,
-            documentIds: {
-                excel: excelDocId || null,
-                json: jsonDocId || null,
-            },
+            documentIds: result.documentIds,
             // Preserve for backward compatibility: still include vendor URLs but label them clearly
-            sourceUrls: { excel: excelUrl, json: jsonUrl },
-            requestData: updated
+            sourceUrls: result.sourceUrls,
+            requestData: result.requestData
         });
     } catch (error) {
-        console.error("Bank Download Error: ", error);
+        console.error('Bank Download Error: ', error);
         const statusCode = error.status === 401 ? 502 : (error.status || 500);
-        const safeMessage = error.status && error.name === 'Error' ? error.message : "Failed to download URLs";
-        res.status(statusCode).json({ error: safeMessage });
+        const safeMessage = error.status && error.name === 'Error' ? error.message : 'Failed to download URLs';
+        res.status(statusCode).json({ error: safeMessage, response: error.response });
     }
 }
 
@@ -586,6 +448,10 @@ async function handleSignzyCallback(req, res) {
             }
         }
 
+        // Push to any browser watching this case rather than waiting for its
+        // next supervisor tick.
+        if (existingRequest.case_id) notifyCasePullUpdate(existingRequest.case_id);
+
         return res.status(200).json({ received: true });
 
     } catch (err) {
@@ -607,5 +473,6 @@ module.exports = {
     analyze,
     syncStatus,
     downloadData,
+    deleteRequest,
     handleSignzyCallback
 };

@@ -46,6 +46,7 @@ router.post('/itr/download',  itrAnalyticsController.download);
 router.post('/bank/analyze', bankController.analyze);
 router.post('/bank/sync', bankController.syncStatus);
 router.post('/bank/download', bankController.downloadData);
+router.post('/bank/delete', bankController.deleteRequest);
 
 // GST Integration
 router.post('/gst/create', gstController.createGstRequest);

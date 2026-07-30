@@ -392,13 +392,10 @@ async function uploadBulkCases(req, res) {
     const tenantId = req.user.tenant_id;
     const userId = req.user.id;
     const bulkCaseUploadService = require('../services/bulkCaseUpload.service');
-    const fs = require('fs');
 
-    const fileBuffer = fs.readFileSync(req.file.path);
-    const result = await bulkCaseUploadService.processUpload(fileBuffer, tenantId, userId);
-    
-    // Clean up temp file
-    try { fs.unlinkSync(req.file.path); } catch(e) {}
+    // Bulk-upload template is parsed once in memory and never persisted as a
+    // Document — no local disk involved, nothing to clean up afterwards.
+    const result = await bulkCaseUploadService.processUpload(req.file.buffer, tenantId, userId);
 
     if (result.failedRows > 0 && result.createdCases === 0) {
       return res.status(400).json(buildBulkUploadResponse(result, false, 'Bulk upload validation failed'));

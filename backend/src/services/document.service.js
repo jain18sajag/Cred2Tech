@@ -139,9 +139,9 @@ async function ingestFromUrl({
     // 4. Compute MD5 checksum
     const checksum = crypto.createHash('md5').update(buffer).digest('hex');
 
-    // 5. Build storage key and save
+    // 5. Build storage key and save — always S3, never local disk.
     const storageKey = buildStorageKey(tenantId, customerId, ext);
-    const storage = getStorageProvider();
+    const storage = getStorageProvider('S3');
     await storage.save(buffer, storageKey, detectedMime);
 
     const systemFileName = path.basename(storageKey);
@@ -156,7 +156,7 @@ async function ingestFromUrl({
             document_type: documentType,
             source_type: 'VENDOR_DOWNLOAD',
             source_url: vendorUrl,       // Kept for audit — app never uses this to serve
-            storage_provider: (process.env.STORAGE_PROVIDER || 'LOCAL').toUpperCase(),
+            storage_provider: 'S3',
             storage_path: storageKey,
             file_name: systemFileName,
             original_file_name: originalFileName || systemFileName,

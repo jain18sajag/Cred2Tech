@@ -7,6 +7,8 @@ const { determineNotificationRecipient } = require('../services/notification.ser
 const { safeGet } = require('../utils/ssrf');
 const { generateWebhookToken, appendWebhookToken, verifyWebhookToken } = require('../utils/webhookToken');
 const { sendCaughtError } = require('../utils/sendError');
+const pullSync = require('../services/pullSync.service');
+const { notifyCasePullUpdate } = require('../services/socket.service');
 
 
 // Helper: extract latest + previous financial year turnover from raw GST JSON
@@ -260,6 +262,8 @@ async function createGstRequest(req, res) {
             }
         });
 
+        if (case_id) notifyCasePullUpdate(case_id);
+
         res.json({ success: true, data: result });
     } catch (error) {
         const explicitStatus = error?.status || error?.statusCode;
@@ -301,6 +305,8 @@ async function submitGstOtp(req, res) {
             data: { status: 'PENDING', next_run_at: new Date() }
         });
 
+        if (dbReq.case_id) notifyCasePullUpdate(dbReq.case_id);
+
         res.json({ success: true, status: 'PROCESSING', message: providerRes.message });
     } catch (error) {
         sendCaughtError(res, error, 'Failed to submit GST OTP');
@@ -316,150 +322,22 @@ async function syncGstData(req, res) {
 
         if (!dbReq) return res.status(404).json({ error: 'GST Request not found' });
 
-        let currentStatus = dbReq.status;
-        let dataSynced = false;
+        // Shared with the realtime supervisor, which now drives this loop
+        // server-side — this endpoint stays for manual retries and for the
+        // background worker.
+        const result = await pullSync.syncGstRequest(dbReq);
 
-        // Fetch Data safely without re-billing (Data is raw payload)
-        if (['PROCESSING', 'DATA_READY', 'REPORT_READY'].includes(currentStatus)) {
-            try {
-                const dataRes = await gstService.fetchData(dbReq.provider_request_id);
-                // "message": "Request is in progress." vs actual data obj payload "gstr1"
-                if (dataRes.status === "SUCCESS" && dataRes.message === "Request is in progress.") {
-                    // Still processing
-                } else if (hasUsableGstFetchPayload(dataRes)) {
-                    currentStatus = 'DATA_READY';
-                    
-                    const updateData = { 
-                        raw_fetch_data: dataRes, 
-                        status: 'DATA_READY'
-                    };
-                    
-                    await prisma.gstrAnalyticsRequest.update({
-                        where: { id: dbReq.id },
-                        data: updateData
-                    });
-                    dataSynced = true;
-                }
-            } catch (err) {
-                // Ignore, maybe not ready
-                console.error("Fetch Data Sync Error: ", err.message);
-            }
-        }
+        if (dbReq.case_id) notifyCasePullUpdate(dbReq.case_id);
 
-        // Fetch Report JSON links safely (triggered if status is terminal but documents are missing)
-        if (['PROCESSING', 'DATA_READY', 'REPORT_READY'].includes(currentStatus)) {
-            try {
-                const reportRes = await gstService.fetchReport(dbReq.provider_request_id);
-                if (reportRes.pdfUrl || reportRes.jsonDataUrl || reportRes.excelUrl) {
-                    currentStatus = 'REPORT_READY';
-
-                    // Ingest vendor report URLs into our storage (non-fatal if fails)
-                    let pdfDocId = dbReq.gst_pdf_document_id;
-                    let excelDocId = dbReq.gst_excel_document_id;
-                    let jsonDocId = dbReq.gst_json_document_id;
-
-                    const ingestionBase = {
-                        tenantId: dbReq.tenant_id,
-                        customerId: dbReq.customer_id,
-                        caseId: dbReq.case_id,
-                        uploadedByUserId: dbReq.created_by_user_id,
-                        metadata: { gst_request_id: dbReq.id, gstin: dbReq.gstin, source: 'signzy_gst_sync' }
-                    };
-
-                    const gstIngestionJobs = [];
-                    if (reportRes.pdfUrl && !pdfDocId) {
-                        gstIngestionJobs.push(
-                            documentService.ingestFromUrl({ ...ingestionBase, vendorUrl: reportRes.pdfUrl, documentType: 'GST_REPORT_PDF', originalFileName: `gst_report_${dbReq.gstin}.pdf` })
-                                .then(doc => { pdfDocId = doc.id; })
-                                .catch(e => console.error('[gst.controller] PDF ingestion failed:', e.message))
-                        );
-                    }
-                    if (reportRes.excelUrl && !excelDocId) {
-                        gstIngestionJobs.push(
-                            documentService.ingestFromUrl({ ...ingestionBase, vendorUrl: reportRes.excelUrl, documentType: 'GST_REPORT_EXCEL', originalFileName: `gst_report_${dbReq.gstin}.xlsx` })
-                                .then(doc => { excelDocId = doc.id; })
-                                .catch(e => console.error('[gst.controller] Excel ingestion failed:', e.message))
-                        );
-                    }
-                    if (reportRes.jsonDataUrl && !jsonDocId) {
-                        gstIngestionJobs.push(
-                            documentService.ingestFromUrl({ ...ingestionBase, vendorUrl: reportRes.jsonDataUrl, documentType: 'GST_REPORT_JSON', originalFileName: `gst_report_${dbReq.gstin}.json` })
-                                .then(doc => { jsonDocId = doc.id; })
-                                .catch(e => console.error('[gst.controller] JSON ingestion failed:', e.message))
-                        );
-                    }
-                    await Promise.allSettled(gstIngestionJobs);
-
-                    let rawReportData = undefined;
-                    if (reportRes.jsonDataUrl) {
-                        try {
-                            const downloader = await safeGet(reportRes.jsonDataUrl, { timeout: 30000 });
-                            rawReportData = downloader.data;
-                        } catch (err) { console.error("[Sync] Failed to download JSON payload:", err.message); }
-                    }
-
-                    await prisma.gstrAnalyticsRequest.update({
-                        where: { id: dbReq.id },
-                        data: {
-                            report_json_url: reportRes.jsonDataUrl || dbReq.report_json_url,   
-                            report_excel_url: reportRes.excelUrl || dbReq.report_excel_url,   
-                            report_pdf_url: reportRes.pdfUrl || dbReq.report_pdf_url,         
-                            status: 'REPORT_READY',
-                            provider_callback_payload: reportRes,
-                            raw_report_data: rawReportData || undefined,
-                            gst_pdf_document_id: pdfDocId || undefined,
-                            gst_excel_document_id: excelDocId || undefined,
-                            gst_json_document_id: jsonDocId || undefined,
-                        }
-                    });
-                    dataSynced = true;
-
-                    // Also set case to COMPLETE now
-                    if (dbReq.case_id) {
-                        await prisma.caseDataPullStatus.upsert({
-                            where: { case_id: dbReq.case_id },
-                            create: { case_id: dbReq.case_id, gst_status: 'COMPLETE' },
-                            update: { gst_status: 'COMPLETE' }
-                        });
-
-                        // Extract ESR financials asynchronously
-                        const { extractEsrFinancials } = require('../services/esrFinancials.service');
-                        extractEsrFinancials(dbReq.case_id, dbReq.tenant_id).catch(err => console.error(err));
-                    }
-                }
-            } catch (err) {
-                console.error("Fetch Report Sync Error: ", err.message);
-            }
-        }
-
-        if (currentStatus !== dbReq.status) {
-            await prisma.gstrAnalyticsRequest.update({
-                where: { id: dbReq.id },
-                data: { status: currentStatus }
-            });
-        }
-        
-        if (dataSynced) {
-            const { finalizeGstAnalyticsRequest } = require('../services/gst.service');
-            await finalizeGstAnalyticsRequest(dbReq.id, dbReq.tenant_id).catch(e => console.error("Finalize error:", e.message));
-        }
-
-        res.json({ success: true, status: currentStatus, dataSynced });
+        res.json({ success: true, status: result.status, dataSynced: result.dataSynced });
     } catch (error) {
         sendCaughtError(res, error, 'Failed to sync GST data', 500);
     }
 }
 
-function hasUsableGstFetchPayload(dataRes) {
-    if (!dataRes || typeof dataRes !== 'object') return false;
-    if (dataRes.gstin || dataRes.gstr1 || dataRes.gstr3b) return true;
-    if (dataRes.data?.gstin || dataRes.data?.gstr1 || dataRes.data?.gstr3b) return true;
-    if (dataRes.result?.gstin || dataRes.result?.gstr1 || dataRes.result?.gstr3b) return true;
-    return false;
-}
-
-// Webhook Receiver — authenticated via the `wt` token we embedded in the
-// callbackUrl at request-creation time (Signzy itself signs nothing).
+// Unauthenticated endpoint — the only thing authenticating a delivery is the
+// HMAC token we embedded in the callbackUrl at request-creation time (Signzy
+// itself signs nothing).
 async function handleSignzyCallback(req, res) {
     let claimedRequestId = null; // set once we successfully claim the row, used to release it if processing crashes
     try {
@@ -602,6 +480,12 @@ async function handleSignzyCallback(req, res) {
             }
         }
 
+        // Push to any browser watching this case. The webhook already announces
+        // terminal transitions on the pg channel, but this covers the
+        // intermediate ones (CALLBACK_RECEIVED / DATA_READY) too, so the UI
+        // tracks the journey rather than only its ending.
+        if (dbReq.case_id) notifyCasePullUpdate(dbReq.case_id);
+
         return res.status(200).json({ received: true });
     } catch (error) {
         console.error("Signzy GST Webhook Error:", error);
@@ -647,6 +531,8 @@ async function cancelGstRequest(req, res) {
             },
             data: { status: 'CANCELLED' }
         });
+
+        if (dbReq.case_id) notifyCasePullUpdate(dbReq.case_id);
 
         res.json({ success: true, status: 'FAILED' });
     } catch (error) {

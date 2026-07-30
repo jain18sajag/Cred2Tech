@@ -25,29 +25,9 @@ app.use(pinoHttp({
 // scripts/styles) — helmet's default policy is safe to enable app-wide.
 app.use(helmet());
 
-// CORS Policy Lockdown using env variables
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000')
-  .split(',')
-  .map(o => o.trim())
-  .filter(Boolean);
-const allowAnyOrigin = allowedOrigins.includes('*');
-
-// Matches ONLY a genuine http(s)://localhost[:port] or http(s)://127.0.0.1[:port]
-// origin — not any string that merely contains the substring "localhost"
-// (the old check would wrongly allow e.g. http://localhost.attacker.io).
-const LOCALHOST_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
-const allowsAnyLocalhostPort = allowedOrigins.some(o => LOCALHOST_ORIGIN_RE.test(o));
-
-function isCorsOriginAllowed(origin) {
-  if (!origin) return true;
-  if (allowAnyOrigin) return true;
-  if (allowedOrigins.includes(origin)) return true;
-  // Dev convenience: any localhost port is allowed once at least one
-  // localhost origin is configured, so new local frontend ports don't need
-  // an .env change — but exact-match only, never substring.
-  if (allowsAnyLocalhostPort && LOCALHOST_ORIGIN_RE.test(origin)) return true;
-  return false;
-}
+// CORS Policy Lockdown using env variables. The allow-list itself lives in
+// utils/corsOrigins so the Socket.IO handshake enforces exactly the same rule.
+const { allowedOrigins, isCorsOriginAllowed } = require('./utils/corsOrigins');
 
 app.use(cors({
   origin: (origin, callback) => {
