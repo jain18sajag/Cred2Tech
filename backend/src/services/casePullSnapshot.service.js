@@ -107,9 +107,20 @@ function describeItr(req) {
         case 'PROCESSING':
             return { phase: 'PROCESSING', label: 'Fetching ITR filings from the income-tax portal', progress: 50 };
         case 'COMPLETED':
+            // COMPLETED is terminal — always. This used to report FINALIZING
+            // ("Saving your ITR report") whenever no file was present, which
+            // could never resolve: syncItrRequest persists `excel_url`
+            // unconditionally, so a missing one means the provider returned no
+            // file at all, and the realtime supervisor only re-syncs ITR while
+            // the status is PROCESSING. The result was a permanent fake
+            // in-progress state that also kept the per-case tick running at its
+            // fast interval forever. Say what is actually true instead, and let
+            // the UI offer a manual re-fetch for the recoverable case (the
+            // background worker can mark a job COMPLETED before analytics were
+            // ever pulled).
             return (req.itr_document_id || req.excel_url)
                 ? { phase: 'COMPLETED', label: 'ITR analytics ready', progress: 100 }
-                : { phase: 'FINALIZING', label: 'Saving your ITR report', progress: 92 };
+                : { phase: 'COMPLETED', label: 'ITR analytics complete — no report file returned', progress: 100 };
         case 'FAILED':
             return {
                 phase: 'FAILED',

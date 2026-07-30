@@ -71,6 +71,17 @@ export default function CaseDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [caseData, setCaseData] = useState(null);
+
+  // An MSME case's PRIMARY applicant IS the business, and is deliberately
+  // created without a `name` (case.service.js createCase) — the business
+  // identity lives on the customer record instead. Only the salaried flow
+  // copies a name onto the applicant row. Without this fallback the
+  // Co-Borrowers tab renders the primary borrower as "Unnamed Applicant".
+  const applicantDisplayName = (app) =>
+    app.name
+    || (app.type === 'PRIMARY' ? resolveEntityName(caseData?.customer) : '')
+    || 'Unnamed Applicant';
+
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('Overview');
   const [showStageModal, setShowStageModal] = useState(false);
@@ -585,7 +596,7 @@ export default function CaseDetailPage() {
               {caseData.applicants?.map(app => (
                 <tr key={app.id} style={{ borderBottom: '1px solid rgba(60,66,87,0.12)' }}>
                   <td style={tdStyle}>
-                    <div style={{ fontWeight: 600, color: '#0A2540' }}>{app.name || 'Unnamed Applicant'}</div>
+                    <div style={{ fontWeight: 600, color: '#0A2540' }}>{applicantDisplayName(app)}</div>
                     <div style={{ fontSize: 11, color: '#8898AA' }}>{app.type}</div>
                   </td>
                   <td style={tdStyle}>{app.type === 'PRIMARY' ? 'Primary Borrower' : 'Co-Borrower / Guarantor'}</td>

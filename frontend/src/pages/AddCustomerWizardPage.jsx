@@ -955,9 +955,7 @@ const handleStep3Submit = async (e) => {
                 </div>
               )}
 
-              <div style={{ marginTop: 24, padding: '14px 16px', background: 'var(--primary-subtle)', borderRadius: 'var(--radius)', color: 'var(--primary-dark)', fontSize: 12 }}>
-                📌 After entering PAN and Mobile, trigger 'Send OTP' to lock your draft and verify ownership.
-              </div>
+              
             </div>
           </div>
 

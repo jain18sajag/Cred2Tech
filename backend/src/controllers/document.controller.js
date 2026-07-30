@@ -260,7 +260,12 @@ async function uploadDocument(req, res) {
             }
         });
 
-        console.log(`[document.controller] Upload: doc #${doc.id} (${docType}) for case=${case_id}, applicant=${applicant_id || 'none'}, path=${storagePath}`);
+        // NOTE: the variable is storageKey (line ~229). This log previously read
+        // `storagePath`, which does not exist — and because it runs AFTER the
+        // document row is created, the ReferenceError was thrown past the point
+        // of success: the file was stored and the row written, but the request
+        // still returned "Failed to upload document".
+        console.log(`[document.controller] Upload: doc #${doc.id} (${docType}) for case=${case_id}, applicant=${applicant_id || 'none'}, path=${storageKey}`);
         res.status(201).json({ success: true, data: doc });
     } catch (error) {
         sendCaughtError(res, error, 'Failed to upload document');

@@ -226,6 +226,44 @@ async function syncItrRequest(existing) {
 
     const statusMessage = providerRes.statusMessage || null;
 
+    // Extract FY snapshots based on flow type. Done BEFORE deciding whether the
+    // request is finished, because the extraction result is also the readiness
+    // signal — see below.
+    const itrSnapshot = (existing.auth_mode === 'OTP')
+        ? extractDataFromRawItrJson(analyticsData)
+        : extractItrFySnapshot(analyticsData);
+
+    // Is the provider actually done?
+    //
+    // This used to write status: 'COMPLETED' unconditionally, as soon as the
+    // call returned without throwing. But the provider answers "still working"
+    // with a perfectly successful 200 carrying no excelUrl and no filings — so
+    // a request got marked COMPLETED with nothing in it, the realtime
+    // supervisor stopped polling (it only polls PROCESSING), and the report was
+    // never collected. That is why a manual re-fetch was needed to finish a
+    // pull that should have completed on its own.
+    //
+    // Treat it as finished only when there is something real: a report file, or
+    // filings the FY extractor could actually read. Otherwise leave it on
+    // PROCESSING so the next supervisor tick tries again.
+    const ready = !!excelUrl || itrSnapshot.financial_year_latest != null;
+
+    if (!ready) {
+        if (existing.status !== 'PROCESSING' || existing.provider_message !== statusMessage) {
+            await prisma.itrAnalyticsRequest.update({
+                where: { id: existing.id },
+                data: { status: 'PROCESSING', provider_message: statusMessage }
+            });
+        }
+        return {
+            changed: existing.status !== 'PROCESSING',
+            status: 'PROCESSING',
+            documentId: null,
+            excel_url: null,
+            analytics_payload: null,
+        };
+    }
+
     // Ingest vendor excel URL into our own storage
     let itrDocumentId = existing.itr_document_id;
     if (excelUrl && !itrDocumentId) {
@@ -248,11 +286,7 @@ async function syncItrRequest(existing) {
         }
     }
 
-    // Extract FY snapshots based on flow type
-    const itrSnapshot = (existing.auth_mode === 'OTP')
-        ? extractDataFromRawItrJson(analyticsData)
-        : extractItrFySnapshot(analyticsData);
-
+    // itrSnapshot was already extracted above (it doubles as the readiness check).
     await prisma.itrAnalyticsRequest.update({
         where: { id: existing.id },
         data: {
