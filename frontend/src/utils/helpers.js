@@ -92,3 +92,45 @@ export const resolveEntityName = (customer, fallback = '') => {
   ].find(isUsableEntityName) || fallback;
 };
 
+
+// Common acronyms in status/stage codes that should stay uppercase when humanized
+// (e.g. ESR_GENERATED -> "ESR Generated", not "Esr Generated").
+const STATUS_LABEL_ACRONYMS = new Set([
+  'ESR', 'KYC', 'GST', 'PAN', 'CIBIL', 'ROI', 'LTV', 'FOIR', 'DBR', 'CA',
+  'NWM', 'LIP', 'GRP', 'ITR', 'AA', 'OTP', 'PDD', 'DSA', 'MSME', 'EMI',
+]);
+
+// The DSA-facing case pipeline label set (see CustomersListPage's own copy of
+// this same mapping) — some CaseStage values get DSA-jargon labels that don't
+// match generic Title-Case formatting (e.g. ESR_GENERATED -> "Login Done",
+// APPROVED -> "Sanctioned"), so MSME-facing pages must use this exact mapping
+// too rather than formatStatusLabel alone, or the same case shows two
+// different-looking statuses depending on which side is viewing it.
+export const CASE_STAGE_LABELS = {
+  LEAD_CREATED: 'Lead Created',
+  DATA_COLLECTION: 'Data Pulled',
+  LEAD_SENT_TO_LENDER: 'Lead Sent',
+  ESR_GENERATED: 'Login Done',
+  APPROVED: 'Sanctioned',
+  DISBURSED: 'Disbursed',
+  PARTLY_DISBURSED: 'Partly Disbursed',
+  CLOSED: 'Closed',
+  REJECTED: 'Rejected',
+  DRAFT: 'Draft',
+};
+
+// Renders raw backend enum values (SCREAMING_SNAKE_CASE stage/status codes like
+// "ESR_GENERATED", "LEAD_SENT_TO_LENDER") as clean, spaced, title-cased labels.
+// Leaves already-readable text (e.g. values that aren't all-caps-with-underscores)
+// untouched so it's safe to run on anything without double-processing labels
+// that already went through an explicit STAGE_LABELS map.
+export const formatStatusLabel = (value) => {
+  if (value === null || value === undefined) return value;
+  const str = String(value);
+  if (!/^[A-Z0-9]+(_[A-Z0-9]+)*$/.test(str)) return str;
+  return str
+    .split('_')
+    .filter(Boolean)
+    .map((w) => (STATUS_LABEL_ACRONYMS.has(w) ? w : w.charAt(0) + w.slice(1).toLowerCase()))
+    .join(' ');
+};

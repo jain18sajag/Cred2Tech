@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { Loader2, Users, CalendarDays } from 'lucide-react';
 import { format } from 'date-fns';
 import '../styles/msme-theme.css'; // Import the scoped stylesheet
+import { CASE_STAGE_LABELS, formatStatusLabel } from '../../utils/helpers';
 
 const AdminMsmeCasesPage = () => {
   const [cases, setCases] = useState([]);
@@ -117,7 +118,7 @@ const AdminMsmeCasesPage = () => {
                 </td>
                 <td>
                   <span className={`badge-status ${c.stage === 'ESR_GENERATED' ? 'active' : ''}`} style={c.stage === 'LEAD_CREATED' ? { background: 'var(--warn-dim)', color: '#7A4800' } : {}}>
-                    {c.stage}
+                    {c.stage ? (CASE_STAGE_LABELS[c.stage] || formatStatusLabel(c.stage)) : '—'}
                   </span>
                 </td>
                 <td>

@@ -4,7 +4,7 @@ import { useMsmeAuth } from '../context/MsmeAuthContext';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useRazorpay } from 'react-razorpay';
-import { resolveEntityName } from '../utils/helpers';
+import { resolveEntityName, CASE_STAGE_LABELS, formatStatusLabel } from '../utils/helpers';
 
 const MsmeDashboard = () => {
   const { user } = useMsmeAuth();
@@ -257,7 +257,7 @@ const MsmeDashboard = () => {
                       <td style={{ padding: '16px 24px' }}>{activeCase.product_type || 'TBD'}</td>
                       <td style={{ padding: '16px 24px' }}>{activeCase.loan_amount ? `₹${(activeCase.loan_amount / 100000).toFixed(1)}L` : '-'}</td>
                       <td style={{ padding: '16px 24px' }}>
-                        <span className="badge-status" style={{ background: '#EBF4FF', color: '#3182CE' }}>{activeCase.stage}</span>
+                        <span className="badge-status" style={{ background: '#EBF4FF', color: '#3182CE' }}>{activeCase.stage ? (CASE_STAGE_LABELS[activeCase.stage] || formatStatusLabel(activeCase.stage)) : '—'}</span>
                       </td>
                       <td style={{ padding: '16px 24px', textAlign: 'right' }}>
                          {activeCase.stage !== 'CLOSED' && activeCase.stage !== 'REJECTED' ? (
