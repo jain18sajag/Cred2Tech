@@ -1,6 +1,7 @@
 const prisma = require('../../config/db');
 const { executePaidApi } = require('../services/wallet.service');
 const panService = require('../services/externalApis/pan.service');
+const signzyService = require('../services/externalApis/signzy.service');
 const { logSensitiveAccess } = require('../utils/auditLog');
 
 // A GST registration still awaiting approval only has a TRN (Temporary Reference
@@ -40,6 +41,25 @@ exports.fetchPanIntelligence = async (req, res) => {
         // so tenant_id alone doesn't isolate them from each other's customer records.
         if (req.user.role === 'MSME_CUSTOMER' && customer.created_by_user_id !== userId) {
             return res.status(403).json({ error: 'Access denied to this customer' });
+        }
+
+        // GST is a self-employed/business concept — a salaried employee has no
+        // GST registration to look up, so this endpoint (the GST-linked PAN
+        // intelligence fetch, billed as PAN_FETCH) must never run for them, even
+        // if some future/unexpected caller invokes it. Salaried customers get
+        // /pan/verify's plain Signzy name/DOB lookup only. This is enforced here
+        // (not just by the salaried wizard never calling this route) so the rule
+        // holds regardless of caller.
+        // Classification lives on the Case, not the Customer, so the same
+        // PAN/customer can have both an MSME and a salaried case — check the
+        // specific case being worked on; fall back to the customer's own
+        // category only if no case_id was given at all.
+        const caseForCategoryCheck = case_id ? await prisma.case.findUnique({ where: { id: Number(case_id) }, select: { category: true } }) : null;
+        const categoryToCheck = caseForCategoryCheck ? caseForCategoryCheck.category : customer.category;
+        if (categoryToCheck === 'SALARIED') {
+            return res.status(400).json({
+                error: 'GST/PAN intelligence lookup is not applicable to salaried customers. Use /external/pan/verify instead.'
+            });
         }
 
         await logSensitiveAccess({
@@ -264,8 +284,25 @@ exports.fetchPanIntelligence = async (req, res) => {
                 // so never treat them as a usable name even as a last-resort pick.
                 const resolvedTradeName = !isTrnStatus(selectedGst) ? (selectedGst?.tradeNameOfBusiness || null) : null;
                 const resolvedLegalName = !isTrnStatus(selectedGst) ? (selectedGst?.legalNameOfBusiness || null) : null;
-                const resolvedBusinessName = resolvedTradeName || resolvedLegalName;
-                const source = resolvedTradeName ? 'GST_TRADE_NAME' : (resolvedLegalName ? 'GST_LEGAL_NAME' : 'PAN_VERIFICATION');
+                let resolvedBusinessName = resolvedTradeName || resolvedLegalName;
+                let source = resolvedTradeName ? 'GST_TRADE_NAME' : (resolvedLegalName ? 'GST_LEGAL_NAME' : null);
+
+                // GST returned nothing usable (no linked GSTIN, or every linked
+                // GSTIN is still TRN/pending) — fall back to the plain PAN name
+                // instead of leaving business_name however it happened to be
+                // left by whatever ran before this (which may be nothing at all
+                // if this is called before /pan/verify ever ran).
+                if (!resolvedBusinessName) {
+                    try {
+                        const simple = await signzyService.verifyPanSimple(pan);
+                        if (simple?.name) {
+                            resolvedBusinessName = simple.name;
+                            source = 'PAN_VERIFICATION';
+                        }
+                    } catch (simpleErr) {
+                        console.error('[PAN] Simple PAN fallback failed:', simpleErr.message);
+                    }
+                }
 
                 await prisma.customer.update({
                     where: { id: customer_id },
@@ -337,8 +374,6 @@ exports.fetchPanIntelligence = async (req, res) => {
         });
     }
 };
-
-const signzyService = require('../services/externalApis/signzy.service');
 
 exports.verifyPan = async (req, res) => {
     try {
@@ -467,8 +502,20 @@ exports.verifyPan = async (req, res) => {
                 });
             }
 
-            // Precedence: Only update customer business name if no GST name is set
-            const resolvedBusinessName = customer.legal_business_name || customer.trade_name;
+            // A salaried customer never goes through GST lookup (this endpoint is
+            // the simple, GST-free PAN verify) — any legal_business_name/trade_name
+            // already on the record is either stale/irrelevant GST data from a
+            // different flow or, worse, a raw GST TRN (Temporary Reference Number)
+            // placeholder string. Always use the plain PAN name for them; only
+            // MSME customers get the GST-name precedence (populated later by the
+            // separate /pan/fetch GST-intelligence call).
+            // Classification lives on the Case (targetCase, fetched above for the
+            // IDOR check), not the Customer — the same PAN/customer can have both
+            // an MSME and a salaried case at once.
+            const isSalariedCustomer = targetCase.category === 'SALARIED';
+            const resolvedBusinessName = isSalariedCustomer
+                ? null
+                : (customer.legal_business_name || customer.trade_name);
             await prisma.customer.update({
                 where: { id: customer_id },
                 data: {

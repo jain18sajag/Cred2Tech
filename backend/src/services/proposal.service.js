@@ -6,6 +6,50 @@ const { safeJsonParse } = require('../utils/safeJsonParse');
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Experian's bureau response reports one address per tradeline/employer record
+ * it ever saw for this PAN — there's no "type" (residential vs office) on any
+ * of them, and the same physical address is frequently repeated verbatim
+ * across several tradelines. This just normalizes each entry into one display
+ * string and dedupes by that string, most-recently-reported first, so the
+ * frontend can offer them as a checkbox pick-list rather than us guessing
+ * which one is "the" residential/office address.
+ */
+function extractBureauAddresses(bureauVerification) {
+    if (!bureauVerification?.raw_response) return [];
+    const raw = safeJsonParse(bureauVerification.raw_response, bureauVerification.raw_response);
+    const list = raw?.result?.verifiedData?.ResponseData?.data?.address;
+    if (!Array.isArray(list)) return [];
+
+    // reportedDate is "DD-MM-YYYY" — day-first, so plain string comparison
+    // doesn't sort chronologically; parse it to a real timestamp instead.
+    const parseDate = (d) => {
+        const [dd, mm, yyyy] = (d || '').split('-');
+        return dd && mm && yyyy ? new Date(`${yyyy}-${mm}-${dd}`).getTime() : 0;
+    };
+
+    const seen = new Map(); // normalized text -> entry (keeps most recent reportedDate)
+    for (const entry of list) {
+        const lines = [entry.firstLineOfAddress, entry.secondLineOfAddress, entry.thirdLineOfAddress, entry.city]
+            .map(s => (s || '').trim())
+            .filter(Boolean);
+        if (entry.postalCode) lines.push(entry.postalCode);
+        const text = lines.join(', ').replace(/\s+/g, ' ').trim();
+        if (!text) continue;
+
+        const key = text.toUpperCase();
+        const existing = seen.get(key);
+        const timestamp = parseDate(entry.reportedDate);
+        if (!existing || timestamp > existing.timestamp) {
+            seen.set(key, { text, timestamp });
+        }
+    }
+
+    return [...seen.values()]
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .map((entry, idx) => ({ id: `bureau_${idx}`, text: entry.text, source: 'BUREAU' }));
+}
+
 function generateProposalNumber(caseId, lenderCode, seq) {
     const code = String(lenderCode || 'LENDER').toUpperCase().replace(/\s+/g, '').slice(0, 8);
     const s = String(seq).padStart(2, '0');
@@ -221,7 +265,10 @@ async function getProposalForPrep({ proposal_id, case_id, tenant_id }) {
             case: {
                 include: {
                     customer: true,
-                    applicants: { orderBy: { id: 'asc' } },
+                    applicants: {
+                        orderBy: { id: 'asc' },
+                        include: { bureau_checks: { orderBy: { created_at: 'desc' }, take: 1 } }
+                    },
                     esr_financials: true,
                     property: true,
                     documents: { where: { status: 'ACTIVE' } }
@@ -363,11 +410,31 @@ async function getProposalForPrep({ proposal_id, case_id, tenant_id }) {
         avg_closing_balance: esr.bank_avg_balance
     }] : []);
 
-    // Try to get Office Address from GST/PAN profile
-    const panProfile = await prisma.customerPanProfile.findFirst({
+    // Office Address from GST/PAN profile — never applicable to a salaried
+    // customer (no GST registration to have an address on), so skip the
+    // lookup entirely for them rather than relying on it just happening to
+    // come back empty.
+    // Classification lives on the Case itself, not the Customer — the same
+    // PAN/customer can have one salaried case and one MSME case at once.
+    const isSalariedCustomer = caseData.category === 'SALARIED';
+    const panProfile = isSalariedCustomer ? null : await prisma.customerPanProfile.findFirst({
         where: { customer_id: customer.id },
         orderBy: { created_at: 'desc' }
     });
+
+    // Candidate addresses for the picker: every address the bureau has ever
+    // seen reported against the primary applicant's PAN (residential or
+    // employer/office — bureau data doesn't label which), plus the
+    // GST-registered principal address when one exists. No single one of
+    // these is authoritative, so the frontend lets the user pick which
+    // candidate (if any) is the actual residential/office address, or type
+    // one in manually if none fit.
+    const primaryApplicant = applicants.find(a => a.type === 'PRIMARY') || applicants[0];
+    const bureauAddresses = extractBureauAddresses(primaryApplicant?.bureau_checks?.[0]);
+    const addressCandidates = [
+        ...bureauAddresses,
+        ...(panProfile?.principal_address ? [{ id: 'gst_principal', text: panProfile.principal_address, source: 'GST' }] : []),
+    ];
 
     return {
         proposal: { ...proposal, lender_name: lender.name || 'Unknown', lender_code: lender.code || '' },
@@ -389,8 +456,17 @@ async function getProposalForPrep({ proposal_id, case_id, tenant_id }) {
             property_type: esr.property_type || property.property_type,
             occupancy_type: esr.occupancy_type || property.occupancy_status,
             property_address: property.remarks || null,
-            residential_address: null, // Aadhaar data not strictly stored in DB columns
+            // Best single-guess default so Residential isn't blank on first
+            // load (the bureau's most-recently-reported address is a
+            // reasonable current-residence guess) — Office has no such
+            // reliable signal (bureau data doesn't distinguish home from
+            // employer addresses), so it only defaults from GST, and stays
+            // blank otherwise. Either field is corrected/confirmed via the
+            // checkbox picker (backed by address_candidates below) or typed
+            // manually, never assumed further than this.
+            residential_address: bureauAddresses[0]?.text || null,
             office_address: panProfile?.principal_address || null,
+            address_candidates: addressCandidates,
         },
         applicants,
         co_applicants: applicants.filter(a => a.type !== 'PRIMARY'),

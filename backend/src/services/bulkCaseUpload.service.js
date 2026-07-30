@@ -351,6 +351,10 @@ class BulkCaseUploadService {
               dsa_notes: `[Bulk Upload] [Case Ref: ${caseRef}] ${row['Remarks'] || ''}`,
               esr_generated: false,
               stage: mappedStage,
+              // Category now lives on the Case, not just the Customer — carry
+              // over the same classification this row resolved for the
+              // customer, so this doesn't silently default to MSME.
+              category: customer.category,
               customer_name: customer.business_name,
               entity_type: customer.entity_type,
               cibil_score: parseNum(row['Primary CIBIL Score'])

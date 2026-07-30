@@ -270,6 +270,12 @@ model Case {
   dsa_notes      String?
   esr_generated  Boolean   @default(false) // NEW Phase 1
   stage          CaseStage @default(DRAFT)
+  // Per-CASE classification (MSME/self-employed vs salaried) — deliberately
+  // separate from Customer.category. The same PAN/customer can have one
+  // salaried case and one MSME case at the same time; if this lived only on
+  // Customer, whichever wizard ran last would silently reclassify every
+  // other case for that customer too.
+  category       CustomerCategory @default(MSME)
 
   // Direct MSME Flow Fields
   lead_source                 String?   @default("DSA") // "DSA" | "DIRECT_MSME"

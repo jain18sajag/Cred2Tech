@@ -41,6 +41,16 @@ async function getIncomeSummary(case_id, tenant_id) {
   if (!caseRecord) throw new Error('Case not found or unauthorized.');
 
   const esr = caseRecord.esr_financials;
+  // Classification lives on the Case itself, not the Customer — the same
+  // PAN/customer can have one salaried case and one MSME case at once.
+  const isSalaried = caseRecord.category === 'SALARIED';
+
+  // ── Salary: esr_financials.salaried_income is a monthly figure derived
+  // from OCR'd salary slips (+ manual income entries) elsewhere in ESR
+  // computation — annualize it here to match the shape of the other rows.
+  const salaryMonthly = esr?.salaried_income != null ? Number(esr.salaried_income) : null;
+  const salaryAnnual  = salaryMonthly != null ? salaryMonthly * 12 : null;
+  const salarySource  = esr?.salaried_income_source || null;
 
   // ── GST: use exact FY snapshot accessor ───────────────────────────────────
   const { getBestUsableGstSnapshot } = require('./gstAnalyticsSnapshot.service');
@@ -89,8 +99,11 @@ async function getIncomeSummary(case_id, tenant_id) {
     .reduce((sum, o) => sum.plus(new Decimal(o.emi_per_month || 0)), new Decimal(0))
     .toNumber();
 
-  // ── Combined income = ITR net profit + manual ─────────────────────────────
-  const combinedAnnualIncome = new Decimal(netProfitLatest || 0).plus(manualTotal).toNumber();
+  // ── Combined income: salaried cases have no ITR net profit to speak of —
+  // use the OCR/bank-derived salary figure instead of net profit as the base.
+  const combinedAnnualIncome = isSalaried
+    ? new Decimal(salaryAnnual || 0).plus(manualTotal).toNumber()
+    : new Decimal(netProfitLatest || 0).plus(manualTotal).toNumber();
 
   return {
     api_data: {
@@ -106,6 +119,11 @@ async function getIncomeSummary(case_id, tenant_id) {
       avg_bank_balance: {
         latest: avgBalanceLatest,  prev: avgBalancePrev,
         fy_latest: bankFyLatest,   fy_prev: bankFyPrev
+      },
+      salary: {
+        latest: salaryAnnual,      prev: null,
+        monthly: salaryMonthly,    source: salarySource,
+        fy_latest: null,           fy_prev: null
       }
     },
     manual_entries:         manualEntries,
@@ -146,7 +164,7 @@ async function addIncomeEntry(case_id, payload, tenant_id) {
         applicant_label: resolvedApplicantLabel,
         annual_amount:       annualAmount,
         supporting_doc_type,
-        remarks
+        remarks: remarks?.trim() ? remarks : 'Entered income manually'
       }
     });
 

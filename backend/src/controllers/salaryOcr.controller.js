@@ -489,12 +489,17 @@ async function recalculateApplicantIncome(tenant_id, case_id, applicant_id) {
     const avgNetMonthly = totalNet / completedSlips.length;
     const annualizedIncome = avgNetMonthly * 12;
 
+    const slipWord = completedSlips.length === 1 ? 'slip' : 'slips';
+    const remarksText = `Used ${completedSlips.length} salary ${slipWord} via OCR`;
+
     const existingEntry = await prisma.caseIncomeEntry.findFirst({
-        where: { 
-            case_id: parseInt(case_id), 
-            applicant_id: parseInt(applicant_id), 
+        where: {
+            case_id: parseInt(case_id),
+            applicant_id: parseInt(applicant_id),
             supporting_doc_type: 'Salary Slip',
-            remarks: { contains: 'Generated from Salary Slip OCR' }
+            // Case-insensitive so this still matches pre-existing rows saved
+            // under the old "Generated from Salary Slip OCR (...)" wording.
+            remarks: { contains: 'salary slip', mode: 'insensitive' }
         }
     });
 
@@ -503,7 +508,7 @@ async function recalculateApplicantIncome(tenant_id, case_id, applicant_id) {
             where: { id: existingEntry.id },
             data: {
                 annual_amount: annualizedIncome,
-                remarks: `Generated from Salary Slip OCR (${completedSlips.length} slips)`
+                remarks: remarksText
             }
         });
     } else {
@@ -514,7 +519,7 @@ async function recalculateApplicantIncome(tenant_id, case_id, applicant_id) {
                 income_type: 'Salary',
                 annual_amount: annualizedIncome,
                 supporting_doc_type: 'Salary Slip',
-                remarks: `Generated from Salary Slip OCR (${completedSlips.length} slips)`
+                remarks: remarksText
             }
         });
     }

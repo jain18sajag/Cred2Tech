@@ -86,6 +86,10 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
         entity_type: parentCase.entity_type,
         cibil_score: parentCase.cibil_score,
         alert_flag: parentCase.alert_flag,
+        // A lender-specific child case is the same loan application, just
+        // resubmitted — it must carry the same salaried/MSME classification
+        // as its parent, not silently default back to MSME.
+        category: parentCase.category,
         created_by_user_id: userId,
 
         // CRITICAL: lead_date must be set so this case shows in pipeline

@@ -34,13 +34,17 @@ async function createCase(customer_id, product_type, tenant_id, user_id) {
     throw Object.assign(new Error('Customer not found or unauthorized.'), { status: 403 });
   }
 
-  // Idempotency check: Look for an existing DRAFT case for this customer in the last 24 hours
+  // Idempotency check: Look for an existing DRAFT MSME case for this customer
+  // in the last 24 hours. Scoped to category: MSME too — the same
+  // customer/PAN can have a recent SALARIED draft going at the same time,
+  // and that must never be handed back here as if it were this MSME case.
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const existingDraftCase = await prisma.case.findFirst({
     where: {
       customer_id: customer.id,
       tenant_id: tenant_id,
       stage: 'DRAFT',
+      category: 'MSME',
       created_at: { gte: twentyFourHoursAgo }
     }
   });
@@ -57,6 +61,7 @@ async function createCase(customer_id, product_type, tenant_id, user_id) {
       created_by_user_id: user_id,
       product_type: product_type || null,
       stage: 'DRAFT',
+      category: 'MSME',
       customer_name: customer.business_name,
       entity_type: customer.entity_type,
       lead_source: isMsme ? 'DIRECT_MSME' : 'DSA',
@@ -138,13 +143,17 @@ async function createSalariedCase({ business_pan, business_name, business_mobile
       });
     }
 
-    // Idempotency check: Look for an existing DRAFT case for this customer in the last 24 hours
+    // Idempotency check: Look for an existing DRAFT SALARIED case for this
+    // customer in the last 24 hours. Scoped to category: SALARIED too — the
+    // same customer/PAN can have a recent MSME draft going at the same time,
+    // and that must never be handed back here as if it were this case.
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const existingDraftCase = await tx.case.findFirst({
       where: {
         customer_id: customer.id,
         tenant_id: tenant_id,
         stage: 'DRAFT',
+        category: 'SALARIED',
         created_at: { gte: twentyFourHoursAgo }
       },
       include: {
@@ -164,6 +173,7 @@ async function createSalariedCase({ business_pan, business_name, business_mobile
         created_by_user_id: user_id,
         product_type: product_type || null,
         stage: 'DRAFT',
+        category: 'SALARIED',
         customer_name: customer.business_name,
         entity_type: customer.entity_type,
         // NOTE: nested write bypasses the Applicant model's own Prisma query
@@ -1163,6 +1173,10 @@ async function createCaseFromExisting(customerId, tenantId, userId, productType 
         created_by_user_id: userId,
         product_type: productType || latestCase.product_type,
         stage: 'DRAFT',
+        // Reusing an existing case's data for a new one must carry over the
+        // same salaried/MSME classification — otherwise it silently defaults
+        // to MSME regardless of what latestCase actually was.
+        category: latestCase.category,
         customer_name: customer.business_name,
         entity_type: customer.entity_type,
         lead_source: isMsme ? 'DIRECT_MSME' : 'DSA',

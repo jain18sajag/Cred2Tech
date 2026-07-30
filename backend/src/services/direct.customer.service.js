@@ -282,6 +282,7 @@ const directCustomerService = {
           tenant_id: user.tenant_id,
           customer_id: customer.id,
           stage: 'DRAFT',
+          category: 'MSME', // Direct MSME self-service portal is MSME-only, never salaried
           lead_source: 'DIRECT_MSME',
           msme_customer_user_id: userId,
           created_by_user_id: userId
