@@ -620,6 +620,32 @@ async function detachDocumentFromProposal({ proposal_id, document_id, case_id, t
 // ──────────────────────────────────────────────────────────────────────────────
 // submitProposal
 // ──────────────────────────────────────────────────────────────────────────────
+/**
+ * Display name of the lender a proposal is addressed to.
+ *
+ * A proposal carries either tenant_lender_id (the DSA's own lender record,
+ * including manually-created "other lender" contacts) or lender_id (the
+ * platform Lender master), so both are checked. The tenant record wins because
+ * it is the name the DSA actually chose.
+ */
+async function resolveProposalLenderName(proposal) {
+    if (proposal.tenant_lender_id) {
+        const tl = await prisma.tenantLender.findUnique({
+            where: { id: proposal.tenant_lender_id },
+            select: { lender_name: true },
+        });
+        if (tl?.lender_name) return tl.lender_name;
+    }
+    if (proposal.lender_id) {
+        const l = await prisma.lender.findUnique({
+            where: { id: proposal.lender_id },
+            select: { name: true },
+        });
+        if (l?.name) return l.name;
+    }
+    return null;
+}
+
 async function submitProposal({ proposal_id, case_id, user_id, tenant_id, snapshot }) {
     const proposal = await prisma.proposal.findFirst({
         where: {
@@ -643,6 +669,34 @@ async function submitProposal({ proposal_id, case_id, user_id, tenant_id, snapsh
             updated_by_user_id: Number(user_id)
         }
     });
+
+    // Stamp the lender this case was sent to onto the Case itself.
+    //
+    // Submission previously advanced the stage to LEAD_SENT_TO_LENDER but left
+    // case.lender_name / tenant_lender_id / platform_lender_id null, because the
+    // lender only ever lived on the Proposal. The pipeline list reads
+    // case.lender_name, so a case would sit at "Lead Sent" while its
+    // Lender column showed "—" (and it was invisible to the list's lender
+    // filter). The schema marks lender_name deprecated in favour of
+    // case_lender_selections, but that table does not exist yet — this remains
+    // the field the UI actually reads.
+    //
+    // Latest submission wins: when a case is sent to several lenders the column
+    // reflects the most recent one, which beats showing nothing.
+    // NOTE: only lender_name and tenant_lender_id are written here.
+    // Case.platform_lender_id is an Int, while Proposal.lender_id is the
+    // platform Lender's UUID string — different types referencing different
+    // things, so they must not be copied across.
+    const lenderName = await resolveProposalLenderName(proposal);
+    if (lenderName) {
+        await prisma.case.update({
+            where: { id: Number(case_id) },
+            data: {
+                lender_name: lenderName,
+                ...(proposal.tenant_lender_id ? { tenant_lender_id: proposal.tenant_lender_id } : {}),
+            },
+        }).catch(err => console.error('[proposal.service] Failed to stamp lender on case:', err.message));
+    }
 
     const alreadySubmittedCount = await prisma.proposal.count({
         where: {
