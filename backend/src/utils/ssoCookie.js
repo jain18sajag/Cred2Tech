@@ -32,25 +32,37 @@ function verifySsoToken(token) {
   return payload.mobile;
 }
 
-function ssoCookieOptions() {
-  const isProd = process.env.NODE_ENV === 'production';
+// Deliberately NOT derived from NODE_ENV — this server runs in production
+// with NODE_ENV=development, so a NODE_ENV check would silently produce a
+// host-only, non-Secure cookie there and break cross-subdomain SSO entirely.
+// What actually matters for a cookie's Secure/Domain attributes is the real
+// request: was it served over HTTPS, and is the host actually a
+// *.cred2tech.com subdomain? `req.secure` respects `app.set('trust proxy')`
+// (already configured in app.js), so it's correct behind the reverse proxy.
+function isCred2techHost(req) {
+  const host = (req.hostname || '').toLowerCase();
+  return host === 'cred2tech.com' || host.endsWith('.cred2tech.com');
+}
+
+function ssoCookieOptions(req) {
+  const onCred2tech = isCred2techHost(req);
   return {
     httpOnly: true,
-    secure: isProd,
+    secure: req.secure,
     sameSite: 'lax',
     path: '/',
     maxAge: 10 * 60 * 1000,
-    // localhost isn't a cred2tech.com subdomain — omit Domain in dev so the
-    // cookie still works for same-origin local testing.
-    ...(isProd ? { domain: '.cred2tech.com' } : {}),
+    // localhost/previews/etc aren't a cred2tech.com subdomain — omit Domain
+    // so the cookie still works host-only for same-origin local testing.
+    ...(onCred2tech ? { domain: '.cred2tech.com' } : {}),
   };
 }
 
-function clearSsoCookieOptions() {
-  const isProd = process.env.NODE_ENV === 'production';
+function clearSsoCookieOptions(req) {
+  const onCred2tech = isCred2techHost(req);
   return {
     path: '/',
-    ...(isProd ? { domain: '.cred2tech.com' } : {}),
+    ...(onCred2tech ? { domain: '.cred2tech.com' } : {}),
   };
 }
 

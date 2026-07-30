@@ -27,7 +27,7 @@ async function verifyOtp(req, res) {
     const result = await directCustomerAuthService.verifyOtp(trimmedMobile, String(otp).trim());
     // Bootstraps a silent login on scheme.cred2tech.com the next time that
     // app is opened — additive, doesn't touch the bearer-token response below.
-    res.cookie(SSO_COOKIE_NAME, signSsoToken(trimmedMobile), ssoCookieOptions());
+    res.cookie(SSO_COOKIE_NAME, signSsoToken(trimmedMobile), ssoCookieOptions(req));
     return res.status(200).json(result);
   } catch (err) {
     sendCaughtError(res, err, 'Failed to verify OTP');
@@ -56,7 +56,7 @@ async function ssoCheck(req, res) {
     const result = await directCustomerAuthService.ssoLogin(mobile);
     // Refresh the cookie's TTL so a user actively bouncing between the two
     // apps doesn't get logged out of the silent-SSO window mid-session.
-    res.cookie(SSO_COOKIE_NAME, signSsoToken(mobile), ssoCookieOptions());
+    res.cookie(SSO_COOKIE_NAME, signSsoToken(mobile), ssoCookieOptions(req));
     return res.status(200).json(result);
   } catch (err) {
     sendCaughtError(res, err, 'Failed to check SSO session');
@@ -64,7 +64,7 @@ async function ssoCheck(req, res) {
 }
 
 async function ssoLogout(req, res) {
-  res.clearCookie(SSO_COOKIE_NAME, clearSsoCookieOptions());
+  res.clearCookie(SSO_COOKIE_NAME, clearSsoCookieOptions(req));
   return res.status(200).json({ success: true });
 }
 
