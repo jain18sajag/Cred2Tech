@@ -9,6 +9,69 @@ const generateOtp = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
+// Shared by a normal OTP-verified login and by the cross-app SSO bootstrap
+// (sso-check) — both ultimately just need "the local MSME_CUSTOMER user for
+// this mobile, creating it on first-ever contact, plus a fresh session
+// token." Extracted so sso-check can't drift from the real login's user
+// upsert logic (tenant/role resolution, synthetic email, etc).
+async function findOrCreateAndIssueToken(mobile) {
+  // Resolve Platform Tenant (CRED2TECH)
+  const cred2techTenant = await prisma.tenant.findFirst({
+    where: { type: 'CRED2TECH', status: 'ACTIVE' }
+  });
+
+  if (!cred2techTenant) {
+    throw new Error('Platform configuration error: CRED2TECH tenant not found.');
+  }
+
+  // Resolve MSME_CUSTOMER Role
+  const role = await prisma.role.findUnique({
+    where: { name: 'MSME_CUSTOMER' }
+  });
+
+  if (!role) {
+    throw new Error('Platform configuration error: MSME_CUSTOMER role not found.');
+  }
+
+  // Upsert User
+  const email = `${mobile}@direct.cred2tech.local`;
+  const randomPassword = crypto.randomUUID();
+  const passwordHash = await hashPassword(randomPassword);
+
+  const user = await prisma.user.upsert({
+    where: { email },
+    create: {
+      email,
+      mobile,
+      name: `Customer_${mobile}`,
+      password_hash: passwordHash,
+      role_id: role.id,
+      tenant_id: cred2techTenant.id,
+      status: 'ACTIVE'
+    },
+    update: {
+      last_login_at: new Date()
+    }
+  });
+
+  const tokenPayload = {
+    userId: user.id,
+    roleId: user.role_id,
+    roleName: 'MSME_CUSTOMER',
+    tenantId: user.tenant_id,
+  };
+
+  const token = generateToken(tokenPayload);
+  const { password_hash, ...safeUser } = user;
+
+  return {
+    success: true,
+    user: safeUser,
+    token,
+    is_new_user: user.created_at.getTime() === user.updated_at.getTime()
+  };
+}
+
 const directCustomerAuthService = {
   sendOtp: async (mobile) => {
     // 5 minutes expiry
@@ -87,61 +150,15 @@ const directCustomerAuthService = {
       }
     });
 
-    // Resolve Platform Tenant (CRED2TECH)
-    const cred2techTenant = await prisma.tenant.findFirst({
-      where: { type: 'CRED2TECH', status: 'ACTIVE' }
-    });
+    return findOrCreateAndIssueToken(mobile);
+  },
 
-    if (!cred2techTenant) {
-      throw new Error('Platform configuration error: CRED2TECH tenant not found.');
-    }
-
-    // Resolve MSME_CUSTOMER Role
-    const role = await prisma.role.findUnique({
-      where: { name: 'MSME_CUSTOMER' }
-    });
-
-    if (!role) {
-      throw new Error('Platform configuration error: MSME_CUSTOMER role not found.');
-    }
-
-    // Upsert User
-    const email = `${mobile}@direct.cred2tech.local`;
-    const randomPassword = crypto.randomUUID();
-    const passwordHash = await hashPassword(randomPassword);
-
-    const user = await prisma.user.upsert({
-      where: { email },
-      create: {
-        email,
-        mobile,
-        name: `Customer_${mobile}`,
-        password_hash: passwordHash,
-        role_id: role.id,
-        tenant_id: cred2techTenant.id,
-        status: 'ACTIVE'
-      },
-      update: {
-        last_login_at: new Date()
-      }
-    });
-
-    const tokenPayload = {
-      userId: user.id,
-      roleId: user.role_id,
-      roleName: 'MSME_CUSTOMER',
-      tenantId: user.tenant_id,
-    };
-
-    const token = generateToken(tokenPayload);
-    const { password_hash, ...safeUser } = user;
-
-    return {
-      success: true,
-      user: safeUser,
-      token,
-      is_new_user: user.created_at.getTime() === user.updated_at.getTime()
-    };
+  // Bootstraps a local session for a mobile number that was just proven to be
+  // recently authenticated on scheme.cred2tech.com (verified via the c2t_sso
+  // cookie in the controller before this is called) — no OTP involved here,
+  // it's the same upsert-and-issue-token path a real OTP verify ends with.
+  ssoLogin: async (mobile) => {
+    return findOrCreateAndIssueToken(mobile);
   }
 };
 

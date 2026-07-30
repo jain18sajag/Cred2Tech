@@ -49,6 +49,12 @@ app.use('/api/webhooks', webhookRoutes);
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
+// Only used to read/write the short-lived cross-app SSO bootstrap cookie
+// (c2t_sso) — every other auth flow in this app is a bearer token, not a
+// cookie, so this stays scoped to that one purpose.
+const cookieParser = require('cookie-parser');
+app.use(cookieParser());
+
 const swaggerUi = require('swagger-ui-express');
 const fs = require('fs');
 const crypto = require('crypto');
