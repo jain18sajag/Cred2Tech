@@ -272,4 +272,72 @@ async function uploadDocument(req, res) {
     }
 }
 
-module.exports = { listDocuments, viewDocument, downloadDocument, uploadDocument };
+/**
+ * DELETE /api/documents/:id
+ *
+ * Soft delete: flips status to DELETED rather than removing the row. Three
+ * reasons this is not a hard delete:
+ *   - proposal_documents has ON DELETE CASCADE on document_id, so dropping the
+ *     row would silently pull the file out of any proposal it is attached to.
+ *   - listDocuments already filters on status: 'ACTIVE', so a soft delete
+ *     disappears from every UI without touching the read path.
+ *   - it keeps the audit trail, matching how bank statement deletion already
+ *     behaves (external.bank.controller#deleteRequest).
+ *
+ * The stored object is intentionally left in place — reversing a mistaken
+ * delete is a status flip, and orphaned blobs are cheaper than lost KYC.
+ */
+async function deleteDocument(req, res) {
+    try {
+        const documentId = parseInt(req.params.id, 10);
+        if (!documentId || isNaN(documentId)) {
+            return res.status(400).json({ error: 'Invalid document ID' });
+        }
+
+        const tenantId = req.user.tenant_id;
+
+        // Tenant scoping is the primary gate — never trust the id off the wire.
+        const doc = await prisma.document.findFirst({
+            where: { id: documentId, tenant_id: tenantId },
+            select: { id: true, case_id: true, customer_id: true, status: true, document_type: true },
+        });
+        if (!doc) return res.status(404).json({ error: 'Document not found' });
+
+        // Same ownership rule serveDocument applies: an MSME borrower may only
+        // touch documents belonging to their own case/customer.
+        if (req.user.role === 'MSME_CUSTOMER') {
+            if (doc.case_id) {
+                const caseObj = await prisma.case.findFirst({ where: { id: doc.case_id } });
+                if (!caseObj || caseObj.msme_customer_user_id !== req.user.id) {
+                    return res.status(403).json({ error: 'Forbidden. MSME does not own this document.' });
+                }
+            } else if (doc.customer_id) {
+                const caseObj = await prisma.case.findFirst({ where: { customer_id: doc.customer_id, msme_customer_user_id: req.user.id } });
+                if (!caseObj) return res.status(403).json({ error: 'Forbidden. MSME does not own this customer document.' });
+            } else {
+                return res.status(403).json({ error: 'Forbidden' });
+            }
+        }
+
+        if (doc.status === 'DELETED') {
+            return res.status(200).json({ success: true, alreadyDeleted: true });
+        }
+
+        await prisma.document.update({
+            where: { id: documentId },
+            data: { status: 'DELETED' },
+        });
+
+        await logSensitiveAccess({
+            tenantId, userId: req.user.id, resourceType: 'DOCUMENT', resourceId: documentId,
+            action: 'DELETE', ip: req.ip,
+        });
+
+        console.log(`[document.controller] Delete: doc #${documentId} (${doc.document_type}) by user ${req.user.id}`);
+        res.status(200).json({ success: true });
+    } catch (error) {
+        sendCaughtError(res, error, 'Failed to delete document');
+    }
+}
+
+module.exports = { listDocuments, viewDocument, downloadDocument, uploadDocument, deleteDocument };

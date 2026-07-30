@@ -3,7 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const router = express.Router();
 const { authenticate } = require('../middleware/auth.middleware');
-const { listDocuments, viewDocument, downloadDocument, uploadDocument } = require('../controllers/document.controller');
+const { listDocuments, viewDocument, downloadDocument, uploadDocument, deleteDocument } = require('../controllers/document.controller');
 
 // Buffer in memory rather than writing to local disk first — the controller
 // hands the buffer straight to the configured storage provider (S3/R2/local
@@ -34,5 +34,8 @@ router.get('/:id/view', viewDocument);
 
 // GET /api/documents/:id/download — always triggers Save As dialog
 router.get('/:id/download', downloadDocument);
+
+// DELETE /api/documents/:id — soft delete (status -> DELETED), tenant-scoped
+router.delete('/:id', deleteDocument);
 
 module.exports = router;
