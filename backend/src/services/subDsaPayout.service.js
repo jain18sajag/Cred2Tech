@@ -1,5 +1,6 @@
 const { Prisma } = require('@prisma/client');
 const prisma = require('../../config/db');
+const { resolveCustomerName } = require('../utils/entityName');
 
 const VALID_TRANSITIONS = {
   DRAFT: ['PDD_PENDING', 'REJECTED'],
@@ -433,8 +434,12 @@ async function createPayoutEntry(tenantId, subDsaUserId, commissionLedgerId, cli
   });
 }
 
+// Order matters: this used to try business_name first and fall back to
+// trade_name, both of which can hold a GST Temporary Reference Number
+// ("272400510227TRN") for a provisionally-registered business. resolveCustomerName
+// screens those out and never consults trade_name at all.
 function customerName(customer) {
-  return customer?.business_name || customer?.legal_business_name || customer?.trade_name || customer?.proprietor_name || 'Customer';
+  return resolveCustomerName(customer, 'Customer');
 }
 
 function payoutDto(row) {
@@ -500,7 +505,7 @@ async function listPayouts(tenantId, filters, currentUser) {
     case_entity: {
       select: {
         id: true, product_type: true, lender_name: true,
-        customer: { select: { id: true, business_name: true, legal_business_name: true, trade_name: true, proprietor_name: true } }
+        customer: { select: { id: true, business_name: true, legal_business_name: true, pan_holder_name: true, proprietor_name: true } }
       }
     },
     invoice: { select: { id: true, invoice_number: true, month_year: true } }

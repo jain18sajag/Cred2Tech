@@ -4,6 +4,7 @@ import { useMsmeAuth } from '../context/MsmeAuthContext';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useRazorpay } from 'react-razorpay';
+import { resolveEntityName } from '../utils/helpers';
 
 const MsmeDashboard = () => {
   const { user } = useMsmeAuth();
@@ -113,7 +114,7 @@ const MsmeDashboard = () => {
   if (loading) return <div style={{ textAlign: 'center', padding: '40px', color: 'var(--mid)' }}>Loading dashboard...</div>;
 
   const { activeCase, emptyState } = dashboardData;
-  const businessName = activeCase?.customer?.business_name || user?.name || 'User';
+  const businessName = resolveEntityName(activeCase?.customer, user?.name) || 'User';
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>

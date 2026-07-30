@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
-import { CheckCircle2, AlertCircle, RefreshCw, FileText, Download, FileSpreadsheet, FileJson } from 'lucide-react';
+import { CheckCircle2, AlertCircle, RefreshCw, FileText, Download, FileSpreadsheet } from 'lucide-react';
 import FormField from './ui/FormField';
 import api from '../api/axiosInstance';
 import { downloadDocument, viewDocument } from '../api/documentHelper';
+import { isUsableEntityName } from '../utils/helpers';
 
 const GstAnalyticsForm = ({ caseId, customerId, applicantId = null, linkedGstins = [], onComplete, onboardingMode }) => {
     const isMsme = onboardingMode === 'MSME_SELF_SERVICE';
@@ -187,7 +188,7 @@ const GstAnalyticsForm = ({ caseId, customerId, applicantId = null, linkedGstins
                                 <option value="">Select GSTIN</option>
                                 {linkedGstins.map(g => (
                                     <option key={g.gstin} value={g.gstin}>
-                                        {g.gstin} ({g.registration_name || 'No Name'}) - {g.status}
+                                        {g.gstin}{isUsableEntityName(g.registration_name) ? ` (${g.registration_name})` : ''} - {g.status}
                                     </option>
                                 ))}
                                 <option value="__manual__">Enter manually...</option>
@@ -347,22 +348,6 @@ const GstAnalyticsForm = ({ caseId, customerId, applicantId = null, linkedGstins
                                             ) : (
                                                 <a href={req.report_excel_url} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                                     <FileSpreadsheet size={14} /> Excel
-                                                </a>
-                                            )
-                                        )}
-
-                                        {/* JSON */}
-                                        {(req.gst_json_document_id || req.report_json_url) && (
-                                            req.gst_json_document_id ? (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => downloadDocument(req.gst_json_document_id, 'gst_report.json').catch(e => toast.error(e.message))}
-                                                    className="btn btn-ghost btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                                    <FileJson size={14} /> JSON
-                                                </button>
-                                            ) : (
-                                                <a href={req.report_json_url} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                                    <FileJson size={14} /> JSON
                                                 </a>
                                             )
                                         )}

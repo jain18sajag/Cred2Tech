@@ -7,6 +7,7 @@ import { formatDistanceToNow, parseISO } from 'date-fns';
 
 import CustomerTypeModal from '../components/customers/CustomerTypeModal';
 import BulkUploadModal from '../components/customers/BulkUploadModal';
+import { resolveEntityName, isUsableEntityName } from '../utils/helpers';
 
 const STAGE_MAPPING = {
   'All': 'All',
@@ -311,7 +312,7 @@ export default function CustomersListPage() {
                     <td style={{ padding: '16px 12px' }}>
                       <div style={{ fontWeight: 600, color: '#6366F1', cursor: 'pointer', textDecoration: 'underline' }}
                         onClick={() => navigate(`/customers/${c.customer_id}`)}>
-                        {c.customer_name || c.customer?.business_name || '-'}
+                        {(isUsableEntityName(c.customer_name) ? c.customer_name : resolveEntityName(c.customer)) || '-'}
                       </div>
                       <div style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>
                         {[c.entity_type || c.customer?.entity_type, c.customer?.industry, c.customer?.business_vintage ? `${c.customer.business_vintage} yrs` : null].filter(Boolean).join(' · ')}

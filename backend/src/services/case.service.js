@@ -1,5 +1,6 @@
 const prisma = require('../../config/db');
 const { encryptString } = require('../utils/fieldEncryption');
+const { resolveCustomerName } = require('../utils/entityName');
 
 function parseNumericInput(value, fieldName) {
   if (value === undefined || value === null || value === '') return null;
@@ -62,7 +63,7 @@ async function createCase(customer_id, product_type, tenant_id, user_id) {
       product_type: product_type || null,
       stage: 'DRAFT',
       category: 'MSME',
-      customer_name: customer.business_name,
+      customer_name: resolveCustomerName(customer),
       entity_type: customer.entity_type,
       lead_source: isMsme ? 'DIRECT_MSME' : 'DSA',
       msme_customer_user_id: isMsme ? user_id : null,
@@ -174,7 +175,7 @@ async function createSalariedCase({ business_pan, business_name, business_mobile
         product_type: product_type || null,
         stage: 'DRAFT',
         category: 'SALARIED',
-        customer_name: customer.business_name,
+        customer_name: resolveCustomerName(customer),
         entity_type: customer.entity_type,
         // NOTE: nested write bypasses the Applicant model's own Prisma query
         // extensions (config/db.js's encryption hooks only intercept
@@ -346,7 +347,7 @@ async function updateProduct(case_id, product_type, tenant_id) {
     data: {
       product_type,
       stage: 'LEAD_CREATED',
-      customer_name: existingCase.customer.business_name,
+      customer_name: resolveCustomerName(existingCase.customer),
       entity_type: existingCase.customer.entity_type
     }
   });
@@ -404,7 +405,7 @@ async function updateProductProperty(case_id, payload, tenant_id) {
         loan_amount: loanAmountValue,
         dsa_notes: dsa_notes !== undefined ? dsa_notes : existingCase.dsa_notes,
         stage: 'LEAD_CREATED',
-        customer_name: existingCase.customer.business_name,
+        customer_name: resolveCustomerName(existingCase.customer),
         entity_type: existingCase.customer.entity_type
       }
     });
@@ -732,7 +733,10 @@ async function getPipeline(tenantId, params, currentUser) {
       skip,
       take: limit,
       include: {
-        customer: { select: { business_name: true, business_pan: true, industry: true, business_vintage: true, category: true, created_by: { select: { name: true } } } },
+        // proprietor/legal/PAN-holder names are selected alongside business_name so
+        // the client can resolve a display name that is never a GST trade name or
+        // a TRN placeholder (see utils/entityName + the frontends' resolveEntityName).
+        customer: { select: { business_name: true, proprietor_name: true, legal_business_name: true, pan_holder_name: true, business_pan: true, industry: true, business_vintage: true, category: true, created_by: { select: { name: true } } } },
         parent_case: { select: { loan_amount: true, sanctioned_amount: true } }
       }
     }),
@@ -1058,7 +1062,7 @@ async function syncCustomerSnapshots(customerId, tenantId) {
       stage: { notIn: ['DISBURSED', 'PARTLY_DISBURSED', 'CLOSED'] }
     },
     data: {
-      customer_name: customer.business_name,
+      customer_name: resolveCustomerName(customer),
       entity_type: customer.entity_type
     }
   });
@@ -1177,7 +1181,7 @@ async function createCaseFromExisting(customerId, tenantId, userId, productType 
         // same salaried/MSME classification — otherwise it silently defaults
         // to MSME regardless of what latestCase actually was.
         category: latestCase.category,
-        customer_name: customer.business_name,
+        customer_name: resolveCustomerName(customer),
         entity_type: customer.entity_type,
         lead_source: isMsme ? 'DIRECT_MSME' : 'DSA',
         msme_customer_user_id: isMsme ? userId : null

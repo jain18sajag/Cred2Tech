@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { useAuth } from '../context/AuthContext';
+import { resolveEntityName, isUsableEntityName } from '../utils/helpers';
 
 const STAGE_COLORS = {
   'LEAD_CREATED': { bg: '#F3F4F6', text: '#374151' },
@@ -400,7 +401,7 @@ export default function CaseDetailPage() {
             <span style={{ cursor: 'pointer', color: 'var(--orange)' }} onClick={() => navigate(isMsme ? '/msme/dashboard' : '/customers')}> All Cases</span>
           </div>
           <h2 style={{ fontSize: 22, fontWeight: 800, color: '#0A2540', margin: 0 }}>
-            CASE-{caseData.id} — {caseData.customer_name || caseData.customer?.business_name}
+            CASE-{caseData.id} — {resolveEntityName(caseData.customer, isUsableEntityName(caseData.customer_name) ? caseData.customer_name : '')}
           </h2>
           <p style={{ color: '#425466', fontSize: 13, marginTop: 4 }}>
             {caseData.lender_name || 'Unassigned'} · {caseData.product_type || 'N/A'} · ₹{caseData.loan_amount ? (caseData.loan_amount / 100000).toFixed(1) : '0'} Lakhs
