@@ -29,21 +29,26 @@ async function listDocuments(req, res) {
             return res.status(400).json({ error: 'At least one of case_id or customer_id is required' });
         }
 
-        const where = {
-            tenant_id: tenantId,             // Tenant isolation — always enforced
-            status: 'ACTIVE',
-        };
+        const where = { status: 'ACTIVE' };
         if (case_id) where.case_id = parseInt(case_id, 10);
         if (customer_id) where.customer_id = parseInt(customer_id, 10);
         if (document_type) where.document_type = document_type;
 
         // Direct MSME customers share one tenant, so tenant_id alone doesn't isolate
         // them from each other — restrict to cases/customers they themselves own.
+        // Not tenant-scoped for them: allocating a case to a DSA moves it (and
+        // anything uploaded to it afterwards) into that DSA's own tenant (see
+        // admin.direct.customer.controller.js#allocateDirectCase), so a
+        // hardcoded tenant_id filter would hide every document added post-
+        // allocation — msme_customer_user_id / created_by_user_id below are
+        // the ownership signals that survive that reassignment.
         if (req.user.role === 'MSME_CUSTOMER') {
             where.OR = [
                 { case_entity: { msme_customer_user_id: req.user.id } },
                 { customer: { created_by_user_id: req.user.id } },
             ];
+        } else {
+            where.tenant_id = tenantId; // Tenant isolation — enforced for everyone else
         }
 
         const documents = await prisma.document.findMany({
@@ -160,10 +165,15 @@ async function uploadDocument(req, res) {
         const tenantId = req.user.tenant_id;
         const userId = req.user.id;
 
-        // Verify case belongs to this tenant (and, for MSME customers, to them specifically —
-        // they share one tenant with every other direct customer, so tenant_id alone isn't isolation).
-        const caseWhere = { id: parseInt(case_id, 10), tenant_id: tenantId };
-        if (req.user.role === 'MSME_CUSTOMER') caseWhere.msme_customer_user_id = userId;
+        // Verify case belongs to this tenant (and, for MSME customers, to them
+        // specifically). Allocating a case to a DSA moves it into that DSA's
+        // own tenant (see admin.direct.customer.controller.js
+        // #allocateDirectCase), so it no longer matches the MSME customer's
+        // own signup tenant_id — scope by ownership instead of tenant for
+        // them, same as getDashboard/getCases/getCaseById already do.
+        const caseWhere = req.user.role === 'MSME_CUSTOMER'
+            ? { id: parseInt(case_id, 10), msme_customer_user_id: userId }
+            : { id: parseInt(case_id, 10), tenant_id: tenantId };
         const caseRecord = await prisma.case.findFirst({
             where: caseWhere,
             select: { id: true, customer_id: true }

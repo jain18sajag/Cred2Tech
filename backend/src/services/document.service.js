@@ -222,15 +222,20 @@ async function streamDocument(documentId, requestingTenantId, requestingUser = n
         throw err;
     }
 
-    // Tenant isolation — hard stop
-    if (doc.tenant_id !== requestingTenantId) {
+    if (requestingUser && requestingUser.role === 'MSME_CUSTOMER') {
+        // Not tenant-scoped for them: allocating a case to a DSA moves it (and
+        // its documents) into that DSA's own tenant (see
+        // admin.direct.customer.controller.js#allocateDirectCase), so a
+        // blanket tenant_id check would 403 a customer's own document as soon
+        // as their case is allocated. assertMsmeOwnsDocument checks real
+        // ownership (msme_customer_user_id / customer.created_by_user_id)
+        // instead, which survives that reassignment.
+        await assertMsmeOwnsDocument(doc, requestingUser.id);
+    } else if (doc.tenant_id !== requestingTenantId) {
+        // Tenant isolation — hard stop for everyone else
         const err = new Error('Access denied');
         err.statusCode = 403;
         throw err;
-    }
-
-    if (requestingUser && requestingUser.role === 'MSME_CUSTOMER') {
-        await assertMsmeOwnsDocument(doc, requestingUser.id);
     }
 
     if (doc.status === 'DELETED') {
