@@ -1,6 +1,8 @@
 const directCustomerAuthService = require('../services/direct.customer.auth.service');
 const { sendCaughtError } = require('../utils/sendError');
 const { SSO_COOKIE_NAME, signSsoToken, verifySsoToken, ssoCookieOptions, clearSsoCookieOptions } = require('../utils/ssoCookie');
+const { notifySchemeRevoke } = require('../utils/crossAppRevoke');
+const prisma = require('../../config/db');
 
 async function sendOtp(req, res) {
   try {
@@ -63,9 +65,56 @@ async function ssoCheck(req, res) {
   }
 }
 
+// Just clears the SSO bootstrap cookie (stops a *future* silent relogin) —
+// does NOT revoke the caller's own active session. See `logout` below for
+// the real, full cross-app logout; the frontend calls both.
 async function ssoLogout(req, res) {
   res.clearCookie(SSO_COOKIE_NAME, clearSsoCookieOptions(req));
   return res.status(200).json({ success: true });
 }
 
-module.exports = { sendOtp, verifyOtp, ssoCheck, ssoLogout };
+// Real logout: revokes every session this MSME user has on THIS app (so the
+// bearer token dies immediately, not just at its natural 1-day expiry), then
+// tells scheme.cred2tech.com's backend to do the same for the same mobile —
+// so logging out here ends both apps' sessions, not just this one's cookie.
+async function logout(req, res) {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user.id }, select: { mobile: true } });
+    await directCustomerAuthService.logout(req.user.id);
+    res.clearCookie(SSO_COOKIE_NAME, clearSsoCookieOptions(req));
+    if (user?.mobile) {
+      await notifySchemeRevoke(user.mobile); // best-effort, bounded — never blocks/fails local logout
+    }
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    sendCaughtError(res, err, 'Failed to log out');
+  }
+}
+
+// Server-to-server only — called by scheme.cred2tech.com's backend when a
+// user logs out over there. Authenticated by a short-lived token signed with
+// the same shared CRED2TECH_SSO_SECRET used for the SSO bootstrap cookie
+// (not a normal user bearer token, and not a browser-facing endpoint).
+async function ssoRevoke(req, res) {
+  try {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (!token) {
+      return res.status(401).json({ success: false, error: 'Missing signed revoke token' });
+    }
+
+    let mobile;
+    try {
+      mobile = verifySsoToken(token);
+    } catch (err) {
+      return res.status(401).json({ success: false, error: 'Invalid or expired revoke token' });
+    }
+
+    const result = await directCustomerAuthService.ssoRevoke(mobile);
+    return res.status(200).json(result);
+  } catch (err) {
+    sendCaughtError(res, err, 'Failed to process cross-app revoke');
+  }
+}
+
+module.exports = { sendOtp, verifyOtp, ssoCheck, ssoLogout, logout, ssoRevoke };

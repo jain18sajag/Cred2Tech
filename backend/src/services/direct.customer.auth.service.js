@@ -62,6 +62,20 @@ async function findOrCreateAndIssueToken(mobile) {
   };
 
   const token = generateToken(tokenPayload);
+
+  // Without this, the shared `authenticate` middleware's UserSession lookup
+  // always finds nothing for an MSME token (only the staff login flow
+  // created rows here before), so logout had nothing to actually revoke —
+  // the token just stayed valid until its natural expiry regardless.
+  await prisma.userSession.create({
+    data: {
+      user_id: user.id,
+      session_token: token,
+      is_active: true,
+      last_activity_at: new Date()
+    }
+  });
+
   const { password_hash, ...safeUser } = user;
 
   return {
@@ -70,6 +84,15 @@ async function findOrCreateAndIssueToken(mobile) {
     token,
     is_new_user: user.created_at.getTime() === user.updated_at.getTime()
   };
+}
+
+// Revokes every active session for a local user id — used by both a direct
+// logout and a cross-app sso-revoke call (looked up by mobile first there).
+async function revokeSessionsForUserId(userId) {
+  await prisma.userSession.updateMany({
+    where: { user_id: userId, is_active: true },
+    data: { is_active: false }
+  });
 }
 
 const directCustomerAuthService = {
@@ -159,6 +182,25 @@ const directCustomerAuthService = {
   // it's the same upsert-and-issue-token path a real OTP verify ends with.
   ssoLogin: async (mobile) => {
     return findOrCreateAndIssueToken(mobile);
+  },
+
+  // Revokes every session belonging to the authenticated caller — the next
+  // request with the now-dead token gets rejected by the shared `authenticate`
+  // middleware's UserSession.is_active check.
+  logout: async (userId) => {
+    await revokeSessionsForUserId(userId);
+    return { success: true };
+  },
+
+  // Called by scheme.cred2tech.com's backend when a user logs out over there
+  // — revokes this app's own sessions for the same mobile so a logout on
+  // either side ends both. No-op (not an error) if this mobile has no local
+  // account here yet.
+  ssoRevoke: async (mobile) => {
+    const email = `${mobile}@direct.cred2tech.local`;
+    const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+    if (user) await revokeSessionsForUserId(user.id);
+    return { success: true };
   }
 };
 
