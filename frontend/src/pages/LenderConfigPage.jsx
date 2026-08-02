@@ -15,7 +15,7 @@ const SlabEditorModal = ({ isOpen, onClose, initialData, onSave, parameterLabel 
 
    useEffect(() => {
       if (isOpen) {
-         if (initialData && Array.isArray(initialData)) {
+         if (initialData && initialData.length > 0) {
             setSlabs(JSON.parse(JSON.stringify(initialData)));
          } else {
             setSlabs([{ min: '', max: '', value: '' }]); // generic format
@@ -47,10 +47,10 @@ const SlabEditorModal = ({ isOpen, onClose, initialData, onSave, parameterLabel 
                <table className="w-full text-sm">
                   <thead>
                      <tr style={{ background: '#f9fafb' }}>
-                        <th className="p-2 text-left">Min Threshold</th>
-                        <th className="p-2 text-left">Max Threshold</th>
-                        <th className="p-2 text-left">Rule / Multiplier</th>
-                        <th className="p-2 w-10"></th>
+                        <th className="p-2 border-b text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Min Value</th>
+                        <th className="p-2 border-b text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Max Value (leave blank for Infinity)</th>
+                        <th className="p-2 border-b text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Payout (%)</th>
+                        <th className="p-2 border-b w-10"></th>
                      </tr>
                   </thead>
                   <tbody>

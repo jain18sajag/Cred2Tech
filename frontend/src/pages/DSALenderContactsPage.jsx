@@ -43,7 +43,6 @@ function LenderModal({ isOpen, onClose, onSave, platformLenders = [], initialDat
   const [lenderName, setLenderName] = useState('');
   const [platformLenderId, setPlatformLenderId] = useState('');
   const [isEsrEnabled, setIsEsrEnabled] = useState(false);
-  const [maxCapAmount, setMaxCapAmount] = useState('');
   const [saving, setSaving]         = useState(false);
 
   useEffect(() => {
@@ -51,7 +50,6 @@ function LenderModal({ isOpen, onClose, onSave, platformLenders = [], initialDat
       setLenderName(initialData?.lender_name || '');
       setPlatformLenderId(initialData?.platform_lender_id || '');
       setIsEsrEnabled(initialData?.is_esr_enabled || false);
-      setMaxCapAmount(initialData?.max_cap_amount || '');
     }
   }, [isOpen, initialData]);
 
@@ -65,7 +63,6 @@ function LenderModal({ isOpen, onClose, onSave, platformLenders = [], initialDat
         lender_name: lenderName, 
         platform_lender_id: null,
         is_esr_enabled: false,
-        max_cap_amount: maxCapAmount,
         is_active: true 
       });
       onClose();
@@ -89,13 +86,7 @@ function LenderModal({ isOpen, onClose, onSave, platformLenders = [], initialDat
               style={inputStyle} onKeyDown={e => e.key === 'Enter' && handleSave()} />
           </div>
 
-          <div>
-            <label style={labelStyle}>UPPER CAP (₹) - Global for Lender</label>
-            <input type="number" value={maxCapAmount} onChange={e => setMaxCapAmount(e.target.value)}
-              placeholder="No limit"
-              style={inputStyle} onKeyDown={e => e.key === 'Enter' && handleSave()} />
-            <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 4 }}>Maximum total payout allowed across all products for this lender.</div>
-          </div>
+
 
 
         </div>
@@ -304,7 +295,7 @@ export default function DSALenderContactsPage() {
     return {
       payout_basis: 'NET_DISBURSED',
       commission_type: 'HYBRID',
-      max_cap_amount: '',
+      is_active: true,
       volume_slabs: [],
       case_count_slabs: [],
       special_schemes: []
@@ -329,11 +320,11 @@ export default function DSALenderContactsPage() {
         product_type: productType,
         payout_basis: stateToSave.payout_basis,
         commission_type: stateToSave.commission_type || 'HYBRID',
-        max_cap_amount: stateToSave.max_cap_amount ? parseFloat(stateToSave.max_cap_amount) : null,
         is_active: true,
         volume_slabs: stateToSave.volume_slabs || [],
         case_count_slabs: stateToSave.case_count_slabs || [],
-        special_schemes: stateToSave.special_schemes || []
+        special_schemes: stateToSave.special_schemes || [],
+        max_cap_amount: stateToSave.max_cap_amount || ''
       };
 
       if (existing) {
@@ -552,6 +543,15 @@ export default function DSALenderContactsPage() {
                               onChange={() => updateRuleEdit(lender.id, activeProduct, { payout_basis: 'GROSS_SANCTIONED' })}/>
                             Gross Sanctioned
                           </label>
+                          <div style={{ width: 1, height: 16, background: '#D1D5DB', margin: '0 4px' }}></div>
+                          <span style={{ color: '#4B5563' }}>Total Cap (₹):</span>
+                          <input 
+                            type="number" 
+                            placeholder="No cap"
+                            value={ruleState.max_cap_amount ?? ''}
+                            onChange={e => updateRuleEdit(lender.id, activeProduct, { max_cap_amount: e.target.value })}
+                            style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #D1D5DB', fontSize: 13, width: 90 }} 
+                          />
                         </div>
                         
                       </div>
