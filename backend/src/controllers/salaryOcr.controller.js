@@ -1,6 +1,7 @@
+const fs = require('fs');
 const prisma = require('../../config/db');
-const path = require('path');
 const { sendCaughtError } = require('../utils/sendError');
+const documentService = require('../services/document.service');
 const {
     processSalarySlipSync,
     processSalarySlipBatchSync,
@@ -8,7 +9,24 @@ const {
     startSalarySlipBatchAsync,
     getJobStatus,
     buildSalarySlipOcrDbData
-} = require('../services/externalApis/fractoSalaryOcr.service');
+} = require('../services/externalApis/cred2techSalaryOcr.service');
+
+/**
+ * Every document is stored in S3, never on this server's disk (see
+ * document.controller.js#uploadDocument) - the OCR vendor call needs an
+ * actual local file/stream, so pull the bytes down first. Always clean up
+ * the temp file when done, success or failure.
+ */
+async function withLocalFile(document, fn) {
+    const tmpPath = await documentService.downloadToTempFile(document);
+    try {
+        return await fn(tmpPath);
+    } finally {
+        fs.unlink(tmpPath, (err) => {
+            if (err) console.error(`[salaryOcr.controller] Failed to clean up temp file ${tmpPath}: ${err.message}`);
+        });
+    }
+}
 
 async function getApplicantForSalaryValidation(applicantId, caseId, tenantId) {
     return prisma.applicant.findFirst({
@@ -112,16 +130,7 @@ async function triggerSalarySlipOcr(req, res) {
             return res.status(404).json({ error: 'Applicant not found or unauthorized.' });
         }
 
-        // 2. Locate File Path
-        const UPLOADS_ROOT = path.resolve(process.env.UPLOADS_ROOT || './uploads');
-        const resolvedPath = path.resolve(UPLOADS_ROOT, document.storage_path);
-
-        // Prevent path traversal
-        if (!resolvedPath.startsWith(UPLOADS_ROOT)) {
-            return res.status(400).json({ error: 'Invalid document storage path' });
-        }
-
-        // 3. Upsert PENDING OCR Record
+        // 2. Upsert PENDING OCR Record
         const ocrRecord = await prisma.salarySlipOcrResult.upsert({
             where: {
                 case_id_applicant_id_month_year: {
@@ -147,13 +156,13 @@ async function triggerSalarySlipOcr(req, res) {
             }
         });
 
-        const ocrMode = process.env.FRACTO_OCR_MODE || 'sync';
+        const ocrMode = process.env.SALARY_OCR_MODE || 'sync';
         let ocrResultData;
 
-        // 4. Trigger OCR
+        // 3. Trigger OCR
         if (ocrMode === 'async') {
-            ocrResultData = await startSalarySlipAsync({
-                filePath: resolvedPath,
+            ocrResultData = await withLocalFile(document, (filePath) => startSalarySlipAsync({
+                filePath,
                 mimeType: document.mime_type,
                 originalName: document.original_file_name,
                 document_id: parseInt(documentId),
@@ -163,7 +172,7 @@ async function triggerSalarySlipOcr(req, res) {
                 year,
                 tenant_id,
                 applicant
-            });
+            }));
 
             // Save processing status
             await prisma.salarySlipOcrResult.update({
@@ -177,8 +186,8 @@ async function triggerSalarySlipOcr(req, res) {
 
         } else {
             // Sync mode
-            ocrResultData = await processSalarySlipSync({
-                filePath: resolvedPath,
+            ocrResultData = await withLocalFile(document, (filePath) => processSalarySlipSync({
+                filePath,
                 mimeType: document.mime_type,
                 originalName: document.original_file_name,
                 document_id: parseInt(documentId),
@@ -188,7 +197,7 @@ async function triggerSalarySlipOcr(req, res) {
                 year,
                 tenant_id,
                 applicant
-            });
+            }));
 
             // Save completed status
             await applySalaryOcrResult(ocrRecord, ocrResultData);
@@ -238,6 +247,7 @@ async function triggerSalarySlipOcr(req, res) {
  * POST /api/cases/:caseId/applicants/:applicantId/salary-slips/ocr-batch
  */
 async function processSalarySlipOcrBatch(req, res) {
+    const tempFilePaths = [];
     try {
         const { caseId, applicantId } = req.params;
         const { documentIds } = req.body; // Array of { documentId, month, year }
@@ -253,7 +263,6 @@ async function processSalarySlipOcrBatch(req, res) {
         }
 
         const filesToProcess = [];
-        const UPLOADS_ROOT = path.resolve(process.env.UPLOADS_ROOT || './uploads');
 
         for (const docObj of documentIds) {
             const document = await prisma.document.findFirst({
@@ -270,13 +279,13 @@ async function processSalarySlipOcrBatch(req, res) {
                 return res.status(404).json({ error: `Document ${docObj.documentId} not found or unauthorized.` });
             }
 
-            const resolvedPath = path.resolve(UPLOADS_ROOT, document.storage_path);
-            if (!resolvedPath.startsWith(UPLOADS_ROOT)) {
-                return res.status(400).json({ error: 'Invalid document storage path' });
-            }
+            // Every document lives in S3, not on this server's disk - pull it
+            // down before handing it to the OCR vendor call.
+            const tempPath = await documentService.downloadToTempFile(document);
+            tempFilePaths.push(tempPath);
 
             filesToProcess.push({
-                filePath: resolvedPath,
+                filePath: tempPath,
                 mimeType: document.mime_type,
                 originalName: document.original_file_name,
                 document_id: document.id,
@@ -316,7 +325,7 @@ async function processSalarySlipOcrBatch(req, res) {
             ocrRecords.push(ocrRecord);
         }
 
-        const ocrMode = process.env.FRACTO_OCR_MODE || 'sync';
+        const ocrMode = process.env.SALARY_OCR_MODE || 'sync';
         let ocrResultData;
 
         if (ocrMode === 'async') {
@@ -354,8 +363,15 @@ async function processSalarySlipOcrBatch(req, res) {
 
             // Save completed status for all records
             for (const record of ocrRecords) {
-                // Find specific result for this month/year if available
-                const specificResult = batchResults.find(r => r.month === record.month && r.year === record.year) || ocrResultData;
+                // Match by document_id, not month/year - the caller-supplied
+                // month/year on the record are just placeholders until OCR
+                // fills in the real extracted period, so they never equal the
+                // vendor-normalized month/year on the result (see
+                // SalarySlipUploader.jsx's handleRunAllOcr). Matching on those
+                // meant every record silently fell back to file #1's result,
+                // corrupting months 2/3 and then tripping the duplicate-period
+                // check as soon as two records shared that borrowed period.
+                const specificResult = batchResults.find(r => r.document_id === record.document_id) || ocrResultData;
 
                 if ((specificResult.status || ocrResultData.status) === 'COMPLETED') {
                     await applySalaryOcrResult(record, specificResult);
@@ -402,6 +418,12 @@ async function processSalarySlipOcrBatch(req, res) {
             return res.status(409).json({ error: error.message, validation: { duplicate_salary_period: true } });
         }
         sendCaughtError(res, error, 'Failed to process salary slip batch.', 500);
+    } finally {
+        for (const tempPath of tempFilePaths) {
+            fs.unlink(tempPath, (err) => {
+                if (err) console.error(`[salaryOcr.controller] Failed to clean up temp file ${tempPath}: ${err.message}`);
+            });
+        }
     }
 }
 

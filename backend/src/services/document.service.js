@@ -11,6 +11,8 @@
  */
 
 const crypto = require('crypto');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const prisma = require('../../config/db');
@@ -251,6 +253,34 @@ async function streamDocument(documentId, requestingTenantId, requestingUser = n
 }
 
 /**
+ * Every document is written straight to S3 on upload (see
+ * document.controller.js#uploadDocument) and never touches this server's own
+ * disk. Vendors that only accept a local file path/stream on disk (e.g. the
+ * salary-slip OCR API — see salaryOcr.controller.js) need the bytes pulled
+ * back down first. Caller must already have fetched+authorized `document`
+ * and must delete the returned path when done (e.g. in a finally block).
+ *
+ * @param {object} document - a Document row (needs id, storage_provider, storage_path, extension)
+ * @returns {Promise<string>} absolute path to the downloaded temp file
+ */
+async function downloadToTempFile(document) {
+    const storage = getStorageProvider(document.storage_provider);
+    const stream = await storage.getStream(document.storage_path);
+    const ext = document.extension ? `.${document.extension}` : '';
+    const tmpPath = path.join(os.tmpdir(), `doc-${document.id}-${uuidv4()}${ext}`);
+
+    await new Promise((resolve, reject) => {
+        const writeStream = fs.createWriteStream(tmpPath);
+        stream.on('error', reject);
+        writeStream.on('error', reject);
+        writeStream.on('finish', resolve);
+        stream.pipe(writeStream);
+    });
+
+    return tmpPath;
+}
+
+/**
  * Soft-delete a document (marks as DELETED in DB, removes file from storage).
  *
  * @param {number} documentId
@@ -279,4 +309,4 @@ async function deleteDocument(documentId, requestingTenantId) {
     });
 }
 
-module.exports = { ingestFromUrl, streamDocument, deleteDocument, assertMsmeOwnsDocument };
+module.exports = { ingestFromUrl, streamDocument, downloadToTempFile, deleteDocument, assertMsmeOwnsDocument };

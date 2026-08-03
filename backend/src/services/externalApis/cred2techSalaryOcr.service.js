@@ -34,7 +34,7 @@ const validateFile = (filePath, mimeType) => {
  * Maps HTTP/Axios errors to user-friendly messages.
  */
 const handleOcrError = (error) => {
-    console.error('[fractoSalaryOcr.service] Cred2Tech API Error:', error.response?.data || error.message);
+    console.error('[cred2techSalaryOcr.service] Cred2Tech API Error:', error.response?.data || error.message);
 
     if (error.response) {
         const status = error.response.status;
@@ -66,7 +66,9 @@ const handleOcrError = (error) => {
         return new Error(`OCR service error (${status}): ${detail}`);
     }
 
-    return new Error('Unknown OCR error occurred.');
+    // Not an HTTP error from the vendor (e.g. "All files in the batch failed
+    // to process.") - surface the real message instead of masking it.
+    return error instanceof Error ? error : new Error('Unknown OCR error occurred.');
 };
 
 /**
@@ -299,8 +301,8 @@ const hasDuplicateSalaryPeriod = (records = [], candidate = {}) => {
  * Synchronous Upload to Cred2Tech
  */
 async function processSalarySlipSync({ filePath, mimeType, originalName, document_id, case_id, applicant_id, month, year, tenant_id, applicant = null }) {
-    if (process.env.FRACTO_OCR_MODE === 'mock') {
-        console.log('[fractoSalaryOcr.service] Running in MOCK mode.');
+    if (process.env.SALARY_OCR_MODE === 'mock') {
+        console.log('[cred2techSalaryOcr.service] Running in MOCK mode.');
         return mockProcessSalarySlipOcr({ tenant_id, case_id, applicant_id, document_id, month, year });
     }
 
@@ -324,6 +326,7 @@ async function processSalarySlipSync({ filePath, mimeType, originalName, documen
 
         return {
             status: 'COMPLETED',
+            document_id,
             vendor_job_id: `C2T-SYNC-${Date.now()}`,
             raw_ocr_response: data,
             extracted_json: data,
@@ -339,8 +342,8 @@ async function processSalarySlipSync({ filePath, mimeType, originalName, documen
  * Asynchronous Upload (Shim for Synchronous API)
  */
 async function startSalarySlipAsync(params) {
-    if (process.env.FRACTO_OCR_MODE === 'mock') {
-        console.log('[fractoSalaryOcr.service] Running in MOCK mode.');
+    if (process.env.SALARY_OCR_MODE === 'mock') {
+        console.log('[cred2techSalaryOcr.service] Running in MOCK mode.');
         return mockProcessSalarySlipOcr({ ...params });
     }
 
@@ -366,7 +369,7 @@ async function startSalarySlipAsync(params) {
 async function processSalarySlipBatchSync(params) {
     const { files, case_id, applicant_id, tenant_id, applicant = null } = params;
 
-    if (process.env.FRACTO_OCR_MODE === 'mock') {
+    if (process.env.SALARY_OCR_MODE === 'mock') {
         return {
             status: 'COMPLETED',
             vendor_job_id: `MOCK-SYNC-BATCH-${Date.now()}`,
@@ -377,7 +380,7 @@ async function processSalarySlipBatchSync(params) {
     }
 
     try {
-        console.log(`[fractoSalaryOcr.service] Processing batch of ${files.length} files in parallel...`);
+        console.log(`[cred2techSalaryOcr.service] Processing batch of ${files.length} files in parallel...`);
 
         const results = await Promise.all(files.map(async (file) => {
             try {
@@ -389,8 +392,8 @@ async function processSalarySlipBatchSync(params) {
                     applicant
                 });
             } catch (err) {
-                console.error(`[fractoSalaryOcr.service] Single file OCR failed during batch:`, err.message);
-                return { status: 'FAILED', error_message: err.message, month: file.month, year: file.year };
+                console.error(`[cred2techSalaryOcr.service] Single file OCR failed during batch:`, err.message);
+                return { status: 'FAILED', error_message: err.message, document_id: file.document_id, month: file.month, year: file.year };
             }
         }));
 
@@ -416,7 +419,7 @@ async function processSalarySlipBatchSync(params) {
  * Asynchronous Batch Upload (Shim)
  */
 async function startSalarySlipBatchAsync(params) {
-    if (process.env.FRACTO_OCR_MODE === 'mock') {
+    if (process.env.SALARY_OCR_MODE === 'mock') {
         return { status: 'PROCESSING', vendor_job_id: `MOCK-BATCH-${Date.now()}` };
     }
 
