@@ -23,7 +23,11 @@ const directCustomerService = {
   getDashboard: async (userId) => {
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, name: true, email: true, mobile: true, status: true, created_at: true }
+      // synced_dob/synced_pan_number: prefill values pushed from
+      // scheme.cred2tech.com (see ssoProfileSync) — the onboarding wizard
+      // uses these to skip re-asking for data the user already gave the
+      // sibling app, when starting a brand-new case with none of its own yet.
+      select: { id: true, name: true, email: true, mobile: true, status: true, created_at: true, synced_dob: true, synced_pan_number: true }
     });
 
     const [activeCases, unlinkedPayment, allCases] = await Promise.all([

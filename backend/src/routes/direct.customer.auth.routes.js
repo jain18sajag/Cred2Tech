@@ -1,5 +1,5 @@
 const express = require('express');
-const { sendOtp, verifyOtp, ssoCheck, ssoLogout, logout, ssoRevoke } = require('../controllers/direct.customer.auth.controller');
+const { sendOtp, verifyOtp, ssoCheck, ssoLogout, logout, ssoRevoke, ssoProfileSync } = require('../controllers/direct.customer.auth.controller');
 const { authenticate } = require('../middleware/auth.middleware');
 const rateLimit = require('express-rate-limit');
 
@@ -40,6 +40,7 @@ router.get('/sso-check', ssoCheckLimiter, ssoCheck);
 router.post('/sso-logout', ssoLogout);
 router.post('/logout', authenticate, logout);
 router.post('/sso-revoke', ssoRevokeLimiter, ssoRevoke);
+router.post('/sso-profile-sync', ssoRevokeLimiter, ssoProfileSync);
 
 
 module.exports = router;

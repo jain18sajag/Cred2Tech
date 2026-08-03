@@ -1755,7 +1755,7 @@ async function removeApplicant(caseId, applicantId, tenantId) {
     await tx.caseIncomeEntry.deleteMany({ where: { applicant_id: app.id } });
     await tx.caseCreditObligation.deleteMany({ where: { applicant_id: app.id } });
     await tx.salarySlipOcrResult.deleteMany({ where: { applicant_id: app.id } });
-    await tx.applicantBureauCheck.deleteMany({ where: { applicant_id: app.id } });
+    await tx.bureauVerification.deleteMany({ where: { applicant_id: app.id } });
     await tx.document.deleteMany({ where: { applicant_id: app.id } });
     await tx.itrAnalyticsRequest.deleteMany({ where: { applicant_id: app.id } });
     await tx.bankStatementAnalysisRequest.deleteMany({ where: { applicant_id: app.id } });

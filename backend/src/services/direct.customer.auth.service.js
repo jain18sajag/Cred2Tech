@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const prisma = require('../../config/db');
 const { generateToken } = require('../utils/jwt');
 const { hashPassword } = require('../utils/hash');
+const { pushProfileToScheme } = require('../utils/crossAppProfileSync');
 
 const hashOtp = (otp) => crypto.createHash('sha256').update(otp).digest('hex');
 
@@ -9,12 +10,14 @@ const generateOtp = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// Shared by a normal OTP-verified login and by the cross-app SSO bootstrap
-// (sso-check) — both ultimately just need "the local MSME_CUSTOMER user for
-// this mobile, creating it on first-ever contact, plus a fresh session
-// token." Extracted so sso-check can't drift from the real login's user
-// upsert logic (tenant/role resolution, synthetic email, etc).
-async function findOrCreateAndIssueToken(mobile) {
+// Shared by a normal OTP-verified login, the cross-app SSO bootstrap
+// (sso-check), AND an incoming cross-app profile-sync push — all three
+// ultimately just need "the local MSME_CUSTOMER user for this mobile,
+// creating it on first-ever contact." Extracted so none of them can drift
+// from the same tenant/role resolution + synthetic-email upsert logic.
+// Deliberately does NOT issue a token or create a UserSession — a
+// profile-sync push shouldn't spawn a spurious session on every login.
+async function findOrCreateUser(mobile) {
   // Resolve Platform Tenant (CRED2TECH)
   const cred2techTenant = await prisma.tenant.findFirst({
     where: { type: 'CRED2TECH', status: 'ACTIVE' }
@@ -38,7 +41,7 @@ async function findOrCreateAndIssueToken(mobile) {
   const randomPassword = crypto.randomUUID();
   const passwordHash = await hashPassword(randomPassword);
 
-  const user = await prisma.user.upsert({
+  return prisma.user.upsert({
     where: { email },
     create: {
       email,
@@ -53,6 +56,10 @@ async function findOrCreateAndIssueToken(mobile) {
       last_login_at: new Date()
     }
   });
+}
+
+async function findOrCreateAndIssueToken(mobile) {
+  const user = await findOrCreateUser(mobile);
 
   const tokenPayload = {
     userId: user.id,
@@ -78,11 +85,40 @@ async function findOrCreateAndIssueToken(mobile) {
 
   const { password_hash, ...safeUser } = user;
 
+  // Best-effort, never awaited by the caller's response — a login shouldn't
+  // get slower because the sibling app might be slow. Only ever sends data
+  // this app has actually verified (see gatherVerifiedProfile) so a typo
+  // never crosses apps as if it were trustworthy.
+  gatherVerifiedProfile(user).then((profile) => {
+    pushProfileToScheme(mobile, profile).catch(() => {});
+  }).catch(() => {});
+
   return {
     success: true,
     user: safeUser,
     token,
     is_new_user: user.created_at.getTime() === user.updated_at.getTime()
+  };
+}
+
+// What this app actually knows and trusts for a customer, worth telling the
+// sibling app about. `name` only counts once it's a real name (not the
+// `Customer_<mobile>` placeholder every new signup starts with) — dob/PAN
+// only ever come from a Signzy-verified Applicant, never the raw typed
+// fields, so a mistyped PAN can't propagate cross-app as if it were fact.
+async function gatherVerifiedProfile(user) {
+  const latestCase = await prisma.case.findFirst({
+    where: { msme_customer_user_id: user.id },
+    orderBy: { created_at: 'desc' },
+    include: { applicants: { where: { is_primary: true, pan_verified: true }, take: 1 } }
+  });
+  const applicant = latestCase?.applicants?.[0];
+
+  const isPlaceholderName = user.name === `Customer_${user.mobile}`;
+  return {
+    name: !isPlaceholderName ? user.name : (applicant?.pan_verified_name || null),
+    dob: applicant?.pan_verified_dob || null,
+    pan_number: applicant?.pan_number || null,
   };
 }
 
@@ -200,6 +236,29 @@ const directCustomerAuthService = {
     const email = `${mobile}@direct.cred2tech.local`;
     const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
     if (user) await revokeSessionsForUserId(user.id);
+    return { success: true };
+  },
+
+  // Called by scheme.cred2tech.com's backend with whatever verified profile
+  // fields it has for this mobile. Auto-provisions the local user if this is
+  // the very first time this mobile has been seen here (same as ssoLogin) so
+  // the data is already waiting the first time this person actually visits —
+  // that's the whole point, not just syncing existing accounts. Only ever
+  // fills fields that are currently empty — a locally-verified value (this
+  // app's own Applicant PAN, a name the user set here) always wins over
+  // whatever the sibling app sends.
+  ssoProfileSync: async (mobile, { name, dob, pan_number }) => {
+    const user = await findOrCreateUser(mobile);
+    const isPlaceholderName = user.name === `Customer_${mobile}`;
+
+    const data = {};
+    if (name && isPlaceholderName) data.name = name;
+    if (dob && !user.synced_dob) data.synced_dob = dob;
+    if (pan_number && !user.synced_pan_number) data.synced_pan_number = pan_number;
+
+    if (Object.keys(data).length > 0) {
+      await prisma.user.update({ where: { id: user.id }, data });
+    }
     return { success: true };
   }
 };

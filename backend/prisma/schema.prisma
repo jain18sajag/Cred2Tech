@@ -113,6 +113,16 @@ model User {
   updated_by            Int?
   last_login_at         DateTime?
   failed_login_attempts Int       @default(0)
+
+  // Cross-app profile cache for the MSME direct-customer identity shared with
+  // scheme.cred2tech.com (see src/utils/crossAppProfileSync.js). Not the
+  // authoritative source — that's the Applicant record on a real Case (name,
+  // dob, pan_number there) or msme_users on the sibling app. This just lets a
+  // brand-new case here start pre-filled with data the user already verified
+  // on the other app, before any Case/Applicant exists to hold it locally.
+  // Only ever written when currently null — never overwrites verified local data.
+  synced_dob         String?
+  synced_pan_number  String?
   locked_until          DateTime?
 
   role         Role   @relation(fields: [role_id], references: [id])
