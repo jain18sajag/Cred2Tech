@@ -48,10 +48,10 @@ function calculateCommission(disbursement, sanction, rule, existingLedgers = [],
     let calculatedCommission = baseAmount.mul(baseRate).div(100);
     let cappedAmount = null;
     
-    // Check for upper cap (max_cap_amount)
-    if (rule.tenant_lender?.max_cap_amount && calculatedCommission.toNumber() > rule.tenant_lender.max_cap_amount) {
+    // Check for upper cap (max_cap_amount on the rule)
+    if (rule.max_cap_amount !== null && rule.max_cap_amount !== undefined && calculatedCommission.toNumber() > rule.max_cap_amount) {
         cappedAmount = calculatedCommission.toNumber();
-        calculatedCommission = new Decimal(rule.tenant_lender.max_cap_amount);
+        calculatedCommission = new Decimal(rule.max_cap_amount);
     }
     
     // 3. Create Snapshots
@@ -73,7 +73,7 @@ function calculateCommission(disbursement, sanction, rule, existingLedgers = [],
         base_amount: baseAmount.toNumber(),
         applied_rate: baseRate.toNumber(),
         calculated_amount: calculatedCommission.toNumber(),
-        capped_at: cappedAmount !== null ? rule.tenant_lender.max_cap_amount : null,
+        capped_at: cappedAmount !== null ? rule.max_cap_amount : null,
         slab_snapshot: matchedSlab,
     };
 

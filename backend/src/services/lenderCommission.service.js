@@ -38,7 +38,7 @@ async function getRule(id, tenantId) {
 
 async function createRule(tenantId, data) {
   const {
-    tenant_lender_id, product_type, payout_basis, commission_type, status,
+    tenant_lender_id, product_type, payout_basis, commission_type, max_cap_amount, status,
     volume_slabs, case_count_slabs, special_schemes
   } = data;
 
@@ -68,6 +68,7 @@ async function createRule(tenantId, data) {
       product_type,
       payout_basis,
       commission_type,
+      max_cap_amount: (max_cap_amount !== undefined && max_cap_amount !== null && max_cap_amount !== '') ? parseFloat(max_cap_amount) : null,
       status: status || 'ACTIVE',
       volume_slabs: {
         create: (volume_slabs || []).map(s => ({
@@ -111,7 +112,7 @@ async function updateRule(id, tenantId, data) {
   if (!existingRule) throw new Error('Rule not found or unauthorized');
 
   const {
-    payout_basis, commission_type, status,
+    payout_basis, commission_type, max_cap_amount, status,
     volume_slabs, case_count_slabs, special_schemes
   } = data;
 
@@ -133,6 +134,7 @@ async function updateRule(id, tenantId, data) {
         product_type: existingRule.product_type,
         payout_basis,
         commission_type,
+        max_cap_amount: (max_cap_amount !== undefined && max_cap_amount !== null && max_cap_amount !== '') ? parseFloat(max_cap_amount) : null,
         status: status || 'ACTIVE',
         effective_from: new Date(),
         volume_slabs: {
