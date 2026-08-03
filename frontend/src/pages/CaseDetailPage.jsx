@@ -568,7 +568,7 @@ export default function CaseDetailPage() {
                 <DataRow label="Occupancy" value={caseData.property?.occupancy_status || 'N/A'} />
                 <DataRow label="Property Value" value={caseData.property?.market_value ? `₹${caseData.property.market_value.toLocaleString('en-IN')}` : 'N/A'} />
                 <DataRow label="Location" value={caseData.property?.address || 'N/A'} />
-                <DataRow label="LTV Ratio" value={caseData.property?.market_value ? `${((caseData.loan_amount / caseData.property.market_value) * 100).toFixed(1)}%` : '—'} />
+                <DataRow label="LTV Ratio" value={(caseData.loan_amount && caseData.property?.market_value) ? `${((caseData.loan_amount / caseData.property.market_value) * 100).toFixed(1)}%` : '—'} />
               </div>
               <div style={{ background: 'rgba(99,91,255,.08)', border: '1px solid rgba(0,113,227,.2)', borderRadius: 10, padding: '12px 16px', fontSize: 12, color: '#635BFF', lineHeight: 1.5 }}>
                 💡 Property value entered by DSA. Lender will conduct independent property valuation during underwriting.

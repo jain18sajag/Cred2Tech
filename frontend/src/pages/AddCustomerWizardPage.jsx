@@ -47,7 +47,6 @@ const AddCustomerWizardPage = ({ mode = 'DSA' }) => {
     applicants: [],
     linked_gstins: [],
     product_type: '',
-    loan_amount: '',
     dsa_notes: '',
     is_professional: false,
     profession_type: '',
@@ -163,7 +162,6 @@ const restoreSession = async (preserveStep = false) => {
         linked_gstins: caseData.customer?.pan_profiles?.find(p => p.pan === app.pan_number)?.gstin_records || []
       })),
       product_type: caseData.product_type || '',
-      loan_amount: caseData.loan_amount || '',
       dsa_notes: caseData.dsa_notes || '',
       property_type: caseData.property?.property_type || '',
       occupancy_status: caseData.property?.occupancy_status || 'Self Occupied',
@@ -717,7 +715,6 @@ const PROPERTY_REQUIRED = ['LAP', 'HL'];
 const handleStep3Submit = async (e) => {
   e.preventDefault();
   if (!formData.product_type) return toast.error('Please select a loan product.');
-  if (!formData.loan_amount || Number(formData.loan_amount) <= 0) return toast.error('Please enter the requested loan amount.');
   const needsProperty = PROPERTY_REQUIRED.includes(formData.product_type);
   if (needsProperty && !formData.property_type) return toast.error('Property type is required for LAP/HL.');
   if (needsProperty && !formData.market_value) return toast.error('Market value is required for LAP/HL.');
@@ -726,7 +723,6 @@ const handleStep3Submit = async (e) => {
     setSaving(true);
     const payload = {
       product_type: formData.product_type,
-      loan_amount: parseFloat(formData.loan_amount),
       dsa_notes: formData.dsa_notes || null,
       property: needsProperty ? {
         property_type: formData.property_type,
@@ -1361,14 +1357,11 @@ const handleStep3Submit = async (e) => {
                     <option value="Other">Other — Specify</option>
                   </select>
                 </FormField>
-                <FormField label="Requested Loan Amount (₹)" name="loan_amount" required>
-                  <input type="number" className="form-control" placeholder="e.g. 5000000" value={formData.loan_amount} onChange={e => setFormData({ ...formData, loan_amount: e.target.value })} required min="1" />
-                </FormField>
                 <FormField label="Additional Requirements / Notes" name="dsa_notes">
                   <textarea rows={3} className="form-control" placeholder="Any specific requirements..." value={formData.dsa_notes} onChange={e => setFormData({ ...formData, dsa_notes: e.target.value })} />
                 </FormField>
                 <div style={{ marginTop: 12, padding: '12px 14px', background: 'var(--primary-subtle)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--primary-dark)' }}>
-                  💡 Exact tenure &amp; ROI will be finalized once the lender is identified via ESR.
+                  💡 Loan amount &amp; tenure will be captured after the lender is identified via ESR.
                 </div>
               </div>
             </div>

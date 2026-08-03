@@ -509,7 +509,19 @@ async function recalculateApplicantIncome(tenant_id, case_id, applicant_id) {
         where: { tenant_id, case_id, applicant_id, ocr_status: 'COMPLETED' }
     });
 
-    if (completedSlips.length === 0) return;
+    if (completedSlips.length === 0) {
+        // Deleting the last remaining slip must not leave a stale income
+        // figure behind - the entry only exists because OCR put it there.
+        await prisma.caseIncomeEntry.deleteMany({
+            where: {
+                case_id: parseInt(case_id),
+                applicant_id: parseInt(applicant_id),
+                supporting_doc_type: 'Salary Slip',
+                remarks: { contains: 'salary slip', mode: 'insensitive' }
+            }
+        });
+        return;
+    }
 
     // Calculate average net monthly salary
     const totalNet = completedSlips.reduce((sum, slip) => sum + (slip.net_salary || 0), 0);
@@ -576,6 +588,9 @@ async function getSalarySummary(req, res) {
             include: {
                 applicant: {
                     select: { name: true, pan_number: true, is_primary: true }
+                },
+                document: {
+                    select: { id: true, original_file_name: true }
                 }
             },
             orderBy: [
@@ -588,6 +603,55 @@ async function getSalarySummary(req, res) {
         res.json({ success: true, data: results });
     } catch (error) {
         sendCaughtError(res, error, 'Failed to fetch salary summary', 500);
+    }
+}
+
+/**
+ * Remove an uploaded salary slip: soft-deletes the Document (+ S3 cleanup,
+ * via document.service.js) and hard-deletes its SalarySlipOcrResult row,
+ * then recalculates income from whatever slips remain.
+ *
+ * The OCR result is hard-deleted (unlike the Document, which stays
+ * soft-deleted for audit trail) because it's an internal derived record, not
+ * a user-facing document - leaving it behind would keep permanently blocking
+ * a future upload for the same real calendar month via the month/year
+ * uniqueness check in applySalaryOcrResult.
+ *
+ * DELETE /api/cases/:caseId/applicants/:applicantId/salary-slips/:documentId
+ */
+async function deleteSalarySlip(req, res) {
+    try {
+        const { caseId, applicantId, documentId } = req.params;
+        const tenant_id = req.user.tenant_id;
+
+        const caseRecord = await prisma.case.findFirst({
+            where: { id: parseInt(caseId), tenant_id }
+        });
+        if (!caseRecord) return res.status(404).json({ error: 'Case not found or unauthorized.' });
+        if (caseRecord.is_locked) return res.status(400).json({ error: 'Case is locked and cannot be modified.' });
+
+        const document = await prisma.document.findFirst({
+            where: {
+                id: parseInt(documentId),
+                tenant_id,
+                case_id: parseInt(caseId),
+                applicant_id: parseInt(applicantId),
+                document_type: 'SALARY_SLIP',
+                status: 'ACTIVE'
+            }
+        });
+        if (!document) {
+            return res.status(404).json({ error: 'Salary slip document not found or does not belong to this applicant.' });
+        }
+
+        await documentService.deleteDocument(document.id, tenant_id);
+        await prisma.salarySlipOcrResult.deleteMany({ where: { document_id: document.id } });
+        await recalculateApplicantIncome(tenant_id, parseInt(caseId), parseInt(applicantId));
+
+        res.json({ success: true, message: 'Salary slip removed.' });
+    } catch (error) {
+        console.error('[salaryOcr.controller] deleteSalarySlip error:', error);
+        sendCaughtError(res, error, 'Failed to remove salary slip.', 500);
     }
 }
 
@@ -667,5 +731,6 @@ module.exports = {
     processSalarySlipOcrBatch,
     pollSalarySlipOcr,
     getSalarySummary,
-    addManualSalaryEntry
+    addManualSalaryEntry,
+    deleteSalarySlip
 };
