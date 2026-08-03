@@ -4,9 +4,10 @@ const fs = require('fs');
 const path = require('path');
 const { processSalarySlipOcr: mockProcessSalarySlipOcr } = require('./salaryOcr.service');
 
-// Use the new Cred2Tech OCR URL and API Key
+// Our own OCR API's URL and key - both must be set in .env (no hardcoded
+// fallback for the key: it's a secret and belongs only in .env, never in source).
 const getBaseUrl = () => process.env.CRED2TECH_OCR_BASE_URL || 'https://ocr.api.cred2tech.com';
-const getApiKey = () => process.env.CRED2TECH_OCR_API_KEY || 'Fu65SDEeUKmXNvfZdBzwM_NNpuJ_LFYgKsPrfbvKBrQ';
+const getApiKey = () => process.env.CRED2TECH_OCR_API_KEY;
 
 /**
  * Validates the file extension and size before hitting API.

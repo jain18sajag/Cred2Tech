@@ -131,18 +131,17 @@ async function triggerSalarySlipOcr(req, res) {
         }
 
         // 2. Upsert PENDING OCR Record
+        // Keyed on document_id (unique per Document row), not month/year -
+        // month/year are only known for certain once OCR actually runs, and
+        // keying on them let an unrelated, previously-abandoned upload with
+        // the same caller-supplied placeholder silently reuse that old row
+        // (see SalarySlipUploader.jsx's handleRunAllOcr placeholders).
         const ocrRecord = await prisma.salarySlipOcrResult.upsert({
             where: {
-                case_id_applicant_id_month_year: {
-                    case_id: parseInt(caseId),
-                    applicant_id: parseInt(applicantId),
-                    month,
-                    year
-                }
+                document_id: parseInt(documentId)
             },
             update: {
-                ocr_status: 'PENDING',
-                document_id: parseInt(documentId)
+                ocr_status: 'PENDING'
             },
             create: {
                 tenant_id,
@@ -296,29 +295,35 @@ async function processSalarySlipOcrBatch(req, res) {
         }
 
         // Upsert PENDING OCR Records for all files
+        // Keyed on document_id (unique per Document row) - see the same-shaped
+        // fix in triggerSalarySlipOcr above for why month/year can't be the key.
         const ocrRecords = [];
         for (const f of filesToProcess) {
             const ocrRecord = await prisma.salarySlipOcrResult.upsert({
                 where: {
-                    case_id_applicant_id_month_year: {
-                        case_id: parseInt(caseId),
-                        applicant_id: parseInt(applicantId),
-                        month: f.month,
-                        year: f.year
-                    }
-                },
-                update: {
-                    ocr_status: 'PENDING',
                     document_id: f.document_id
                 },
+                update: {
+                    ocr_status: 'PENDING'
+                },
+                // month/year still have a legacy DB-level @@unique([case_id,
+                // applicant_id, month, year]) alongside document_id's own
+                // unique constraint. f.month/f.year here are just the
+                // frontend's placeholder ("M1"/current year, see
+                // SalarySlipUploader.jsx's handleRunAllOcr) - reusing that
+                // same placeholder for a brand new document collides with any
+                // earlier (even abandoned/orphaned) row that placeholder was
+                // ever used for. Keying the placeholder to this document's
+                // own id keeps every new row unique until OCR fills in the
+                // real extracted period.
                 create: {
                     tenant_id,
                     customer_id: f.customer_id,
                     case_id: parseInt(caseId),
                     applicant_id: parseInt(applicantId),
                     document_id: f.document_id,
-                    month: f.month,
-                    year: f.year,
+                    month: 'PENDING',
+                    year: `DOC${f.document_id}`,
                     ocr_status: 'PENDING'
                 }
             });
