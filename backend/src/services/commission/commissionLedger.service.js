@@ -129,8 +129,8 @@ async function processDisbursementCommission(tenantId, caseId, disbursement, san
     });
 
     if (caseRecord && caseRecord.created_by && caseRecord.created_by.role?.name === 'SUB_DSA') {
-        const payoutRule = await tx.subDsaPayoutRule.findUnique({
-            where: { sub_dsa_user_id: caseRecord.created_by.id },
+        const payoutRule = await tx.subDsaPayoutRule.findFirst({
+            where: { sub_dsa_user_id: caseRecord.created_by.id, status: 'ACTIVE' },
             select: { payout_trigger: true }
         });
 
