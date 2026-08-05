@@ -373,7 +373,7 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
         // GST industry type / margin resolution.
         // Prefer GST Entity Details. If GST is unavailable, allow DSA/MSME manual customer.industry.
         let margin_source = 'missing';
-        const industryPayload = gstReq?.raw_fetch_data || gstReq?.raw_gst_data;
+        const industryPayload = gstReq?.raw_report_data || gstReq?.raw_fetch_data || gstReq?.raw_gst_data;
         if (industryPayload) {
             gst_industry_type = _parseGstIndustryType(industryPayload);
             gst_industry_margin = resolveGstIndustryMargin(gst_industry_type, isHdfcPolicy ? 'HDFC' : 'ICICI');
@@ -398,7 +398,7 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
         if (gstReq || caseRecord.customer?.industry) {
             logger.traceExtraction('GST MARGIN', {
                 'Industry Type': {
-                    'Source Path Used': gstReq?.raw_gst_data
+                    'Source Path Used': industryPayload
                         ? 'Entity Details.gstnDetailed.natureOfBusinessActivities / gstinDetails.natureOfBusinessActivities'
                         : 'customer.industry manual portal field',
                     'Raw Value': gst_industry_type || 'UNKNOWN',
