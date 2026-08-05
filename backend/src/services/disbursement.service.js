@@ -180,9 +180,18 @@ async function recordDisbursementOnce(caseId, tenantId, payload, userId, idempot
         timeout: 15000
     });
 
-    await salesIncentiveService.calculateIncentives(tenantId, {
-        disbursement_ids: [disbursement.id]
-    });
+    // Incentive calc is a secondary side-effect of a disbursement that has
+    // already committed — a failure here (bad rule config, null date on an
+    // edge-case event, etc.) must not surface as a 500 for a request that
+    // actually succeeded. Log and continue, matching the retry pattern used
+    // in salesIncentiveService.syncMissingIncentives.
+    try {
+        await salesIncentiveService.calculateIncentives(tenantId, {
+            disbursement_ids: [disbursement.id]
+        });
+    } catch (e) {
+        console.error(`[DISBURSEMENT] Incentive calculation failed for disbursement ${disbursement.id} (case ${caseId}):`, e);
+    }
 
     return disbursement;
 }

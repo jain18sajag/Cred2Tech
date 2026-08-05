@@ -788,7 +788,7 @@ async function updateStage(caseId, tenantId, newStage, userId, tx = null) {
 
   const allowedNext = STATE_TRANSITIONS[existingCase.stage];
   if (!allowedNext || !allowedNext.includes(newStage)) {
-    throw new Error(`Invalid stage transition: Cannot move from ${existingCase.stage} to ${newStage}. Valid next stages are: ${allowedNext.join(', ')}`);
+    throw new Error(`Invalid stage transition: Cannot move from ${existingCase.stage} to ${newStage}. Valid next stages are: ${(allowedNext || []).join(', ')}`);
   }
 
   // 3. Case Lock Logic — lock on DISBURSED or PARTLY_DISBURSED (compliance requirement)
