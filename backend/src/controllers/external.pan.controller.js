@@ -415,6 +415,8 @@ exports.verifyPan = async (req, res) => {
             if (!ownsCustomer) return res.status(403).json({ error: 'Access denied. MSME does not own this customer.' });
         }
 
+        const normalizedPanForCheck = String(pan).trim().toUpperCase();
+
         // Security check and lock check for co-applicant
         if (is_coapplicant && applicant_id) {
             const applicant = await prisma.applicant.findUnique({
@@ -427,16 +429,23 @@ exports.verifyPan = async (req, res) => {
             if (req.user.role === 'MSME_CUSTOMER' && applicant.case.msme_customer_user_id !== userId) {
                 return res.status(403).json({ error: 'Access denied to this applicant' });
             }
-            if (applicant.pan_verified) {
-                return res.status(400).json({ error: 'PAN is already verified for this applicant and cannot be modified.' });
+            // Only block re-verifying the SAME already-verified PAN (avoids a
+            // wasted/duplicate-billed vendor call) — a genuinely different PAN
+            // (the user correcting a mistake) must be allowed through. This
+            // previously blocked ANY re-verify attempt unconditionally, which
+            // made a mistyped PAN permanently unfixable without an admin-only
+            // /pan/reset call (DSA_ADMIN/SUPER_ADMIN only — not usable from the
+            // MSME self-service portal at all).
+            if (applicant.pan_verified && applicant.pan_number === normalizedPanForCheck) {
+                return res.status(400).json({ error: 'PAN is already verified for this applicant.' });
             }
         } else {
             // Security check and lock check for primary applicant
             const primaryApp = await prisma.applicant.findFirst({
                 where: { case_id: parseInt(case_id, 10), type: 'PRIMARY' }
             });
-            if (primaryApp && primaryApp.pan_verified) {
-                return res.status(400).json({ error: 'PAN is already verified for this customer and cannot be modified.' });
+            if (primaryApp && primaryApp.pan_verified && primaryApp.pan_number === normalizedPanForCheck) {
+                return res.status(400).json({ error: 'PAN is already verified for this customer.' });
             }
         }
 

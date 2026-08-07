@@ -138,6 +138,15 @@ async function deleteRequest(req, res) {
                     avg_bank_balance_previous_year: null,
                     financial_year_latest: null,
                     financial_year_previous: null,
+                    // These MUST also be cleared — esrFinancials.service.js's bank
+                    // extraction re-derives avg balance/salary credits straight
+                    // from raw_retrieve_response/raw_download_response whenever
+                    // present, ahead of the already-nulled columns above. Leaving
+                    // them behind would silently resurrect "deleted" bank figures
+                    // the next time ESR (or anything else) reads this record.
+                    raw_analyze_response: null,
+                    raw_retrieve_response: null,
+                    raw_download_response: null,
                 }
             });
 
@@ -152,6 +161,14 @@ async function deleteRequest(req, res) {
                 where: { id: dbReq.id },
                 data: { bank_excel_document_id: null, bank_json_document_id: null }
             });
+
+            // Bank average-balance/salary-credit figures feed directly into
+            // ESR — invalidate the cached snapshot so it re-extracts instead of
+            // continuing to show numbers pulled from data that no longer exists.
+            if (dbReq.case_id) {
+                const { markEsrInputsChanged } = require('../services/esrSnapshotMutation.service');
+                await markEsrInputsChanged(tx, dbReq.case_id);
+            }
         });
 
         if (dbReq.case_id) notifyCasePullUpdate(dbReq.case_id);

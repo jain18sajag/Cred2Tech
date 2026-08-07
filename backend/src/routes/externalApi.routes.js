@@ -40,6 +40,7 @@ router.post('/itr/initiate',  itrAnalyticsController.initiate);
 router.post('/itr/authorise', itrAnalyticsController.authorise);
 router.post('/itr/sync',      itrAnalyticsController.sync);
 router.post('/itr/cancel',    itrAnalyticsController.cancel);
+router.post('/itr/delete',    itrAnalyticsController.deleteItrRequest);
 router.post('/itr/download',  itrAnalyticsController.download);
 
 // Bank Statement Integration
@@ -53,6 +54,7 @@ router.post('/gst/create', gstController.createGstRequest);
 router.post('/gst/submit-otp', gstController.submitGstOtp);
 router.post('/gst/sync', gstController.syncGstData);
 router.post('/gst/cancel', gstController.cancelGstRequest);
+router.post('/gst/delete', gstController.deleteGstRequest);
 router.get('/gst/requests', gstController.getRequestDetails);
 
 // 4. PAN Intelligence & Verify

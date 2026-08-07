@@ -9,6 +9,7 @@ const { generateWebhookToken, appendWebhookToken, verifyWebhookToken } = require
 const { sendCaughtError } = require('../utils/sendError');
 const pullSync = require('../services/pullSync.service');
 const { notifyCasePullUpdate } = require('../services/socket.service');
+const { getBestUsableGstSnapshot } = require('../services/gstAnalyticsSnapshot.service');
 
 
 // Helper: extract latest + previous financial year turnover from raw GST JSON
@@ -540,6 +541,100 @@ async function cancelGstRequest(req, res) {
     }
 }
 
+const SUCCESSFUL_GST_STATUSES = ['REPORT_READY', 'COMPLETED'];
+
+// Deletes an already-pulled GST record (old/wrong data, or a retry is needed
+// under a different GSTIN). `cancelGstRequest` above only touches in-flight
+// requests and explicitly refuses anything terminal — this is its
+// counterpart for the terminal, successful case, following the same
+// reset-in-place pattern `bankController.deleteRequest` uses rather than a
+// hard delete (a hard delete would need to cascade GstFinancialYearSummary
+// rows first, since that relation has no onDelete: Cascade).
+async function deleteGstRequest(req, res) {
+    try {
+        const { request_id } = req.body;
+        if (!request_id) return res.status(400).json({ error: 'request_id is required' });
+
+        const dbReq = await prisma.gstrAnalyticsRequest.findFirst({
+            where: { id: parseInt(request_id, 10), tenant_id: req.user.tenant_id }
+        });
+        if (!dbReq) return res.status(404).json({ error: 'GST request not found' });
+
+        if (!SUCCESSFUL_GST_STATUSES.includes(dbReq.status)) {
+            return res.status(400).json({ error: `Only a completed GST pull can be removed this way — this request is ${dbReq.status}. Use cancel for an in-progress request.` });
+        }
+
+        await prisma.$transaction(async (tx) => {
+            await tx.gstFinancialYearSummary.deleteMany({ where: { gst_request_id: dbReq.id } });
+
+            const docIds = [dbReq.gst_pdf_document_id, dbReq.gst_excel_document_id, dbReq.gst_json_document_id].filter(Boolean);
+            if (docIds.length) {
+                await tx.document.updateMany({
+                    where: { id: { in: docIds } },
+                    data: { status: 'DELETED' }
+                });
+            }
+
+            await tx.gstrAnalyticsRequest.update({
+                where: { id: dbReq.id },
+                data: {
+                    // GstrAnalyticsStatus has no CANCELLED/DELETED value —
+                    // FAILED is the closest terminal, non-success state,
+                    // mirroring cancelGstRequest's own convention above.
+                    status: 'FAILED',
+                    provider_message: `Removed by ${req.user.name || 'user'}`,
+                    report_json_url: null,
+                    report_excel_url: null,
+                    report_pdf_url: null,
+                    gst_pdf_document_id: null,
+                    gst_excel_document_id: null,
+                    gst_json_document_id: null,
+                    turnover_latest_year: null,
+                    turnover_previous_year: null,
+                    financial_year_latest: null,
+                    financial_year_previous: null,
+                    avg_monthly_turnover: null,
+                    selected_turnover_latest_fy: null,
+                    selected_turnover_previous_fy: null,
+                    rolling_12_month_turnover: null,
+                    // These three MUST also be cleared — getBestUsableGstSnapshot's
+                    // rolling-snapshot builder re-derives turnover straight from
+                    // raw_report_data whenever it's present, so leaving it behind
+                    // would silently resurrect the "deleted" turnover figures the
+                    // moment the snapshot is next read (ESR, Income Summary, this
+                    // very preview panel), regardless of every field nulled above.
+                    raw_report_data: null,
+                    raw_gst_data: null,
+                    raw_fetch_data: null,
+                    provider_callback_payload: null,
+                    callback_payload: null,
+                    // metrics_status is what getBestUsableGstSnapshot actually
+                    // checks to pick its "bestRequest" among a case's requests
+                    // (ahead of `status`) — leaving it COMPLETED would let this
+                    // now-emptied row keep winning that selection.
+                    metrics_status: 'PENDING',
+                    report_status: 'PENDING',
+                }
+            });
+
+            // GST turnover feeds directly into ESR (Income from API Pulls,
+            // financial ratios) — a cached ESR snapshot must be invalidated so
+            // it re-extracts and reflects this removal rather than continuing
+            // to show numbers pulled from data that no longer exists.
+            if (dbReq.case_id) {
+                const { markEsrInputsChanged } = require('../services/esrSnapshotMutation.service');
+                await markEsrInputsChanged(tx, dbReq.case_id);
+            }
+        });
+
+        if (dbReq.case_id) notifyCasePullUpdate(dbReq.case_id);
+
+        res.json({ success: true });
+    } catch (error) {
+        sendCaughtError(res, error, 'Failed to remove GST record', 500);
+    }
+}
+
 async function getRequestDetails(req, res) {
     try {
         const { case_id, applicant_id } = req.query;
@@ -557,6 +652,32 @@ async function getRequestDetails(req, res) {
             orderBy: { created_at: 'desc' }
         });
 
+        // Turnover preview — REST fallback path for when websockets are
+        // blocked (see useCasePullStatus); mirrors what the realtime
+        // snapshot (casePullSnapshot.service.js) already attaches, using the
+        // same corrected snapshot rather than the request's own raw
+        // turnover_previous_year column (frequently unpopulated for a
+        // rolling-window pull). Only computed for the one most-recent
+        // completed request — that's the only row the UI ever renders.
+        const mostRecentCompleted = requests.find(r => ['REPORT_READY', 'COMPLETED'].includes(r.status));
+        if (mostRecentCompleted) {
+            try {
+                const snapshot = await getBestUsableGstSnapshot({ tenantId: req.user.tenant_id, caseId: mostRecentCompleted.case_id });
+                if (snapshot) {
+                    mostRecentCompleted.turnover_preview = {
+                        turnover_latest_year: snapshot.turnover_latest_year != null ? Number(snapshot.turnover_latest_year) : null,
+                        turnover_previous_year: snapshot.turnover_previous_year != null ? Number(snapshot.turnover_previous_year) : null,
+                        financial_year_latest: snapshot.financial_year_latest || null,
+                        financial_year_previous: snapshot.financial_year_previous || null,
+                        avg_monthly_turnover: snapshot.avg_monthly_turnover != null ? Number(snapshot.avg_monthly_turnover) : null,
+                        months_filed_12m: snapshot.months_filed_12m ?? null,
+                    };
+                }
+            } catch (err) {
+                console.warn(`[GST] turnover preview lookup failed for request ${mostRecentCompleted.id}: ${err.message}`);
+            }
+        }
+
         res.json({ success: true, data: requests });
     } catch (error) {
         sendCaughtError(res, error, 'Failed to fetch GST request details', 500);
@@ -568,6 +689,7 @@ module.exports = {
     submitGstOtp,
     syncGstData,
     cancelGstRequest,
+    deleteGstRequest,
     handleSignzyCallback,
     getRequestDetails
 };

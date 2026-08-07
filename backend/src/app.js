@@ -136,6 +136,7 @@ const caseRoutes = require('./routes/case.routes');
 const otpRoutes = require('./routes/otp.routes');
 const dsaWalletRoutes = require('./routes/dsa.wallet.routes');
 const adminWalletRoutes = require('./routes/admin.wallet.routes');
+const adminTransactionsRoutes = require('./routes/adminTransactions.routes');
 const adminApiLogsRoutes = require('./routes/adminApiLogs.routes');
 const adminTenantRoutes = require('./routes/admin.tenant.routes');
 const adminLenderRoutes = require('./routes/admin.lender.routes');
@@ -155,6 +156,9 @@ const subDsaPayoutRoutes = require('./routes/subDsaPayout.routes');
 const dashboardRoutes = require('./routes/dashboard.routes');
 const salesIncentiveRoutes = require('./routes/salesIncentive.routes');
 const loanApplicationSummaryRoutes = require('./routes/loanApplicationSummary.routes');
+const ticketRoutes = require('./routes/ticket.routes');
+const ticketRecipientRoutes = require('./routes/ticketRecipient.routes');
+const caseFeedbackRoutes = require('./routes/caseFeedback.routes');
 
 // Rate Limiting Middlewares
 const loginLimiter = rateLimit({
@@ -221,6 +225,7 @@ apiRouter.use('/cases', caseRoutes);
 apiRouter.use('/otp', otpRoutes);
 apiRouter.use('/wallet', dsaWalletRoutes);
 apiRouter.use('/admin/wallet', adminWalletRoutes);
+apiRouter.use('/admin/transactions', adminTransactionsRoutes);
 apiRouter.use('/admin/api-logs', adminApiLogsRoutes);
 apiRouter.use('/admin/tenants', adminTenantRoutes);
 apiRouter.use('/admin/vendors', vendorRoutes);
@@ -247,6 +252,9 @@ apiRouter.use('/sub-dsa', subDsaPayoutRoutes);
 apiRouter.use('/dashboard', dashboardRoutes);
 apiRouter.use('/sales-incentives', salesIncentiveRoutes);
 apiRouter.use('/loan-application-summary', loanApplicationSummaryRoutes);
+apiRouter.use('/tickets', ticketRoutes);
+apiRouter.use('/admin/ticket-recipients', ticketRecipientRoutes);
+apiRouter.use('/case-feedback', caseFeedbackRoutes);
 apiRouter.use('/msme/auth', directCustomerAuthRoutes);
 apiRouter.use('/msme', directCustomerRoutes);
 apiRouter.use('/admin/msme-cases', adminDirectCustomerRoutes);

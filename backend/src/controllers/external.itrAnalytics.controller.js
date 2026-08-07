@@ -290,6 +290,78 @@ async function cancel(req, res) {
     }
 }
 
+const SUCCESSFUL_ITR_STATUSES = ['COMPLETED'];
+
+/**
+ * POST /external/itr/delete
+ * Removes an already-completed ITR pull (old/wrong data, or a retry is
+ * needed). `cancel` above only works on in-flight requests. Mirrors
+ * deleteGstRequest's approach: reset in place rather than a hard delete,
+ * and — critically — null the raw analytics_payload as well as the derived
+ * numeric fields, since esrFinancials.service.js re-parses net profit
+ * straight from analytics_payload when present. Leaving the raw payload
+ * behind would silently resurrect "deleted" income figures.
+ */
+async function deleteItrRequest(req, res) {
+    try {
+        const { reference_id } = req.body;
+        if (!reference_id) return res.status(400).json({ error: 'reference_id is required' });
+
+        const dbReq = await prisma.itrAnalyticsRequest.findFirst({
+            where: { reference_id, tenant_id: req.user.tenant_id }
+        });
+        if (!dbReq) return res.status(404).json({ error: 'ITR analytics request not found' });
+
+        if (!SUCCESSFUL_ITR_STATUSES.includes(dbReq.status)) {
+            return res.status(400).json({ error: `Only a completed ITR pull can be removed this way — this request is ${dbReq.status}. Use cancel for an in-progress request.` });
+        }
+
+        await prisma.$transaction(async (tx) => {
+            if (dbReq.itr_document_id) {
+                await tx.document.update({
+                    where: { id: dbReq.itr_document_id },
+                    data: { status: 'DELETED' }
+                });
+            }
+
+            await tx.itrAnalyticsRequest.update({
+                where: { id: dbReq.id },
+                data: {
+                    // ItrAnalyticsStatus has no CANCELLED/DELETED value — FAILED
+                    // is the closest terminal, non-success state, matching the
+                    // convention cancel() above already uses.
+                    status: 'FAILED',
+                    provider_message: `Removed by ${req.user.name || 'user'}`,
+                    itr_document_id: null,
+                    excel_url: null,
+                    analytics_payload: null,
+                    net_profit_latest_year: null,
+                    net_profit_previous_year: null,
+                    gross_receipts_latest_year: null,
+                    gross_receipts_previous_year: null,
+                    financial_year_latest: null,
+                    financial_year_previous: null,
+                }
+            });
+
+            // ITR net profit/gross receipts feed directly into ESR — invalidate
+            // the cached snapshot so it re-extracts rather than continuing to
+            // show numbers pulled from data that no longer exists.
+            if (dbReq.case_id) {
+                const { markEsrInputsChanged } = require('../services/esrSnapshotMutation.service');
+                await markEsrInputsChanged(tx, dbReq.case_id);
+            }
+        });
+
+        if (dbReq.case_id) notifyCasePullUpdate(dbReq.case_id);
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('ITR Delete Error:', error);
+        sendCaughtError(res, error, 'Failed to remove ITR record', 500);
+    }
+}
+
 /**
  * POST /external/itr/download
  * Reads from DB only — no vendor call.
@@ -328,4 +400,4 @@ async function download(req, res) {
     }
 }
 
-module.exports = { analyze, initiate, authorise, sync, cancel, download };
+module.exports = { analyze, initiate, authorise, sync, cancel, deleteItrRequest, download };

@@ -118,7 +118,7 @@ async function getMtdStats(tenantId, subDsaUserId) {
       }
     },
     select: {
-      total_amount: true,
+      calculated_commission: true,
       case_id: true
     }
   });
@@ -128,7 +128,7 @@ async function getMtdStats(tenantId, subDsaUserId) {
 
   for (const ledger of ledgers) {
     uniqueCases.add(ledger.case_id);
-    dsa_earned += Number(ledger.total_amount || 0);
+    dsa_earned += Number(ledger.calculated_commission || 0);
   }
 
   return {
@@ -145,7 +145,7 @@ async function getPayoutConfig(tenantId, subDsaUserId) {
       status: 'ACTIVE'
     },
     include: {
-      overrides: { include: { lender: { select: { bank_name: true } } } },
+      overrides: { include: { lender: { select: { lender_name: true } } } },
       case_count_slabs: { orderBy: { from_cases: 'asc' } },
       special_schemes: { orderBy: { valid_from: 'asc' } }
     }
@@ -602,7 +602,17 @@ async function listSubDsaUsers(tenantId) {
     where: { tenant_id: tenantId, role: { name: 'SUB_DSA' } },
     select: {
       id: true, name: true, email: true, mobile: true, status: true, created_at: true,
-      sub_dsa_payout_rule: { select: { default_payout_rate: true, payout_trigger: true, tds_applicable: true } }
+      // `sub_dsa_payout_rules` (plural) — a Sub-DSA accumulates one row per
+      // rule version over time (see getPayoutConfig/calculatePayout's
+      // ACTIVE/ARCHIVED handling elsewhere in this file), it's never a
+      // singular relation. Scoped to just the current ACTIVE rule here since
+      // this endpoint only needs a lightweight "is one configured" signal.
+      sub_dsa_payout_rules: {
+        where: { status: 'ACTIVE' },
+        orderBy: { id: 'desc' },
+        take: 1,
+        select: { default_payout_rate: true, payout_trigger: true, tds_applicable: true }
+      }
     }
   });
 }

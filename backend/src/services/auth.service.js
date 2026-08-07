@@ -3,6 +3,7 @@ const { comparePassword, hashPassword } = require('../utils/hash');
 const { generateToken } = require('../utils/jwt');
 const crypto = require('crypto');
 const { sendMail } = require('../utils/mailer');
+const { renderBrandedEmail } = require('../utils/emailTemplate');
 const { validatePasswordPolicy } = require('../utils/passwordPolicy');
 
 async function loginUser(email, password, ipAddress) {
@@ -124,12 +125,21 @@ async function initiatePasswordReset(email) {
   // Previously just console.log'd the raw reset token (H-2/M-2) — never
   // functional in prod, and the token itself ended up in application logs.
   const resetUrl = `${(process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '')}/reset-password?token=${rawToken}`;
+  const { html, text } = renderBrandedEmail({
+    title: 'Reset your password',
+    preheader: 'Reset your Cred2Tech password — this link is valid for 1 hour.',
+    heading: 'Reset Your Password',
+    intro: `Hi ${user.name || ''},`.trim(),
+    paragraphs: ['We received a request to reset the password for your Cred2Tech account.'],
+    button: { label: 'Reset Password', url: resetUrl },
+    note: "If you didn't request this, you can safely ignore this email — your password has not been changed.",
+  });
   const sent = await sendMail({
     from: `"${process.env.SMTP_FROM_NAME || 'Cred2Tech Platform'}" <${process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER}>`,
     to: email,
     subject: 'Reset your Cred2Tech password',
-    text: `Reset your password using this link (valid for 1 hour): ${resetUrl}\n\nIf you didn't request this, you can safely ignore this email.`,
-    html: `<p>Reset your password using the link below (valid for 1 hour):</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>If you didn't request this, you can safely ignore this email.</p>`,
+    text,
+    html,
   });
   if (!sent) {
     console.warn(`[auth.service] Password reset email could not be sent to ${email} — SMTP not configured or send failed. Token was still issued.`);

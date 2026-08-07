@@ -21,6 +21,11 @@ async function requireCaseAccess(req, res, next) {
     }
 
     const isBypassed = ['DSA_ADMIN', 'SUPER_ADMIN'].includes(user.role);
+    // Distinct from isBypassed above: DSA_ADMIN bypasses hierarchy but is
+    // still one specific tenant's admin and must stay tenant_id-scoped.
+    // SUPER_ADMIN is the only role that's genuinely platform-wide (e.g. the
+    // cross-tenant "Case Feedback" admin tab links into cases here).
+    const isPlatformAdmin = user.role === 'SUPER_ADMIN';
 
     let msmeFilter = {};
     if (user.role === 'MSME_CUSTOMER') {
@@ -53,7 +58,7 @@ async function requireCaseAccess(req, res, next) {
     const caseRecord = await prisma.case.findFirst({
       where: {
         id: caseId,
-        ...(user.role === 'MSME_CUSTOMER' ? {} : { tenant_id: user.tenant_id }),
+        ...(user.role === 'MSME_CUSTOMER' || isPlatformAdmin ? {} : { tenant_id: user.tenant_id }),
         ...filter
       },
       select: { id: true }

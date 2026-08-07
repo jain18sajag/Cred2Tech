@@ -217,20 +217,48 @@ async function addApplicant(case_id, applicantData, tenant_id) {
     throw new Error('Case not found or unauthorized.');
   }
 
-  if (existingCase.is_locked) {
-    throw new Error('Case is locked and cannot be modified.');
-  }
-
   if (applicantData.id) {
     const existing = await prisma.applicant.findUnique({ where: { id: parseInt(applicantData.id, 10) } });
+
+    // A changed mobile number can no longer claim the OLD OTP verification —
+    // independent of PAN verification, so this applies in both branches
+    // below. Without this, correcting a wrong mobile silently kept showing
+    // "Verified" against a number that was never actually OTP-checked.
+    const nextMobile = applicantData.mobile !== undefined ? applicantData.mobile : existing?.mobile;
+    const mobileChanged = existing && nextMobile !== existing.mobile;
+
     if (existing && existing.pan_verified) {
+      // Correcting name/PAN/DOB on an already-verified applicant is allowed
+      // (this whole journey is pre-approval eligibility data, not a locked
+      // submitted record) — but a corrected identity can no longer claim
+      // the OLD verification, so an actual change resets pan_verified and
+      // its verification metadata, requiring the applicant to be
+      // re-verified against the new details rather than silently keeping a
+      // "verified" badge on data that was never actually checked.
+      const nextName = applicantData.name !== undefined ? applicantData.name : existing.name;
+      const nextPan = applicantData.pan_number !== undefined ? applicantData.pan_number : existing.pan_number;
+      const nextDob = applicantData.dob !== undefined ? applicantData.dob : existing.dob;
+      const identityChanged = nextName !== existing.name || nextPan !== existing.pan_number || nextDob !== existing.dob;
+
       return await prisma.applicant.update({
         where: { id: parseInt(applicantData.id, 10) },
         data: {
+          name: nextName,
+          pan_number: nextPan,
+          dob: nextDob,
           mobile: applicantData.mobile,
           email: applicantData.email,
           pincode: applicantData.pincode,
-          employment_type: applicantData.employment_type || undefined
+          employment_type: applicantData.employment_type || undefined,
+          ...(identityChanged ? {
+            pan_verified: false,
+            pan_verified_at: null,
+            pan_verification_status: null,
+            pan_verification_reference: null,
+            pan_verified_name: null,
+            pan_verified_dob: null,
+          } : {}),
+          ...(mobileChanged ? { otp_verified: false } : {}),
         }
       });
     }
@@ -242,7 +270,8 @@ async function addApplicant(case_id, applicantData, tenant_id) {
         mobile: applicantData.mobile,
         email: applicantData.email,
         pincode: applicantData.pincode,
-        employment_type: applicantData.employment_type || undefined
+        employment_type: applicantData.employment_type || undefined,
+        ...(mobileChanged ? { otp_verified: false } : {}),
       }
     });
   }
@@ -338,10 +367,6 @@ async function updateProduct(case_id, product_type, tenant_id) {
   });
   if (!existingCase) throw new Error('Case not found or unauthorized.');
 
-  if (existingCase.is_locked) {
-    throw new Error('Case is locked and cannot be modified.');
-  }
-
   const updated = await prisma.case.update({
     where: { id: existingCase.id },
     data: {
@@ -373,10 +398,6 @@ async function updateProductProperty(case_id, payload, tenant_id) {
     include: { customer: true }
   });
   if (!existingCase) throw new Error('Case not found or unauthorized.');
-
-  if (existingCase.is_locked) {
-    throw new Error('Case is locked and cannot be modified.');
-  }
 
   // Property required for LAP / HL
   const propertyRequired = ['LAP', 'HL'].includes(product_type);
@@ -480,6 +501,11 @@ async function getAllCases(tenant_id, currentUser) {
 async function getCaseById(case_id, tenant_id, currentUser) {
   const isBypassed = ['DSA_ADMIN', 'SUPER_ADMIN', 'MSME_CUSTOMER'].includes(currentUser.role);
   const isMsme = currentUser.role === 'MSME_CUSTOMER';
+  // Distinct from isBypassed above: DSA_ADMIN bypasses hierarchy but is
+  // still one specific tenant's admin and must stay tenant_id-scoped.
+  // SUPER_ADMIN is the only role that's genuinely platform-wide (e.g. the
+  // cross-tenant "Case Feedback" admin tab links into cases here).
+  const isPlatformAdmin = currentUser.role === 'SUPER_ADMIN';
 
   const hierarchyFilter = isBypassed ? {} : {
     created_by: {
@@ -494,7 +520,7 @@ async function getCaseById(case_id, tenant_id, currentUser) {
   const existingCase = await prisma.case.findFirst({
     where: {
       id: parseInt(case_id, 10),
-      ...(isMsme ? { msme_customer_user_id: currentUser.id } : { tenant_id: tenant_id }),
+      ...(isMsme ? { msme_customer_user_id: currentUser.id } : (isPlatformAdmin ? {} : { tenant_id: tenant_id })),
       ...hierarchyFilter
     },
     include: {
@@ -1467,7 +1493,6 @@ async function reuseApplicant(caseId, sourceApplicantId, tenantId, userId) {
       where: { id: parseInt(caseId, 10), tenant_id: tenantId }
     });
     if (!targetCase) throw new Error('Target case not found or unauthorized.');
-    if (targetCase.is_locked) throw new Error('Target case is locked.');
 
     // 2. Verify source applicant
     const sourceApp = await tx.applicant.findFirst({
@@ -1735,7 +1760,6 @@ async function removeApplicant(caseId, applicantId, tenantId) {
       where: { id: parseInt(caseId, 10), tenant_id: tenantId }
     });
     if (!targetCase) throw new Error('Target case not found or unauthorized.');
-    if (targetCase.is_locked) throw new Error('Target case is locked.');
 
     const app = await tx.applicant.findFirst({
       where: { id: parseInt(applicantId, 10), case_id: targetCase.id }

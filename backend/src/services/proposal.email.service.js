@@ -4,6 +4,7 @@
 
 const nodemailer = require('nodemailer');
 const prisma = require('../../config/db');
+const { renderBrandedEmail, esc, BRAND_COLORS: C, BRAND_FONT: FONT } = require('../utils/emailTemplate');
 
 // ── Build transporter (lazy-init) ─────────────────────────────────────────────
 let _transporter = null;
@@ -106,131 +107,112 @@ function buildProposalEmailFromTemplate({
   const salariedSlipCount = esrFinancials?.salaried_slip_count || 0;
 
   const docListHtml = documents.length > 0
-    ? `<ol style="margin-top: 10px; padding-left: 20px;">${documents.map(d => `<li style="margin-bottom: 4px;">${d.original_file_name || d.file_name || d.document_type}</li>`).join('')}</ol>`
-    : `<p style="color: #c53030; font-style: italic;">No documents attached.</p>`;
+    ? `<ol style="margin:8px 0 0;padding-left:20px;font-family:${FONT};font-size:13px;color:${C.body};">${documents.map(d => `<li style="margin-bottom:4px;">${esc(d.original_file_name || d.file_name || d.document_type)}</li>`).join('')}</ol>`
+    : `<p style="margin:8px 0 0;font-family:${FONT};font-size:13px;color:${C.muted};font-style:italic;">No documents attached.</p>`;
 
   const docListText = documents.length > 0
     ? documents.map((d, i) => `${i + 1}. ${d.original_file_name || d.file_name || d.document_type}`).join('\n')
     : 'No documents attached.';
 
-  const bodyHtml = `
-    <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #2d3748; line-height: 1.6; max-width: 700px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
-      <div style="background: #f7fafc; padding: 20px 30px; border-bottom: 2px solid #edf2f7; display: flex; justify-content: space-between; align-items: center;">
-        <div>
-          <div style="font-size: 12px; font-weight: 700; color: #4a5568; text-transform: uppercase; letter-spacing: 1px;">DSA / Channel Partner Name</div>
-          <div style="font-size: 18px; font-weight: 800; color: #2b6cb0;">${dsaName}</div>
-        </div>
-        <div style="text-align: right;">
-          <div style="font-size: 11px; color: #718096;">DSA Code: <strong style="color: #2d3748;">${dsaCode}</strong></div>
-          <div style="font-size: 11px; color: #718096;">Date: <strong style="color: #2d3748;">${fmtDate()}</strong></div>
-        </div>
-      </div>
+  // Two-column "label / value" info table — same panel/border/left-accent
+  // language as the branded wrapper's own highlight box (see
+  // utils/emailTemplate.js), reused here for structured detail sections.
+  const infoTable = (rows) => `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;font-family:${FONT};font-size:13px;margin-bottom:20px;">
+      ${rows.map(([label, value, valueStyle]) => `
+        <tr>
+          <td style="padding:9px 12px;border:1px solid ${C.line};background:${C.panel};font-weight:700;color:${C.ink};width:38%;">${esc(label)}</td>
+          <td style="padding:9px 12px;border:1px solid ${C.line};color:${C.body};${valueStyle || ''}">${value}</td>
+        </tr>
+      `).join('')}
+    </table>`;
 
-      <div style="padding: 30px;">
-        <p style="margin-top: 0;">Dear <strong>${contactName}</strong>,</p>
-        
-        <p>I hope this message finds you well. I am writing to introduce a loan application from one of our customers for your consideration. Kindly find the relevant details and supporting documents below.</p>
+  const sectionHeading = (title) =>
+    `<h3 style="margin:0 0 12px;font-family:${FONT};font-size:13px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;color:${C.primary};border-bottom:1px solid ${C.line};padding-bottom:8px;">${esc(title)}</h3>`;
 
-        <div style="margin: 25px 0;">
-          <h3 style="font-size: 14px; font-weight: 800; color: #2b6cb0; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; margin-bottom: 15px;">Customer & Loan Details</h3>
-          <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-            <tr>
-              <td style="padding: 10px; border: 1px solid #edf2f7; background: #f8fafc; font-weight: 700; width: 35%;">Customer Name</td>
-              <td style="padding: 10px; border: 1px solid #edf2f7;">${customerName}</td>
-            </tr>
-            <tr>
-              <td style="padding: 10px; border: 1px solid #edf2f7; background: #f8fafc; font-weight: 700;">Business Name</td>
-              <td style="padding: 10px; border: 1px solid #edf2f7;">${customer.business_name || '—'}</td>
-            </tr>
-            <tr>
-              <td style="padding: 10px; border: 1px solid #edf2f7; background: #f8fafc; font-weight: 700;">Entity Type</td>
-              <td style="padding: 10px; border: 1px solid #edf2f7;">${customer.company_type || '—'}</td>
-            </tr>
-            <tr>
-              <td style="padding: 10px; border: 1px solid #edf2f7; background: #f8fafc; font-weight: 700;">Product Type</td>
-              <td style="padding: 10px; border: 1px solid #edf2f7;">${productType}</td>
-            </tr>
-            <tr>
-              <td style="padding: 10px; border: 1px solid #edf2f7; background: #f8fafc; font-weight: 700;">Loan Amount Required</td>
-              <td style="padding: 10px; border: 1px solid #edf2f7; font-weight: 800; color: #276749;">₹${amountLakhs} Lakhs</td>
-            </tr>
-            <tr>
-              <td style="padding: 10px; border: 1px solid #edf2f7; background: #f8fafc; font-weight: 700;">Loan Tenor Required</td>
-              <td style="padding: 10px; border: 1px solid #edf2f7;">${tenureMonths} Months</td>
-            </tr>
-            <tr>
-              <td style="padding: 10px; border: 1px solid #edf2f7; background: #f8fafc; font-weight: 700;">Loan Purpose</td>
-              <td style="padding: 10px; border: 1px solid #edf2f7;">${proposal.loan_purpose || '—'}</td>
-            </tr>
-          </table>
-        </div>
+  const customerLoanRows = [
+    ['Customer Name', esc(customerName)],
+    ['Business Name', esc(customer.business_name || '—')],
+    ['Entity Type', esc(customer.company_type || '—')],
+    ['Product Type', esc(productType)],
+    ['Loan Amount Required', `₹${amountLakhs} Lakhs`, `font-weight:800;color:${C.emerald};`],
+    ['Loan Tenor Required', `${tenureMonths} Months`],
+    ['Loan Purpose', esc(proposal.loan_purpose || '—')],
+  ];
 
-        <div style="margin: 25px 0;">
-          <h3 style="font-size: 14px; font-weight: 800; color: #2b6cb0; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; margin-bottom: 15px;">Financial Summary</h3>
-          <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-            ${(grossTurnover || gstTurnover || avgBankBalance) ? `
-            <tr>
-              <td style="padding: 10px; border: 1px solid #edf2f7; background: #f8fafc; font-weight: 700; width: 35%;">GST Turnover</td>
-              <td style="padding: 10px; border: 1px solid #edf2f7;">${gstTurnover != null ? fmtLakhs(gstTurnover) : '—'}</td>
-            </tr>
-            <tr>
-              <td style="padding: 10px; border: 1px solid #edf2f7; background: #f8fafc; font-weight: 700;">Net Profit Income</td>
-              <td style="padding: 10px; border: 1px solid #edf2f7;">${netProfit != null ? fmtLakhs(netProfit) : '—'}</td>
-            </tr>
-            <tr>
-              <td style="padding: 10px; border: 1px solid #edf2f7; background: #f8fafc; font-weight: 700;">Banking Income / Avg Bal</td>
-              <td style="padding: 10px; border: 1px solid #edf2f7;">${avgBankBalance != null ? fmtINR(avgBankBalance) : '—'}</td>
-            </tr>
-            ` : ''}
-            ${salariedIncome != null ? `
-            <tr>
-              <td style="padding: 10px; border: 1px solid #edf2f7; background: #f8fafc; font-weight: 700;">Salaried Income</td>
-              <td style="padding: 10px; border: 1px solid #edf2f7;">${fmtINR(salariedIncome)} / month</td>
-            </tr>
-            <tr>
-              <td style="padding: 10px; border: 1px solid #edf2f7; background: #f8fafc; font-weight: 700;">Salary Source</td>
-              <td style="padding: 10px; border: 1px solid #edf2f7;">${salariedSource} (${salariedSlipCount} slips)</td>
-            </tr>
-            ` : ''}
-            <tr>
-              <td style="padding: 10px; border: 1px solid #edf2f7; background: #f8fafc; font-weight: 700;">Selected Monthly Income</td>
-              <td style="padding: 10px; border: 1px solid #edf2f7; font-weight: 700;">${fmtINR(esrFinancials?.selected_monthly_income)}</td>
-            </tr>
-            <tr>
-              <td style="padding: 10px; border: 1px solid #edf2f7; background: #f8fafc; font-weight: 700;">Existing Obligations</td>
-              <td style="padding: 10px; border: 1px solid #edf2f7;">${fmtINR(esrFinancials?.existing_obligations)}</td>
-            </tr>
-            <tr>
-              <td style="padding: 10px; border: 1px solid #edf2f7; background: #f8fafc; font-weight: 700;">CIBIL Score</td>
-              <td style="padding: 10px; border: 1px solid #edf2f7;">${esrFinancials?.bureau_score || '—'}</td>
-            </tr>
-          </table>
-        </div>
+  const financialRows = [
+    ...((grossTurnover || gstTurnover || avgBankBalance) ? [
+      ['GST Turnover', gstTurnover != null ? fmtLakhs(gstTurnover) : '—'],
+      ['Net Profit Income', netProfit != null ? fmtLakhs(netProfit) : '—'],
+      ['Banking Income / Avg Bal', avgBankBalance != null ? fmtINR(avgBankBalance) : '—'],
+    ] : []),
+    ...(salariedIncome != null ? [
+      ['Salaried Income', `${fmtINR(salariedIncome)} / month`],
+      ['Salary Source', `${esc(salariedSource)} (${salariedSlipCount} slips)`],
+    ] : []),
+    ['Selected Monthly Income', fmtINR(esrFinancials?.selected_monthly_income), 'font-weight:700;'],
+    ['Existing Obligations', fmtINR(esrFinancials?.existing_obligations)],
+    ['CIBIL Score', esc(esrFinancials?.bureau_score || '—')],
+  ];
 
-        <div style="margin: 25px 0;">
-          <h3 style="font-size: 14px; font-weight: 800; color: #2b6cb0; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; margin-bottom: 15px;">Documents Enclosed</h3>
-          <p style="font-size: 12px; color: #718096; margin-bottom: 5px;">The following supporting documents are attached to this email:</p>
-          ${docListHtml}
-        </div>
+  // Same left-accent panel language as the branded wrapper's highlight box —
+  // carries the DSA/channel-partner identity that used to be its own header bar.
+  const dsaPanel = `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px;">
+      <tr><td style="background:${C.panel};border:1px solid ${C.line};border-left:3px solid ${C.primary};padding:12px 16px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+          <td style="font-family:${FONT};">
+            <p style="margin:0 0 2px;font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:${C.faint};">DSA / Channel Partner</p>
+            <p style="margin:0;font-size:15px;font-weight:800;color:${C.ink};">${esc(dsaName)}</p>
+          </td>
+          <td align="right" style="font-family:${FONT};font-size:11px;color:${C.muted};white-space:nowrap;">
+            DSA Code: <strong style="color:${C.ink};">${esc(dsaCode)}</strong><br/>
+            Date: <strong style="color:${C.ink};">${esc(fmtDate())}</strong>
+          </td>
+        </tr></table>
+      </td></tr>
+    </table>`;
 
-        <p style="margin-top: 30px;">Kindly review the application at your earliest convenience. Please feel free to reach out to us should you require any additional information or clarification.</p>
-        <p>We look forward to a positive response.</p>
+  const signOff = `
+    <p style="margin:24px 0 0;font-family:${FONT};font-size:14px;color:${C.body};">Kindly review the application at your earliest convenience. Please feel free to reach out to us should you require any additional information or clarification.</p>
+    <p style="margin:8px 0 0;font-family:${FONT};font-size:14px;color:${C.body};">We look forward to a positive response.</p>
+    <p style="margin:20px 0 0;font-family:${FONT};font-size:14px;color:${C.body};">Warm regards,</p>
+    <p style="margin:10px 0 0;font-family:${FONT};font-size:14px;font-weight:700;color:${C.ink};">${esc(sender.name)}</p>
+    ${sender.designation ? `<p style="margin:0;font-family:${FONT};font-size:13px;color:${C.muted};">${esc(sender.designation)}</p>` : ''}
+    <p style="margin:0;font-family:${FONT};font-size:13px;color:${C.muted};">${esc(dsaName)}</p>
+    <p style="margin:0;font-family:${FONT};font-size:13px;color:${C.muted};">${esc(sender.mobile || '—')} | ${esc(sender.email)}</p>`;
 
-        <div style="margin-top: 40px;">
-          <p style="margin: 0; font-size: 14px; color: #4a5568;">Warm regards,</p>
-          <br/>
-          <p style="margin: 0; font-size: 14px; font-weight: 700; color: #2d3748;">${sender.name}</p>
-          ${sender.designation ? `<p style="margin: 0; font-size: 13px; color: #718096;">${sender.designation}</p>` : ''}
-          <p style="margin: 0; font-size: 13px; color: #718096;">${dsaName}</p>
-          <p style="margin: 0; font-size: 13px; color: #718096;">${sender.mobile || '—'} | ${sender.email}</p>
-        </div>
-      </div>
+  const disclaimer = `
+    <p style="margin:20px 0 0;padding-top:14px;border-top:1px solid ${C.line};font-family:${FONT};font-size:11px;line-height:1.6;color:${C.faint};text-align:justify;">
+      Disclaimer: This application is being submitted by ${esc(dsaName)} on behalf of the applicant. All credit assessment, KYC verification, and sanction decisions rest solely with your institution. The financial figures above are indicative, based on data provided by the applicant and retrieved through consent-based data APIs.
+    </p>`;
 
-      <div style="background: #f7fafc; padding: 20px 30px; border-top: 1px solid #edf2f7; font-size: 11px; color: #a0aec0; text-align: justify;">
-        Disclaimer: This application is being submitted by ${dsaName} on behalf of the applicant. All credit assessment, KYC verification, and sanction decisions rest solely with your institution. The financial figures above are indicative, based on data provided by the applicant and retrieved through consent-based data APIs.
-      </div>
-    </div>
+  const customBody = `
+    ${dsaPanel}
+    ${sectionHeading('Customer & Loan Details')}
+    ${infoTable(customerLoanRows)}
+    ${sectionHeading('Financial Summary')}
+    ${infoTable(financialRows)}
+    ${sectionHeading('Documents Enclosed')}
+    <p style="margin:0;font-family:${FONT};font-size:12px;color:${C.muted};">The following supporting documents are attached to this email:</p>
+    ${docListHtml}
+    ${signOff}
+    ${disclaimer}
   `;
+
+  // Rendered through the same branded wrapper used by scheme.cred2tech.com
+  // (see utils/emailTemplate.js) — indigo/emerald palette, sharp corners —
+  // so this email matches every other Cred2Tech email, not its own one-off theme.
+  const { html: bodyHtml } = renderBrandedEmail({
+    title: 'New Loan Application',
+    preheader: `${customerName} — ${productType} — ₹${amountLakhs} Lakhs`,
+    heading: 'New Loan Application for Your Review',
+    intro: `Dear ${contactName},`,
+    paragraphs: [
+      'I hope this message finds you well. I am writing to introduce a loan application from one of our customers for your consideration. Kindly find the relevant details and supporting documents below.',
+    ],
+    customBody,
+  });
 
   const bodyText = `
 DSA / Channel Partner Name: ${dsaName}
