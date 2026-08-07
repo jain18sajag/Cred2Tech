@@ -121,8 +121,11 @@ model User {
   // brand-new case here start pre-filled with data the user already verified
   // on the other app, before any Case/Applicant exists to hold it locally.
   // Only ever written when currently null — never overwrites verified local data.
-  synced_dob         String?
-  synced_pan_number  String?
+  synced_dob            String?
+  synced_pan_number     String?
+  synced_business_name  String?
+  synced_email          String?
+  synced_pincode        String?
   locked_until          DateTime?
 
   role         Role   @relation(fields: [role_id], references: [id])
