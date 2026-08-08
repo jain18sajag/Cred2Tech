@@ -137,16 +137,14 @@ async function runBureauCheck({ caseId, applicantId, mobileNumber, firstName, la
         data: { bureau_fetched: true, cibil_score: scoreVal }
       });
 
-      // SYNC RULE: If this is the primary applicant, update the Case snapshot (ONLY if not in financial/locked stage)
+      // SYNC RULE: If this is the primary applicant, update the Case snapshot.
+      // A re-pull is always allowed to refresh the case-level snapshot,
+      // regardless of stage — every stage of this journey is editable.
       if (updatedApplicant.is_primary) {
-        const caseRecord = await tx.case.findUnique({ where: { id: parseInt(caseId) } });
-        const financialStages = ['DISBURSED', 'PARTLY_DISBURSED', 'CLOSED'];
-        if (caseRecord && !financialStages.includes(caseRecord.stage)) {
-          await tx.case.update({
-            where: { id: parseInt(caseId) },
-            data: { cibil_score: scoreVal }
-          });
-        }
+        await tx.case.update({
+          where: { id: parseInt(caseId) },
+          data: { cibil_score: scoreVal }
+        });
       }
     });
   }

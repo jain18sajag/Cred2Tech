@@ -106,19 +106,30 @@ async function findOrCreateAndIssueToken(mobile) {
 // `Customer_<mobile>` placeholder every new signup starts with) — dob/PAN
 // only ever come from a Signzy-verified Applicant, never the raw typed
 // fields, so a mistyped PAN can't propagate cross-app as if it were fact.
+// business_name/email/pincode are plain prefill hints (same trust level as
+// the sibling app's own synced_business_name/email/synced_pincode cache) —
+// pulled from whatever case this customer has going, verified or not.
 async function gatherVerifiedProfile(user) {
   const latestCase = await prisma.case.findFirst({
     where: { msme_customer_user_id: user.id },
     orderBy: { created_at: 'desc' },
-    include: { applicants: { where: { is_primary: true, pan_verified: true }, take: 1 } }
+    include: {
+      customer: true,
+      applicants: { where: { is_primary: true }, take: 1 }
+    }
   });
   const applicant = latestCase?.applicants?.[0];
+  const verifiedApplicant = applicant?.pan_verified ? applicant : null;
+  const customer = latestCase?.customer;
 
   const isPlaceholderName = user.name === `Customer_${user.mobile}`;
   return {
-    name: !isPlaceholderName ? user.name : (applicant?.pan_verified_name || null),
-    dob: applicant?.pan_verified_dob || null,
-    pan_number: applicant?.pan_number || null,
+    name: !isPlaceholderName ? user.name : (verifiedApplicant?.pan_verified_name || null),
+    dob: verifiedApplicant?.pan_verified_dob || null,
+    pan_number: verifiedApplicant?.pan_number || null,
+    business_name: customer?.legal_business_name || customer?.business_name || null,
+    email: customer?.business_email || null,
+    pincode: applicant?.pincode || null,
   };
 }
 
@@ -246,8 +257,10 @@ const directCustomerAuthService = {
   // that's the whole point, not just syncing existing accounts. Only ever
   // fills fields that are currently empty — a locally-verified value (this
   // app's own Applicant PAN, a name the user set here) always wins over
-  // whatever the sibling app sends.
-  ssoProfileSync: async (mobile, { name, dob, pan_number }) => {
+  // whatever the sibling app sends. business_name/email/pincode land in the
+  // synced_* cache (never a live Customer/Applicant record) — same "prefill,
+  // not fact" trust level as synced_dob/synced_pan_number above.
+  ssoProfileSync: async (mobile, { name, dob, pan_number, business_name, email, pincode }) => {
     const user = await findOrCreateUser(mobile);
     const isPlaceholderName = user.name === `Customer_${mobile}`;
 
@@ -255,6 +268,9 @@ const directCustomerAuthService = {
     if (name && isPlaceholderName) data.name = name;
     if (dob && !user.synced_dob) data.synced_dob = dob;
     if (pan_number && !user.synced_pan_number) data.synced_pan_number = pan_number;
+    if (business_name && !user.synced_business_name) data.synced_business_name = business_name;
+    if (email && !user.synced_email) data.synced_email = email;
+    if (pincode && !user.synced_pincode) data.synced_pincode = pincode;
 
     if (Object.keys(data).length > 0) {
       await prisma.user.update({ where: { id: user.id }, data });

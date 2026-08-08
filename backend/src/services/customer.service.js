@@ -132,9 +132,26 @@ async function createOrAttachCustomer(data, tenant_id, user_id, userRole) {
     const finalBusinessName = keepVerifiedName ? existing.business_name : (business_name || existing.business_name);
     const finalSource = keepVerifiedName ? existing.business_name_source : (business_name ? 'MANUAL' : existing.business_name_source);
 
+    // PAN correction on an existing customer — previously silently dropped
+    // here entirely (this update never included business_pan at all, unlike
+    // the new-customer branch below which does), so a mistyped PAN could
+    // never be fixed once the customer record existed. Guarded against
+    // colliding with a different customer's PAN in the same tenant.
+    let finalPan = existing.business_pan;
+    if (normalizedPan && normalizedPan !== existing.business_pan) {
+      const panConflict = await prisma.customer.findFirst({
+        where: { business_pan: normalizedPan, tenant_id, NOT: { id: existing.id } }
+      });
+      if (panConflict) {
+        throw new Error(`PAN ${normalizedPan} is already registered to another customer in this tenant.`);
+      }
+      finalPan = normalizedPan;
+    }
+
     return await prisma.customer.update({
       where: { id: existing.id },
       data: {
+        business_pan: finalPan,
         business_mobile,
         business_email,
         business_name: finalBusinessName,

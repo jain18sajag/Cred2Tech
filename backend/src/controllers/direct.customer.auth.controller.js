@@ -118,9 +118,10 @@ async function ssoRevoke(req, res) {
 }
 
 // Server-to-server only — called by scheme.cred2tech.com's backend with
-// whatever verified name/dob/PAN it has for this mobile, so this app already
-// has it the first time the person actually shows up here. Same signed-token
-// auth as sso-revoke; not a browser-facing endpoint.
+// whatever verified profile fields it has for this mobile (name/dob/PAN plus
+// business_name/email/pincode prefill hints), so this app already has it the
+// first time the person actually shows up here. Same signed-token auth as
+// sso-revoke; not a browser-facing endpoint.
 async function ssoProfileSync(req, res) {
   try {
     const authHeader = req.headers['authorization'];
@@ -136,8 +137,8 @@ async function ssoProfileSync(req, res) {
       return res.status(401).json({ success: false, error: 'Invalid or expired sync token' });
     }
 
-    const { name, dob, pan_number } = req.body || {};
-    const result = await directCustomerAuthService.ssoProfileSync(mobile, { name, dob, pan_number });
+    const { name, dob, pan_number, business_name, email, pincode } = req.body || {};
+    const result = await directCustomerAuthService.ssoProfileSync(mobile, { name, dob, pan_number, business_name, email, pincode });
     return res.status(200).json(result);
   } catch (err) {
     sendCaughtError(res, err, 'Failed to process cross-app profile sync');

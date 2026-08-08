@@ -118,7 +118,7 @@ async function getMtdStats(tenantId, subDsaUserId) {
       }
     },
     select: {
-      total_amount: true,
+      calculated_commission: true,
       case_id: true
     }
   });
@@ -128,7 +128,7 @@ async function getMtdStats(tenantId, subDsaUserId) {
 
   for (const ledger of ledgers) {
     uniqueCases.add(ledger.case_id);
-    dsa_earned += Number(ledger.total_amount || 0);
+    dsa_earned += Number(ledger.calculated_commission || 0);
   }
 
   return {
@@ -140,12 +140,12 @@ async function getMtdStats(tenantId, subDsaUserId) {
 async function getPayoutConfig(tenantId, subDsaUserId) {
   await ensureSubDsaUser(tenantId, subDsaUserId);
   return prisma.subDsaPayoutRule.findFirst({
-    where: { 
+    where: {
       sub_dsa_user_id: Number(subDsaUserId),
       status: 'ACTIVE'
     },
     include: {
-      overrides: { include: { lender: { select: { bank_name: true } } } },
+      overrides: { include: { lender: { select: { lender_name: true } } } },
       case_count_slabs: { orderBy: { from_cases: 'asc' } },
       special_schemes: { orderBy: { valid_from: 'asc' } }
     }
@@ -236,13 +236,13 @@ async function upsertPayoutConfig(tenantId, subDsaUserId, body) {
   return prisma.$transaction(async tx => {
     await ensureSubDsaUser(tenantId, subDsaUserId, tx);
     await ensureTenantLenders(tenantId, [...parsed.overrides.map(o => o.tenant_lender_id), ...parsed.schemes.map(s => s.tenant_lender_id)], tx);
-    const existing = await tx.subDsaPayoutRule.findFirst({ 
-      where: { 
+    const existing = await tx.subDsaPayoutRule.findFirst({
+      where: {
         sub_dsa_user_id: Number(subDsaUserId),
         status: 'ACTIVE'
-      } 
+      }
     });
-    
+
     if (existing) {
       await tx.subDsaPayoutRule.update({
         where: { id: existing.id },
@@ -258,9 +258,9 @@ async function upsertPayoutConfig(tenantId, subDsaUserId, body) {
       status: 'ACTIVE',
       effective_from: new Date()
     };
-    
-    const rule = await tx.subDsaPayoutRule.create({ 
-      data: { tenant_id: tenantId, sub_dsa_user_id: Number(subDsaUserId), ...parentData } 
+
+    const rule = await tx.subDsaPayoutRule.create({
+      data: { tenant_id: tenantId, sub_dsa_user_id: Number(subDsaUserId), ...parentData }
     });
 
     if (parsed.overrides.length) await tx.subDsaLenderOverride.createMany({ data: parsed.overrides.map(o => ({ ...o, override_rate: o.override_rate.toNumber(), rule_id: rule.id })) });
@@ -291,7 +291,7 @@ async function calculatePayout(tenantId, subDsaUserId, commissionLedgerId, clien
   const eventDate = sourceDateFor(commLedger);
 
   let rule = await client.subDsaPayoutRule.findFirst({
-    where: { 
+    where: {
       sub_dsa_user_id: Number(subDsaUserId),
       status: { in: ['ACTIVE', 'ARCHIVED'] },
       effective_from: { lte: eventDate },
@@ -328,15 +328,15 @@ async function calculatePayout(tenantId, subDsaUserId, commissionLedgerId, clien
   const appliedOverride = applicableOverrides[0] || null;
   const applicableRate = new Prisma.Decimal(appliedOverride?.override_rate ?? rule.default_payout_rate);
   const appliedBase = (appliedOverride?.calculation_base ?? rule.calculation_base) === 'LENDER_COMMISSION' ? dsaEarned : disbursedAmount;
-  
+
   let subDsaPayout = appliedBase.mul(applicableRate).div(100).toDecimalPlaces(2);
 
   const period = monthKey(eventDate);
   const previousCases = await client.subDsaPayoutLedger.findMany({
-    where: { 
-      tenant_id: tenantId, 
-      sub_dsa_user_id: Number(subDsaUserId), 
-      status: { notIn: ['REJECTED'] }, 
+    where: {
+      tenant_id: tenantId,
+      sub_dsa_user_id: Number(subDsaUserId),
+      status: { notIn: ['REJECTED'] },
       calculation_metadata: { path: ['payout_period'], equals: period }
     },
     select: { case_id: true }
@@ -476,7 +476,7 @@ async function listPayouts(tenantId, filters, currentUser) {
   for (const r of monthRecords) {
     uniqueMonths.add(r.calculation_metadata?.payout_period || monthKey(r.created_at));
   }
-  
+
   const availableMonths = Array.from(uniqueMonths).filter(Boolean).sort().reverse();
   if (availableMonths.length === 0) availableMonths.push(monthKey(new Date()));
 
@@ -484,7 +484,7 @@ async function listPayouts(tenantId, filters, currentUser) {
 
   const where = { ...baseWhere };
   if (status) where.status = status;
-  
+
   if (selectedMonth) {
     monthRange(selectedMonth);
     where.calculation_metadata = { path: ['payout_period'], equals: selectedMonth };
@@ -602,9 +602,9 @@ async function listSubDsaUsers(tenantId) {
     where: { tenant_id: tenantId, role: { name: 'SUB_DSA' } },
     select: {
       id: true, name: true, email: true, mobile: true, status: true, created_at: true,
-      sub_dsa_payout_rule: { 
+      sub_dsa_payout_rule: {
         where: { status: 'ACTIVE' },
-        select: { default_payout_rate: true, payout_trigger: true, tds_applicable: true } 
+        select: { default_payout_rate: true, payout_trigger: true, tds_applicable: true }
       }
     }
   });

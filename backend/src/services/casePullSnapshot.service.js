@@ -15,6 +15,7 @@
  * elapsed time, so the UI never claims progress that hasn't happened.
  */
 const prisma = require('../../config/db');
+const { getBestUsableGstSnapshot } = require('./gstAnalyticsSnapshot.service');
 
 // Ordered weakest → strongest; used to roll per-request phases up into one
 // overall phase per pull type.
@@ -75,8 +76,35 @@ function describeGst(req) {
     }
 }
 
-function serializeGst(req) {
+async function serializeGst(req) {
     const derived = describeGst(req);
+
+    // Turnover preview — only worth the extra lookup once the pull has
+    // actually finished; an in-progress request has nothing to preview yet,
+    // and re-querying on every polling tick would be pure waste. Reuses the
+    // same corrected snapshot logic income.service.js's Income Summary step
+    // relies on, rather than the request's own raw turnover_previous_year
+    // column (frequently unpopulated for a rolling-window pull).
+    let turnoverPreview = null;
+    if (derived.phase === 'COMPLETED') {
+        try {
+            const snapshot = await getBestUsableGstSnapshot({ tenantId: req.tenant_id, caseId: req.case_id });
+            if (snapshot) {
+                turnoverPreview = {
+                    turnover_latest_year: snapshot.turnover_latest_year != null ? Number(snapshot.turnover_latest_year) : null,
+                    turnover_previous_year: snapshot.turnover_previous_year != null ? Number(snapshot.turnover_previous_year) : null,
+                    financial_year_latest: snapshot.financial_year_latest || null,
+                    financial_year_previous: snapshot.financial_year_previous || null,
+                    avg_monthly_turnover: snapshot.avg_monthly_turnover != null ? Number(snapshot.avg_monthly_turnover) : null,
+                    months_filed_12m: snapshot.months_filed_12m ?? null,
+                };
+            }
+        } catch (err) {
+            // Never let a preview-only lookup fail the whole snapshot broadcast.
+            console.warn(`[GST Snapshot] turnover preview lookup failed for request ${req.id}: ${err.message}`);
+        }
+    }
+
     return {
         id: req.id,
         applicant_id: req.applicant_id,
@@ -94,6 +122,7 @@ function serializeGst(req) {
         report_json_url: req.report_json_url,
         created_at: req.created_at,
         updated_at: req.updated_at,
+        turnover_preview: turnoverPreview,
         ...derived,
     };
 }
@@ -136,6 +165,7 @@ function describeItr(req) {
 
 function serializeItr(req) {
     const derived = describeItr(req);
+    const num = (v) => v != null ? Number(v) : null;
     return {
         id: req.id,
         applicant_id: req.applicant_id,
@@ -148,6 +178,17 @@ function serializeItr(req) {
         excel_url: req.excel_url,
         created_at: req.created_at,
         updated_at: req.updated_at,
+        // Income preview — all fields live directly on this row (unlike GST,
+        // there's no separate per-FY breakdown table to reconcile against),
+        // so no extra lookup is needed once the pull has completed.
+        income_preview: derived.phase === 'COMPLETED' ? {
+            net_profit_latest_year: num(req.net_profit_latest_year),
+            net_profit_previous_year: num(req.net_profit_previous_year),
+            gross_receipts_latest_year: num(req.gross_receipts_latest_year),
+            gross_receipts_previous_year: num(req.gross_receipts_previous_year),
+            financial_year_latest: req.financial_year_latest || null,
+            financial_year_previous: req.financial_year_previous || null,
+        } : null,
         ...derived,
     };
 }
@@ -233,11 +274,17 @@ const GST_SELECT = {
     provider_message: true, auth_link: true, gst_pdf_document_id: true, gst_excel_document_id: true,
     gst_json_document_id: true, report_pdf_url: true, report_excel_url: true, report_json_url: true,
     created_at: true, updated_at: true,
+    // Needed only to look up the corrected turnover snapshot (see
+    // getBestUsableGstSnapshot) once a request completes — not surfaced directly.
+    tenant_id: true, case_id: true,
 };
 
 const ITR_SELECT = {
     id: true, applicant_id: true, pan: true, reference_id: true, auth_mode: true, status: true,
     provider_message: true, itr_document_id: true, excel_url: true, created_at: true, updated_at: true,
+    net_profit_latest_year: true, net_profit_previous_year: true,
+    gross_receipts_latest_year: true, gross_receipts_previous_year: true,
+    financial_year_latest: true, financial_year_previous: true,
 };
 
 const BANK_SELECT = {
@@ -271,7 +318,7 @@ async function buildCasePullSnapshot(caseId) {
         }),
     ]);
 
-    const gst = gstRows.map(serializeGst);
+    const gst = await Promise.all(gstRows.map(serializeGst));
     const itr = itrRows.map(serializeItr);
     const bank = bankRows.map(serializeBank);
 

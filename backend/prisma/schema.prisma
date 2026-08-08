@@ -89,6 +89,8 @@ model Tenant {
 
   data_pull_background_jobs DataPullBackgroundJob[]
   system_notifications      SystemNotification[]
+  tickets                   Ticket[]
+  case_feedback             CaseFeedback[]
 
   @@map("tenants")
 }
@@ -121,9 +123,12 @@ model User {
   // brand-new case here start pre-filled with data the user already verified
   // on the other app, before any Case/Applicant exists to hold it locally.
   // Only ever written when currently null — never overwrites verified local data.
-  synced_dob         String?
-  synced_pan_number  String?
-  locked_until          DateTime?
+  synced_dob           String?
+  synced_pan_number    String?
+  synced_business_name String?
+  synced_email         String?
+  synced_pincode       String?
+  locked_until         DateTime?
 
   role         Role   @relation(fields: [role_id], references: [id])
   tenant       Tenant @relation(fields: [tenant_id], references: [id])
@@ -153,6 +158,12 @@ model User {
   password_reset_tokens PasswordResetToken[]
   user_sessions         UserSession[]
   system_notifications  SystemNotification[]
+
+  tickets_created         Ticket[]                      @relation("TicketCreator")
+  tickets_read            Ticket[]                      @relation("TicketReader")
+  ticket_actions          TicketTimelineEntry[]         @relation("TicketActionPerformer")
+  ticket_recipients_added TicketNotificationRecipient[] @relation("TicketRecipientCreator")
+  case_feedback_submitted CaseFeedback[]                @relation("CaseFeedbackSubmitter")
 
   @@index([tenant_id])
   @@index([manager_id])
@@ -266,7 +277,7 @@ enum CaseStage {
 }
 
 model Case {
-  id             Int       @id @default(autoincrement())
+  id             Int              @id @default(autoincrement())
   tenant_id      Int
   customer_id    Int
   product_type   String? // LAP, HL, WC, TL, ML, BL, Other
@@ -278,8 +289,8 @@ model Case {
   location       String? // DEPRECATED: use case_property_details
   ltv_ratio      Float? // DEPRECATED: computed during ESR
   dsa_notes      String?
-  esr_generated  Boolean   @default(false) // NEW Phase 1
-  stage          CaseStage @default(DRAFT)
+  esr_generated  Boolean          @default(false) // NEW Phase 1
+  stage          CaseStage        @default(DRAFT)
   // Per-CASE classification (MSME/self-employed vs salaried) — deliberately
   // separate from Customer.category. The same PAN/customer can have one
   // salaried case and one MSME case at the same time; if this lived only on
@@ -330,34 +341,34 @@ model Case {
   contact_mobile     String?
   is_cloned_snapshot Boolean @default(false)
 
-  tenant             Tenant                         @relation(fields: [tenant_id], references: [id])
-  customer           Customer                       @relation(fields: [customer_id], references: [id])
-  created_by         User                           @relation("CaseCreator", fields: [created_by_user_id], references: [id])
-  msme_customer_user User?                          @relation("MsmeCustomerUser", fields: [msme_customer_user_id], references: [id])
-  assigned_dsa_user  User?                          @relation("AssignedDsaUser", fields: [assigned_dsa_user_id], references: [id])
-  allocated_by_admin User?                          @relation("AllocatingAdmin", fields: [allocated_by_admin_id], references: [id])
-  case_payment       CasePayment?
-  parent_case        Case?                          @relation("ParentChildCase", fields: [parent_case_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  child_cases        Case[]                         @relation("ParentChildCase")
-  applicants         Applicant[]
-  api_logs           ApiUsageLog[]
-  activity_logs      ActivityLog[]
-  data_pull_status   CaseDataPullStatus?
-  consents           CustomerConsent[]
-  gst_requests       GstrAnalyticsRequest[]
-  bank_statements    BankStatementAnalysisRequest[]
-  itr_analytics      ItrAnalyticsRequest[]
-  bureau_checks      BureauVerification[]
-  documents          Document[]
+  tenant               Tenant                         @relation(fields: [tenant_id], references: [id])
+  customer             Customer                       @relation(fields: [customer_id], references: [id])
+  created_by           User                           @relation("CaseCreator", fields: [created_by_user_id], references: [id])
+  msme_customer_user   User?                          @relation("MsmeCustomerUser", fields: [msme_customer_user_id], references: [id])
+  assigned_dsa_user    User?                          @relation("AssignedDsaUser", fields: [assigned_dsa_user_id], references: [id])
+  allocated_by_admin   User?                          @relation("AllocatingAdmin", fields: [allocated_by_admin_id], references: [id])
+  case_payment         CasePayment?
+  parent_case          Case?                          @relation("ParentChildCase", fields: [parent_case_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  child_cases          Case[]                         @relation("ParentChildCase")
+  applicants           Applicant[]
+  api_logs             ApiUsageLog[]
+  activity_logs        ActivityLog[]
+  data_pull_status     CaseDataPullStatus?
+  consents             CustomerConsent[]
+  gst_requests         GstrAnalyticsRequest[]
+  bank_statements      BankStatementAnalysisRequest[]
+  itr_analytics        ItrAnalyticsRequest[]
+  bureau_checks        BureauVerification[]
+  documents            Document[]
   // Phase 1 relations
-  property           CasePropertyDetails?
-  income_entries     CaseIncomeEntry[]
-  obligations        CaseCreditObligation[]
-  esrs               EligibilityReport[]
+  property             CasePropertyDetails?
+  income_entries       CaseIncomeEntry[]
+  obligations          CaseCreditObligation[]
+  esrs                 EligibilityReport[]
   esr_calculation_logs CaseEsrCalculationLog[]
-  esr_financials     CaseEsrFinancials?
-  stage_history      CaseStageHistory[]
-  proposals          Proposal[]
+  esr_financials       CaseEsrFinancials?
+  stage_history        CaseStageHistory[]
+  proposals            Proposal[]
 
   // Sanction & Disbursement
   sanction                  CaseSanction?
@@ -365,10 +376,11 @@ model Case {
   pdd_tasks                 PDDTask[]
   salary_ocr_results        SalarySlipOcrResult[]
   commission_ledgers        CommissionLedger[]
-  SubDsaPayoutLedger        SubDsaPayoutLedger[] 
+  SubDsaPayoutLedger        SubDsaPayoutLedger[]
   SalesIncentiveLedger      SalesIncentiveLedger[]
   data_pull_background_jobs DataPullBackgroundJob[]
   system_notifications      SystemNotification[]
+  feedback                  CaseFeedback[]
 
   @@index([tenant_id, stage])
   @@index([tenant_id, lender_name])
@@ -964,28 +976,28 @@ enum BankStatementStatus {
 }
 
 model BankStatementAnalysisRequest {
-  id               Int                 @id @default(autoincrement())
-  tenant_id        Int
-  customer_id      Int
-  case_id          Int?
-  applicant_id     Int?
-  auth_token       String?
-  report_id        String?             @unique
+  id                 Int                 @id @default(autoincrement())
+  tenant_id          Int
+  customer_id        Int
+  case_id            Int?
+  applicant_id       Int?
+  auth_token         String?
+  report_id          String?             @unique
   /// HMAC token embedded in the callback URL we register with Signzy and
   /// re-verified on webhook receipt — Signzy webhooks carry no signature
   /// scheme of their own, so this is the only thing authenticating the callback.
-  webhook_token    String?
+  webhook_token      String?
   /// Atomic-claim marker for webhook dedup (see external.bank.controller.js
   /// handleSignzyCallback) — Signzy retries webhooks liberally; a plain
   /// read-then-branch status check is a TOCTOU race that lets two concurrent
   /// deliveries both re-process. Set via a conditional UPDATE ... WHERE
   /// webhook_claimed_at IS NULL, which only one concurrent request can win.
   webhook_claimed_at DateTime?
-  status           BankStatementStatus @default(INITIATED)
-  provider_message String?
-  report_json_url  String?
-  report_excel_url String?
-  files_payload    Json?
+  status             BankStatementStatus @default(INITIATED)
+  provider_message   String?
+  report_json_url    String?
+  report_excel_url   String?
+  files_payload      Json?
 
   raw_analyze_response  Json?
   raw_retrieve_response Json?
@@ -1368,19 +1380,19 @@ model CaseEsrFinancials {
   banking_income    Float?
 
   // --- Salaried Income Fields (Phase 2) ---
-  salaried_income        Float? // avg net monthly salary derived from OCR + manual income entries
-  salaried_income_source String? // "OCR" | "MANUAL" | "MIXED"
-  salaried_slip_count    Int? // number of OCR-completed salary slips used in derivation
-  salaried_gross_monthly      Float?
-  salaried_net_monthly        Float?
-  salaried_deductions_monthly Float?
-  salaried_months_available   Int?
-  salaried_months_required    Int?
-  salaried_period_from        String?
-  salaried_period_to          String?
-  salaried_data_complete      Boolean?
-  salaried_source             String?
-  bank_net_salary_monthly     Float?
+  salaried_income              Float? // avg net monthly salary derived from OCR + manual income entries
+  salaried_income_source       String? // "OCR" | "MANUAL" | "MIXED"
+  salaried_slip_count          Int? // number of OCR-completed salary slips used in derivation
+  salaried_gross_monthly       Float?
+  salaried_net_monthly         Float?
+  salaried_deductions_monthly  Float?
+  salaried_months_available    Int?
+  salaried_months_required     Int?
+  salaried_period_from         String?
+  salaried_period_to           String?
+  salaried_data_complete       Boolean?
+  salaried_source              String?
+  bank_net_salary_monthly      Float?
   bank_salary_months_available Int?
 
   selected_income_method  String?
@@ -1460,7 +1472,7 @@ model EligibilityReport {
 }
 
 model CaseEsrCalculationLog {
-  id                 Int      @id @default(autoincrement())
+  id                 Int    @id @default(autoincrement())
   tenant_id          Int
   case_id            Int
   esr_id             Int?
@@ -1471,26 +1483,26 @@ model CaseEsrCalculationLog {
   scheme_code String?
   scheme_name String?
 
-  selected_method    String?
-  calculation_status String  @default("GENERATED")
+  selected_method     String?
+  calculation_status  String  @default("GENERATED")
   calculation_version String?
-  policy_version     String?
-  source_snapshot_id Int?
+  policy_version      String?
+  source_snapshot_id  Int?
 
-  requested_loan_amount  Float?
+  requested_loan_amount   Float?
   requested_tenure_months Int?
   final_tenure_months     Int?
   roi_annual              Float?
   emi_per_lakh            Float?
 
-  eligible_monthly_income   Float?
-  eligible_emi_capacity     Float?
-  income_based_eligibility  Float?
-  ltv_based_eligibility     Float?
-  product_cap               Float?
-  exposure_deduction        Float?
-  pos_deduction             Float?
-  final_eligible_amount     Float?
+  eligible_monthly_income  Float?
+  eligible_emi_capacity    Float?
+  income_based_eligibility Float?
+  ltv_based_eligibility    Float?
+  product_cap              Float?
+  exposure_deduction       Float?
+  pos_deduction            Float?
+  final_eligible_amount    Float?
 
   manual_review_required Boolean @default(false)
   configuration_error    Boolean @default(false)
@@ -1502,14 +1514,14 @@ model CaseEsrCalculationLog {
   calculation_steps_json Json?
   excluded_records_json  Json?
 
-  json_file_name        String?
-  json_file_path        String?
-  json_file_url         String?
-  json_checksum_sha256  String?
-  xlsx_file_name        String?
-  xlsx_file_path        String?
-  xlsx_file_url         String?
-  xlsx_checksum_sha256  String?
+  json_file_name       String?
+  json_file_path       String?
+  json_file_url        String?
+  json_checksum_sha256 String?
+  xlsx_file_name       String?
+  xlsx_file_path       String?
+  xlsx_file_url        String?
+  xlsx_checksum_sha256 String?
 
   created_at DateTime @default(now())
   created_by Int?
@@ -1630,11 +1642,11 @@ model LenderCommissionRule {
 }
 
 model CommissionVolumeSlab {
-  id               Int    @id @default(autoincrement())
-  rule_id          Int
-  from_amount      Float
-  to_amount        Float? // Use null for "Infinity"
-  percent_rate     Float
+  id           Int    @id @default(autoincrement())
+  rule_id      Int
+  from_amount  Float
+  to_amount    Float? // Use null for "Infinity"
+  percent_rate Float
 
   rule LenderCommissionRule @relation(fields: [rule_id], references: [id], onDelete: Cascade)
 
@@ -1925,11 +1937,11 @@ model SalarySlipOcrResult {
   ocr_status OcrStatus @default(PENDING)
   source     String    @default("OCR") // OCR | MANUAL
 
-  gross_salary  Float?
-  net_salary    Float?
-  deductions    Float?
-  employer_name String?
-  employee_name String?
+  gross_salary           Float?
+  net_salary             Float?
+  deductions             Float?
+  employer_name          String?
+  employee_name          String?
   ocr_confidence         Float?
   pages_processed        Int?
   employee_pan           String?
@@ -1938,7 +1950,7 @@ model SalarySlipOcrResult {
   extraction_warnings    Json?
   extraction_source      String?
   salary_period          String?
-  deductions_is_derived  Boolean @default(false)
+  deductions_is_derived  Boolean  @default(false)
   name_match_status      String?
   pan_match_status       String?
 
@@ -2030,15 +2042,15 @@ model CommissionLedger {
 // ----------------------------------------------------------------------
 
 model SubDsaPayoutRule {
-  id                  Int     @id @default(autoincrement())
+  id                  Int       @id @default(autoincrement())
   tenant_id           Int
   sub_dsa_user_id     Int
   default_payout_rate Float
-  calculation_base    String  @default("DISBURSED_AMOUNT") // DISBURSED_AMOUNT | LENDER_COMMISSION
+  calculation_base    String    @default("DISBURSED_AMOUNT") // DISBURSED_AMOUNT | LENDER_COMMISSION
   payout_trigger      String
-  tds_applicable      Boolean @default(true)
-  status              String  @default("ACTIVE") // ACTIVE | ARCHIVED
-  effective_from      DateTime @default(now())
+  tds_applicable      Boolean   @default(true)
+  status              String    @default("ACTIVE") // ACTIVE | ARCHIVED
+  effective_from      DateTime  @default(now())
   effective_to        DateTime?
 
   overrides        SubDsaLenderOverride[]
@@ -2292,7 +2304,7 @@ model SalesIncentiveVolumeSlab {
 }
 
 model SalesIncentiveCaseCountSlab {
-  id              Int    @id @default(autoincrement())
+  id              Int   @id @default(autoincrement())
   rule_id         Int
   from_cases      Int
   to_cases        Int?
@@ -3039,4 +3051,169 @@ model VendorApiAuditLog {
   http_status            Int?
   error_category         String?
   created_at             DateTime  @default(now())
+}
+
+// --- Feedback / Support Ticket System ---
+// One "Submit Feedback" form (MSME self-service + DSA/staff) feeds this
+// unified model. FEEDBACK submissions get an auto-reply acknowledgement;
+// ISSUE submissions go through full status tracking. Both show up in the
+// admin panel with the same filtering/sorting/timeline treatment — the
+// ticket_number field is just labelled "Reference No." vs "Ticket No." in
+// the UI depending on `type`.
+
+enum TicketType {
+  FEEDBACK
+  ISSUE
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+// Discriminates each row in TicketTimelineEntry — the append-only log that
+// doubles as both the audit trail ("which admin took what action") and the
+// two-way reply thread with the submitter (via visible_to_submitter).
+enum TicketTimelineAction {
+  CREATED
+  STATUS_CHANGED
+  INTERNAL_NOTE
+  REPLIED_TO_SUBMITTER
+  SUBMITTER_REPLIED
+  MARKED_READ
+}
+
+enum TicketRecipientType {
+  TO
+  CC
+}
+
+model Ticket {
+  id            Int          @id @default(autoincrement())
+  ticket_number String       @unique
+  type          TicketType
+  status        TicketStatus @default(OPEN)
+  subject       String
+  description   String       @db.Text
+
+  tenant_id          Int
+  created_by_user_id Int
+  // Denormalized snapshot of req.user.role at submission time (e.g.
+  // 'MSME_CUSTOMER', 'DSA_MEMBER') — lets admin filter by submitter type
+  // without joining Role, and survives a user's role changing later.
+  created_by_role    String
+
+  // Unread tracking for the admin sidebar badge — deliberately separate from
+  // `status`. Only ever set by the explicit "Mark as read" action, never
+  // implicitly on open (see ticket.controller.js#markAsRead).
+  read_at         DateTime?
+  read_by_user_id Int?
+
+  resolved_at DateTime?
+  closed_at   DateTime?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  tenant     Tenant @relation(fields: [tenant_id], references: [id])
+  created_by User   @relation("TicketCreator", fields: [created_by_user_id], references: [id])
+  read_by    User?  @relation("TicketReader", fields: [read_by_user_id], references: [id])
+
+  attachments TicketAttachment[]
+  timeline    TicketTimelineEntry[]
+
+  @@index([status])
+  @@index([type])
+  @@index([created_by_user_id])
+  @@index([tenant_id])
+  @@index([read_at])
+  @@map("tickets")
+}
+
+model TicketAttachment {
+  id          Int      @id @default(autoincrement())
+  ticket_id   Int
+  storage_key String
+  file_name   String
+  mime_type   String
+  size_bytes  Int
+  created_at  DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticket_id], references: [id], onDelete: Cascade)
+
+  @@index([ticket_id])
+  @@map("ticket_attachments")
+}
+
+model TicketTimelineEntry {
+  id                   Int                  @id @default(autoincrement())
+  ticket_id            Int
+  action               TicketTimelineAction
+  from_status          TicketStatus?
+  to_status            TicketStatus?
+  note                 String?              @db.Text
+  // INTERNAL_NOTE entries are admin-only; REPLIED_TO_SUBMITTER (and CREATED/
+  // STATUS_CHANGED) are shown on the submitter's own ticket view.
+  visible_to_submitter Boolean              @default(false)
+  performed_by_user_id Int?
+  created_at           DateTime             @default(now())
+
+  ticket       Ticket @relation(fields: [ticket_id], references: [id], onDelete: Cascade)
+  performed_by User?  @relation("TicketActionPerformer", fields: [performed_by_user_id], references: [id])
+
+  @@index([ticket_id])
+  @@map("ticket_timeline_entries")
+}
+
+// The admin-editable To/Cc list for new-ticket email notifications (default
+// seed: contact@cred2tech.com as TO, bobby@/sunil@cred2tech.com as CC) — see
+// prisma/seed-ticket-recipients.js. Admin panel offers full CRUD over this.
+model TicketNotificationRecipient {
+  id    Int                 @id @default(autoincrement())
+  email String
+  type  TicketRecipientType
+  label String?
+
+  created_by_user_id Int?
+  created_at         DateTime @default(now())
+
+  created_by User? @relation("TicketRecipientCreator", fields: [created_by_user_id], references: [id])
+
+  @@unique([email, type])
+  @@map("ticket_notification_recipients")
+}
+
+// --- Case Journey Feedback ---
+// Prompted client-side right after a DSA's disbursement action actually
+// transitions a case's stage into PARTLY_DISBURSED or DISBURSED (see
+// disbursement.service.js's `stage_changed` flag) — not on every tranche,
+// and not on every page visit, just the one moment the milestone is first
+// reached. One row per (case, milestone) — a case that goes partial then
+// later fully disbursed can collect feedback at both moments.
+enum CaseFeedbackDisbursementType {
+  PARTIAL
+  FULL
+}
+
+model CaseFeedback {
+  id        Int                          @id @default(autoincrement())
+  case_id   Int
+  tenant_id Int
+  rating    Int // 1-5
+  comment   String?                      @db.Text
+  type      CaseFeedbackDisbursementType
+
+  submitted_by_user_id Int
+  created_at           DateTime @default(now())
+
+  case         Case   @relation(fields: [case_id], references: [id])
+  tenant       Tenant @relation(fields: [tenant_id], references: [id])
+  submitted_by User   @relation("CaseFeedbackSubmitter", fields: [submitted_by_user_id], references: [id])
+
+  @@unique([case_id, type])
+  @@index([tenant_id])
+  @@index([case_id])
+  @@map("case_feedback")
 }

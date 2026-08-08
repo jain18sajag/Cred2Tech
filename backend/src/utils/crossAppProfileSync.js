@@ -5,16 +5,17 @@ const SCHEME_API_URL = (process.env.SCHEME_API_URL || 'https://api.scheme.cred2t
 
 // Pushes whatever verified profile fields this app has for a mobile to
 // scheme.cred2tech.com's backend, so a borrower never has to re-type name/
-// DOB/PAN there just because they entered it here first. The signed SSO
-// token proves this call really is a legitimate cross-app push for this
-// mobile (same secret/mechanism as the SSO bootstrap cookie and sso-revoke)
-// — no separate credential, and the fields themselves ride in the body.
+// DOB/PAN/business details there just because they entered it here first.
+// The signed SSO token proves this call really is a legitimate cross-app
+// push for this mobile (same secret/mechanism as the SSO bootstrap cookie
+// and sso-revoke) — no separate credential, and the fields themselves ride
+// in the body.
 //
 // Best-effort and bounded: never throws, never blocks login longer than the
 // timeout — this is a nice-to-have prefill, not something login should ever
 // fail or slow down over.
-async function pushProfileToScheme(mobile, { name, dob, pan_number }) {
-  if (!name && !dob && !pan_number) return; // nothing worth sending
+async function pushProfileToScheme(mobile, { name, dob, pan_number, business_name, email, pincode }) {
+  if (!name && !dob && !pan_number && !business_name && !email && !pincode) return; // nothing worth sending
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 4000);
   try {
@@ -24,7 +25,7 @@ async function pushProfileToScheme(mobile, { name, dob, pan_number }) {
         Authorization: `Bearer ${signSsoToken(mobile)}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ name, dob, pan_number }),
+      body: JSON.stringify({ name, dob, pan_number, business_name, email, pincode }),
       signal: controller.signal,
     });
   } catch (err) {

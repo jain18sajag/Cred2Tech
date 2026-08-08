@@ -46,30 +46,23 @@ async function getBestUsableGstSnapshot({ tenantId, caseId, applicantId, gstin }
     }
 
     const rollingSnapshot = _buildRollingSnapshotFromRequest(bestRequest);
-    if (rollingSnapshot) {
-        return rollingSnapshot;
-    }
 
-    // Now fetch the parsed FY summaries
+    // Parsed per-FY summaries are fetched regardless of whether a rolling
+    // snapshot exists — they're the only source with a genuine previous-year
+    // figure. A rolling-window pull's own turnover_previous_year column is
+    // frequently never populated (extractGstFySnapshot only sets it when the
+    // vendor's Overview_Monthly report format was present at ingestion), so
+    // returning the rolling snapshot immediately silently discarded a real,
+    // already-parsed previous-year turnover sitting in
+    // gst_financial_year_summaries — this was the root cause of "Previous
+    // Year (FY 2024-25) ... Gross Turnover / Receipts as -" even after a
+    // successful GST pull with multiple FY rows on file.
     const summaries = await prisma.gstFinancialYearSummary.findMany({
         where: {
             gst_request_id: bestRequest.id,
             processing_version: bestRequest.processing_version
         }
     });
-
-    if (!summaries || summaries.length === 0) {
-        // Fallback for requests that haven't been processed by the new pipeline yet
-        return {
-            turnover_latest_year: bestRequest.turnover_latest_year,
-            turnover_previous_year: bestRequest.turnover_previous_year,
-            financial_year_latest: bestRequest.financial_year_latest,
-            financial_year_previous: bestRequest.financial_year_previous,
-            avg_monthly_turnover: bestRequest.avg_monthly_turnover,
-            months_filed_12m: bestRequest.months_filed_12m,
-            nil_return_months: bestRequest.nil_return_months
-        };
-    }
 
     // Group by FY, pick the best source
     const bestByFy = {};
@@ -88,8 +81,42 @@ async function getBestUsableGstSnapshot({ tenantId, caseId, applicantId, gstin }
         }
     }
 
-    // Sort FYs descending (e.g., FY 2023-24 > FY 2022-23)
+    // Sort FYs descending (e.g., FY 2023-24 > FY 2022-23), and only consider
+    // an FY "meaningful" (usable as a whole-year comparison figure) once at
+    // least half of it has been filed — the most recent FY in this list is
+    // often the still-in-progress current year (e.g. 2-3 months filed),
+    // which is not what "previous year" turnover should ever resolve to.
     const sortedFys = Object.values(bestByFy).sort((a, b) => b.financial_year.localeCompare(a.financial_year));
+    const meaningfulFys = sortedFys.filter(s => (s.months_filed || 0) >= 6);
+
+    if (rollingSnapshot) {
+        if (rollingSnapshot.turnover_previous_year == null && meaningfulFys.length > 0) {
+            // meaningfulFys[0] is the most recent substantially-complete FY,
+            // which is what the rolling snapshot's own turnover_latest_year
+            // already represents (just computed a different way, over a
+            // rolling window rather than a strict FY) — the entry after it
+            // is the actual previous year to backfill.
+            const previousFy = meaningfulFys.length > 1 ? meaningfulFys[1] : null;
+            if (previousFy) {
+                rollingSnapshot.turnover_previous_year = previousFy.turnover;
+                rollingSnapshot.financial_year_previous = rollingSnapshot.financial_year_previous || previousFy.financial_year;
+            }
+        }
+        return rollingSnapshot;
+    }
+
+    if (!summaries || summaries.length === 0) {
+        // Fallback for requests that haven't been processed by the new pipeline yet
+        return {
+            turnover_latest_year: bestRequest.turnover_latest_year,
+            turnover_previous_year: bestRequest.turnover_previous_year,
+            financial_year_latest: bestRequest.financial_year_latest,
+            financial_year_previous: bestRequest.financial_year_previous,
+            avg_monthly_turnover: bestRequest.avg_monthly_turnover,
+            months_filed_12m: bestRequest.months_filed_12m,
+            nil_return_months: bestRequest.nil_return_months
+        };
+    }
 
     if (sortedFys.length === 0) return null;
 

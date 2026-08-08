@@ -40,15 +40,20 @@ async function recordDisbursementOnce(caseId, tenantId, payload, userId, idempot
         // 1. Idempotency Check
         if (idempotencyKey) {
             const existing = await tx.disbursement.findFirst({
-                where: { 
-                    tenant_id: tenantId, 
-                    case_id: caseId, 
-                    idempotency_key: idempotencyKey 
+                where: {
+                    tenant_id: tenantId,
+                    case_id: caseId,
+                    idempotency_key: idempotencyKey
                 }
             });
             if (existing) {
                 console.log(`[DISBURSEMENT] Idempotency hit for key: ${idempotencyKey}`);
-                return existing;
+                // A retried request that hit the same tranche already recorded —
+                // the case's stage transition already happened (and any feedback
+                // popup already fired) on the original request, so stage_changed
+                // is always false here regardless of the case's current stage.
+                const currentCase = await tx.case.findUnique({ where: { id: caseId }, select: { stage: true } });
+                return { ...existing, stage: currentCase?.stage, stage_changed: false };
             }
         }
 
@@ -169,7 +174,12 @@ async function recordDisbursementOnce(caseId, tenantId, payload, userId, idempot
         // 9. Synchronous Commission Execution
         await processDisbursementCommission(tenantId, caseId, disbursement, sanction, userId, tx);
 
-        return disbursement;
+        // stage_changed lets the frontend show the case-journey feedback
+        // popup exactly once per transition into PARTLY_DISBURSED/DISBURSED —
+        // not on every tranche (a case can take several partial tranches
+        // before reaching either milestone; only the tranche that actually
+        // crosses into a new stage should prompt for feedback).
+        return { ...disbursement, stage: newStage, stage_changed: existingCase.stage !== newStage };
     }, {
         // Read-Committed (the default) lets two concurrent tranches both read
         // the same pre-insert total and both pass the remaining-amount check,

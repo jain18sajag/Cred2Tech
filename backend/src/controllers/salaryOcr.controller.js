@@ -2,6 +2,7 @@ const fs = require('fs');
 const prisma = require('../../config/db');
 const { sendCaughtError } = require('../utils/sendError');
 const documentService = require('../services/document.service');
+const { markEsrInputsChanged } = require('../services/esrSnapshotMutation.service');
 const {
     processSalarySlipSync,
     processSalarySlipBatchSync,
@@ -52,11 +53,19 @@ async function applySalaryOcrResult(record, ocrResultData) {
             year: targetYear,
             NOT: { id: record.id }
         },
-        select: { id: true }
+        select: { id: true, ocr_status: true, document: { select: { original_file_name: true } } }
     });
 
     if (duplicate) {
-        const errorMessage = `Duplicate salary period ${targetYear}-${targetMonth} for applicant ${record.applicant_id}.`;
+        // Names the conflicting file/slot — without this, the only signal was
+        // "Duplicate salary period 2025-10", which gives no way to tell which
+        // of the other slots already has it (worse once a slot could be
+        // sitting there PENDING/unprocessed and easy to miss — see
+        // SalarySlipUploader.jsx's fetchSummary fix).
+        const conflictDesc = duplicate.document?.original_file_name
+            ? ` — already uploaded as "${duplicate.document.original_file_name}"${duplicate.ocr_status !== 'COMPLETED' ? ` (${duplicate.ocr_status.toLowerCase()})` : ''}.`
+            : '.';
+        const errorMessage = `Duplicate salary period ${targetYear}-${targetMonth} for applicant ${record.applicant_id}${conflictDesc}`;
         await prisma.salarySlipOcrResult.update({
             where: { id: record.id },
             data: {
@@ -520,6 +529,12 @@ async function recalculateApplicantIncome(tenant_id, case_id, applicant_id) {
                 remarks: { contains: 'salary slip', mode: 'insensitive' }
             }
         });
+        // Salary income feeds ESR — invalidate the cached snapshot so it
+        // re-extracts rather than continuing to show a figure derived from a
+        // slip that's now gone. This function is the single place every
+        // salary-slip upload/delete path (including deleteSalarySlip) funnels
+        // through, so fixing it here covers all of them.
+        await markEsrInputsChanged(prisma, parseInt(case_id));
         return;
     }
 
@@ -562,6 +577,8 @@ async function recalculateApplicantIncome(tenant_id, case_id, applicant_id) {
             }
         });
     }
+
+    await markEsrInputsChanged(prisma, parseInt(case_id));
 }
 
 /**
@@ -628,7 +645,6 @@ async function deleteSalarySlip(req, res) {
             where: { id: parseInt(caseId), tenant_id }
         });
         if (!caseRecord) return res.status(404).json({ error: 'Case not found or unauthorized.' });
-        if (caseRecord.is_locked) return res.status(400).json({ error: 'Case is locked and cannot be modified.' });
 
         const document = await prisma.document.findFirst({
             where: {
