@@ -1,9 +1,17 @@
 const directCustomerService = require('../services/direct.customer.service');
 const { sendCaughtError } = require('../utils/sendError');
+const { syncProfileToScheme } = require('../services/direct.customer.auth.service');
 
 async function getDashboard(req, res) {
   try {
     const result = await directCustomerService.getDashboard(req.user.id);
+    // Self-healing catch-up for accounts whose PAN was verified BEFORE the
+    // sync-on-verify trigger existed (or whose earlier push attempt failed) —
+    // re-verifying an already-verified PAN is blocked, so those accounts would
+    // otherwise never sync. Dashboard load is the one place every such user
+    // reliably passes through again. Best-effort/idempotent: ssoProfileSync on
+    // the receiving end only ever fills currently-empty fields.
+    syncProfileToScheme(req.user.id).catch(() => {});
     return res.status(200).json(result);
   } catch (err) {
     sendCaughtError(res, err, 'Failed to fetch dashboard');
