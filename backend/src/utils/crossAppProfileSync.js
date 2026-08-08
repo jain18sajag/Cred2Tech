@@ -14,7 +14,13 @@ const SCHEME_API_URL = (process.env.SCHEME_API_URL || 'https://api.scheme.cred2t
 // Best-effort and bounded: never throws, never blocks login longer than the
 // timeout — this is a nice-to-have prefill, not something login should ever
 // fail or slow down over.
-async function pushProfileToScheme(mobile, { name, dob, pan_number, business_name, email, pincode }) {
+async function pushProfileToScheme(mobile, profile) {
+  const {
+    name, dob, pan_number, business_name, email, pincode,
+    pan_verified, gstin, constitution_of_business, legal_name, trade_name,
+    principal_state, principal_city, principal_pincode, principal_address,
+    director_names, annual_turnover_range,
+  } = profile;
   if (!name && !dob && !pan_number && !business_name && !email && !pincode) return; // nothing worth sending
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 4000);
@@ -25,7 +31,12 @@ async function pushProfileToScheme(mobile, { name, dob, pan_number, business_nam
         Authorization: `Bearer ${signSsoToken(mobile)}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ name, dob, pan_number, business_name, email, pincode }),
+      body: JSON.stringify({
+        name, dob, pan_number, business_name, email, pincode,
+        pan_verified, gstin, constitution_of_business, legal_name, trade_name,
+        principal_state, principal_city, principal_pincode, principal_address,
+        director_names, annual_turnover_range,
+      }),
       signal: controller.signal,
     });
   } catch (err) {

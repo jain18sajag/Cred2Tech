@@ -128,7 +128,27 @@ model User {
   synced_business_name String?
   synced_email         String?
   synced_pincode       String?
-  locked_until         DateTime?
+
+  // Real, GST-verified PAN intelligence scheme.cred2tech.com already paid
+  // for (its msme_businesses record) — as opposed to the plain identity
+  // hints above. When these are present at PAN-verify time (and the PAN
+  // matches), /external/pan/verify and /external/pan/fetch use this data
+  // directly instead of re-billing Signzy for a PAN already verified on the
+  // sibling app. `synced_pan_verified` gates that short-circuit; false/unset
+  // means "no trustworthy cross-app verification yet," same fill-only-when-
+  // empty rule as the rest of this cache.
+  synced_pan_verified             Boolean  @default(false)
+  synced_gstin                    String?
+  synced_constitution_of_business String?
+  synced_legal_name               String?
+  synced_trade_name               String?
+  synced_principal_state          String?
+  synced_principal_city           String?
+  synced_principal_address        String?
+  synced_director_names           Json?
+  synced_annual_turnover_range    String?
+
+  locked_until DateTime?
 
   role         Role   @relation(fields: [role_id], references: [id])
   tenant       Tenant @relation(fields: [tenant_id], references: [id])

@@ -111,6 +111,106 @@ exports.fetchPanIntelligence = async (req, res) => {
             });
         }
 
+        // Cross-app short-circuit: scheme.cred2tech.com may have already run
+        // this exact PAN through its own paid GST lookup for this same MSME
+        // customer — use that data as fact instead of re-billing Signzy for
+        // it. Only for MSME self-service customers verifying their own PAN
+        // (never a co-applicant/DSA-entered PAN, which this cache has no
+        // knowledge of).
+        if (req.user.role === 'MSME_CUSTOMER') {
+            const requestingUser = await prisma.user.findUnique({ where: { id: userId } });
+            const normalizedPan = String(pan).trim().toUpperCase();
+            if (
+                requestingUser?.synced_pan_verified &&
+                requestingUser.synced_pan_number &&
+                requestingUser.synced_pan_number.toUpperCase() === normalizedPan
+            ) {
+                const gstin = requestingUser.synced_gstin || null;
+                const constitutionOfBusiness = requestingUser.synced_constitution_of_business || null;
+                const legalName = requestingUser.synced_legal_name || null;
+                const tradeName = requestingUser.synced_trade_name || null;
+                const principalState = requestingUser.synced_principal_state || null;
+                const principalCity = requestingUser.synced_principal_city || null;
+                const principalAddress = requestingUser.synced_principal_address || null;
+                const directorNames = requestingUser.synced_director_names || null;
+                const annualTurnoverRange = requestingUser.synced_annual_turnover_range || null;
+
+                const syntheticRawResponse = { source: 'cross_app_sync', synced_from: 'scheme.cred2tech.com', synced_at: new Date().toISOString() };
+
+                const profile = await prisma.customerPanProfile.upsert({
+                    where: { pan },
+                    update: {
+                        gstin, constitution_of_business: constitutionOfBusiness, legal_name: legalName,
+                        trade_name: tradeName, principal_state: principalState, principal_city: principalCity,
+                        principal_address: principalAddress, director_names: directorNames || null,
+                        annual_turnover_range: annualTurnoverRange, raw_response: syntheticRawResponse
+                    },
+                    create: {
+                        customer_id, pan, gstin, constitution_of_business: constitutionOfBusiness,
+                        legal_name: legalName, trade_name: tradeName, principal_state: principalState,
+                        principal_city: principalCity, principal_address: principalAddress,
+                        director_names: directorNames || null, annual_turnover_range: annualTurnoverRange,
+                        raw_response: syntheticRawResponse
+                    }
+                });
+
+                let gstRecords = [];
+                await prisma.customerPanGstinRecord.deleteMany({ where: { pan_profile_id: profile.id } });
+                if (gstin) {
+                    gstRecords = [{ pan_profile_id: profile.id, gstin, registration_name: legalName || tradeName, status: null }];
+                    await prisma.customerPanGstinRecord.createMany({ data: gstRecords });
+
+                    try {
+                        const existingGst = await prisma.customerGSTProfile.findFirst({ where: { gstin, customer_id } });
+                        const gstData = {
+                            customer_id, gstin, filing_status: 'Active', last_filed_period: 'NA',
+                            annual_turnover: 0, raw_response: { source: 'cross_app_sync' }
+                        };
+                        if (existingGst) {
+                            await prisma.customerGSTProfile.update({ where: { id: existingGst.id }, data: gstData });
+                        } else {
+                            await prisma.customerGSTProfile.create({ data: gstData });
+                        }
+                    } catch (gstErr) {
+                        console.error('[PAN] Failed to sync legacy GST Profile (cross-app):', gstErr.message);
+                    }
+                }
+
+                const resolvedBusinessName = tradeName || legalName;
+                await prisma.customer.update({
+                    where: { id: customer_id },
+                    data: {
+                        legal_business_name: legalName || customer.legal_business_name,
+                        trade_name: tradeName || customer.trade_name,
+                        business_name: resolvedBusinessName || customer.business_name,
+                        business_name_source: resolvedBusinessName ? (tradeName ? 'GST_TRADE_NAME' : 'GST_LEGAL_NAME') : customer.business_name_source,
+                        entity_type: constitutionOfBusiness || customer.entity_type
+                    }
+                });
+
+                const { syncCustomerSnapshots } = require('../services/case.service');
+                syncCustomerSnapshots(customer_id, tenantId).catch(err => console.error('Snapshot sync failed:', err));
+
+                if (case_id) {
+                    await prisma.caseDataPullStatus.upsert({
+                        where: { case_id },
+                        update: { pan_status: 'COMPLETE' },
+                        create: { case_id, pan_status: 'COMPLETE' }
+                    });
+                }
+
+                return res.json({
+                    status: "SUCCESS",
+                    gstin,
+                    constitution_of_business: constitutionOfBusiness,
+                    director_names: directorNames,
+                    turnover_range: annualTurnoverRange,
+                    gst_records: gstRecords,
+                    raw_response: syntheticRawResponse
+                });
+            }
+        }
+
         // Clear past FAILED logs for this exact idempotency key so users aren't permanently locked out from retrying after a bad provider API request
         await prisma.apiUsageLog.deleteMany({
             where: {
@@ -456,10 +556,36 @@ exports.verifyPan = async (req, res) => {
             }
         }
 
+        // Cross-app short-circuit: scheme.cred2tech.com may have already
+        // Signzy-verified this exact PAN for this same MSME customer — use
+        // that as fact instead of re-billing for a call we don't need to
+        // make. Only for the primary applicant's own PAN (never a
+        // co-applicant, which this cache has no knowledge of).
+        let crossAppResult = null;
+        if (!is_coapplicant && req.user.role === 'MSME_CUSTOMER') {
+            const requestingUser = await prisma.user.findUnique({ where: { id: userId } });
+            if (
+                requestingUser?.synced_pan_verified &&
+                requestingUser.synced_pan_number &&
+                requestingUser.synced_pan_number.toUpperCase() === normalizedPanForCheck
+            ) {
+                const isPlaceholderName = requestingUser.name === `Customer_${requestingUser.mobile}`;
+                crossAppResult = {
+                    status: "SUCCESS",
+                    name: requestingUser.synced_legal_name || requestingUser.synced_trade_name
+                        || (!isPlaceholderName ? requestingUser.name : null),
+                    dob: requestingUser.synced_dob || null,
+                    panStatus: 'VERIFIED_VIA_SIBLING_APP',
+                    rawResponse: { source: 'cross_app_sync', synced_from: 'scheme.cred2tech.com' }
+                };
+            }
+        }
+
         const idempotencyKey = `SIGNZY_PAN_${customer_id}_${pan}`;
-        
-        // Execute paid API wrapper using PAN_FETCH billing bucket for now
-        const result = await executePaidApi({
+
+        // Execute paid API wrapper using PAN_FETCH billing bucket for now —
+        // skipped entirely when crossAppResult already answered it for free.
+        const result = crossAppResult || await executePaidApi({
             apiCode: 'PAN_FETCH',
             tenantId,
             userId,
@@ -470,7 +596,7 @@ exports.verifyPan = async (req, res) => {
             userRole: req.user.role,
             handlerFunction: async () => {
                 const apiResponse = await signzyService.verifyPanSimple(pan);
-                
+
                 return {
                    status: "SUCCESS",
                    name: apiResponse.name,

@@ -137,8 +137,16 @@ async function ssoProfileSync(req, res) {
       return res.status(401).json({ success: false, error: 'Invalid or expired sync token' });
     }
 
-    const { name, dob, pan_number, business_name, email, pincode } = req.body || {};
-    const result = await directCustomerAuthService.ssoProfileSync(mobile, { name, dob, pan_number, business_name, email, pincode });
+    const {
+      name, dob, pan_number, business_name, email, pincode,
+      pan_verified, gstin, constitution_of_business, legal_name, trade_name,
+      principal_state, principal_city, principal_address, director_names, annual_turnover_range,
+    } = req.body || {};
+    const result = await directCustomerAuthService.ssoProfileSync(mobile, {
+      name, dob, pan_number, business_name, email, pincode,
+      pan_verified, gstin, constitution_of_business, legal_name, trade_name,
+      principal_state, principal_city, principal_address, director_names, annual_turnover_range,
+    });
     return res.status(200).json(result);
   } catch (err) {
     sendCaughtError(res, err, 'Failed to process cross-app profile sync');

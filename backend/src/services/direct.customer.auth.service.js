@@ -109,27 +109,46 @@ async function findOrCreateAndIssueToken(mobile) {
 // business_name/email/pincode are plain prefill hints (same trust level as
 // the sibling app's own synced_business_name/email/synced_pincode cache) —
 // pulled from whatever case this customer has going, verified or not.
+//
+// `pan_verified` plus the GST fields below are the ACTUAL Signzy-verified
+// PAN/GST intelligence this app already paid for (CustomerPanProfile) — the
+// sibling app uses these to provision a verified business record directly,
+// instead of re-billing its own vendor call for a PAN we've already checked.
 async function gatherVerifiedProfile(user) {
   const latestCase = await prisma.case.findFirst({
     where: { msme_customer_user_id: user.id },
     orderBy: { created_at: 'desc' },
     include: {
-      customer: true,
+      customer: { include: { pan_profiles: true } },
       applicants: { where: { is_primary: true }, take: 1 }
     }
   });
   const applicant = latestCase?.applicants?.[0];
   const verifiedApplicant = applicant?.pan_verified ? applicant : null;
   const customer = latestCase?.customer;
+  const panProfile = verifiedApplicant
+    ? customer?.pan_profiles?.find(p => p.pan === verifiedApplicant.pan_number)
+    : null;
 
   const isPlaceholderName = user.name === `Customer_${user.mobile}`;
   return {
     name: !isPlaceholderName ? user.name : (verifiedApplicant?.pan_verified_name || null),
     dob: verifiedApplicant?.pan_verified_dob || null,
     pan_number: verifiedApplicant?.pan_number || null,
+    pan_verified: !!verifiedApplicant,
     business_name: customer?.legal_business_name || customer?.business_name || null,
     email: customer?.business_email || null,
-    pincode: applicant?.pincode || null,
+    pincode: applicant?.pincode || panProfile?.principal_pincode || null,
+    gstin: panProfile?.gstin || null,
+    constitution_of_business: panProfile?.constitution_of_business || null,
+    legal_name: panProfile?.legal_name || null,
+    trade_name: panProfile?.trade_name || null,
+    principal_state: panProfile?.principal_state || null,
+    principal_city: panProfile?.principal_city || null,
+    principal_pincode: panProfile?.principal_pincode || null,
+    principal_address: panProfile?.principal_address || null,
+    director_names: panProfile?.director_names || null,
+    annual_turnover_range: panProfile?.annual_turnover_range || null,
   };
 }
 
@@ -274,7 +293,11 @@ const directCustomerAuthService = {
   // whatever the sibling app sends. business_name/email/pincode land in the
   // synced_* cache (never a live Customer/Applicant record) — same "prefill,
   // not fact" trust level as synced_dob/synced_pan_number above.
-  ssoProfileSync: async (mobile, { name, dob, pan_number, business_name, email, pincode }) => {
+  ssoProfileSync: async (mobile, {
+    name, dob, pan_number, business_name, email, pincode,
+    pan_verified, gstin, constitution_of_business, legal_name, trade_name,
+    principal_state, principal_city, principal_address, director_names, annual_turnover_range,
+  }) => {
     const user = await findOrCreateUser(mobile);
     const isPlaceholderName = user.name === `Customer_${mobile}`;
 
@@ -285,6 +308,35 @@ const directCustomerAuthService = {
     if (business_name && !user.synced_business_name) data.synced_business_name = business_name;
     if (email && !user.synced_email) data.synced_email = email;
     if (pincode && !user.synced_pincode) data.synced_pincode = pincode;
+
+    // Real, GST-verified PAN intelligence scheme.cred2tech.com already paid
+    // for — cached so /external/pan/verify and /external/pan/fetch can use
+    // it directly instead of re-billing Signzy for the same PAN. Fill-only-
+    // if-empty per field, same as everything above: this app's own
+    // verification always wins, and synced_pan_verified never flips
+    // true→false. Deliberately NOT gated on "only if not already
+    // synced_pan_verified" — PAN-verify and GST-fetch happen as two separate
+    // steps on the sibling app and each pushes separately; the first push
+    // sets synced_pan_verified with no GST fields yet, and the second push's
+    // richer GST data must still land instead of being dropped as "already
+    // synced."
+    if (
+      pan_verified && pan_number &&
+      (!user.synced_pan_number || user.synced_pan_number.toUpperCase() === pan_number.toUpperCase())
+    ) {
+      if (!user.synced_pan_verified) data.synced_pan_verified = true;
+      if (!user.synced_pan_number) data.synced_pan_number = pan_number;
+      if (dob && !user.synced_dob) data.synced_dob = dob;
+      if (gstin && !user.synced_gstin) data.synced_gstin = gstin;
+      if (constitution_of_business && !user.synced_constitution_of_business) data.synced_constitution_of_business = constitution_of_business;
+      if (legal_name && !user.synced_legal_name) data.synced_legal_name = legal_name;
+      if (trade_name && !user.synced_trade_name) data.synced_trade_name = trade_name;
+      if (principal_state && !user.synced_principal_state) data.synced_principal_state = principal_state;
+      if (principal_city && !user.synced_principal_city) data.synced_principal_city = principal_city;
+      if (principal_address && !user.synced_principal_address) data.synced_principal_address = principal_address;
+      if (director_names && !user.synced_director_names) data.synced_director_names = director_names;
+      if (annual_turnover_range && !user.synced_annual_turnover_range) data.synced_annual_turnover_range = annual_turnover_range;
+    }
 
     if (Object.keys(data).length > 0) {
       await prisma.user.update({ where: { id: user.id }, data });
