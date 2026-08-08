@@ -476,7 +476,7 @@ async function listEmployeesWithConfig(tenantId) {
     where: { tenant_id: tenantId, status: 'ACTIVE', role: { name: { notIn: ['SUB_DSA', 'CUSTOMER', 'MSME_CUSTOMER'] } } },
     select: { id: true, name: true, email: true, hierarchy_level: true, status: true }
   });
-  const activeRules = await prisma.salesIncentiveRule.findMany({ where: { tenant_id: tenantId, status: ACTIVE } });
+  const activeRules = await prisma.salesIncentiveRule.findMany({ where: { tenant_id: tenantId, status: 'ACTIVE' } });
   return users.map(user => ({ ...user, rules_configured: activeRules.filter(r => r.hierarchy_level === user.hierarchy_level).length }));
 }
 

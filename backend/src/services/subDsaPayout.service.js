@@ -602,7 +602,10 @@ async function listSubDsaUsers(tenantId) {
     where: { tenant_id: tenantId, role: { name: 'SUB_DSA' } },
     select: {
       id: true, name: true, email: true, mobile: true, status: true, created_at: true,
-      sub_dsa_payout_rule: { select: { default_payout_rate: true, payout_trigger: true, tds_applicable: true } }
+      sub_dsa_payout_rule: { 
+        where: { status: 'ACTIVE' },
+        select: { default_payout_rate: true, payout_trigger: true, tds_applicable: true } 
+      }
     }
   });
 }
