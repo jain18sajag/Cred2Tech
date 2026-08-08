@@ -133,6 +133,20 @@ async function gatherVerifiedProfile(user) {
   };
 }
 
+// Re-pushes this MSME customer's profile to scheme.cred2tech.com the moment
+// new verified data (PAN, GST-derived business name, etc.) actually lands —
+// findOrCreateAndIssueToken's push only fires once, at login, which for a
+// brand-new signup is BEFORE any of this exists (no case yet). Without this,
+// PAN entered on this app mid-session never reaches the sibling app until
+// the next login, so scheme.cred2tech.com keeps re-asking for it. Best-effort
+// and bounded, same as the login-time push — never throws into the caller.
+async function syncProfileToScheme(userId) {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user || !user.mobile) return;
+  const profile = await gatherVerifiedProfile(user);
+  await pushProfileToScheme(user.mobile, profile);
+}
+
 // Revokes every active session for a local user id — used by both a direct
 // logout and a cross-app sso-revoke call (looked up by mobile first there).
 async function revokeSessionsForUserId(userId) {
@@ -280,3 +294,4 @@ const directCustomerAuthService = {
 };
 
 module.exports = directCustomerAuthService;
+module.exports.syncProfileToScheme = syncProfileToScheme;

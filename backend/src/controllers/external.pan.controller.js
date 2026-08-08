@@ -3,6 +3,7 @@ const { executePaidApi } = require('../services/wallet.service');
 const panService = require('../services/externalApis/pan.service');
 const signzyService = require('../services/externalApis/signzy.service');
 const { logSensitiveAccess } = require('../utils/auditLog');
+const { syncProfileToScheme } = require('../services/direct.customer.auth.service');
 
 // A GST registration still awaiting approval only has a TRN (Temporary Reference
 // Number), not a real legal/trade name yet — some vendor responses put that TRN
@@ -319,6 +320,12 @@ exports.fetchPanIntelligence = async (req, res) => {
                 const { syncCustomerSnapshots } = require('../services/case.service');
                 syncCustomerSnapshots(customer_id, tenantId).catch(err => console.error('Snapshot sync failed:', err));
 
+                // GST-derived business name just landed — push it to
+                // scheme.cred2tech.com now instead of waiting for next login.
+                if (req.user.role === 'MSME_CUSTOMER') {
+                    syncProfileToScheme(userId).catch(err => console.error('Cross-app profile sync failed:', err));
+                }
+
                 return {
                    apiResponse, 
                    gstRecords,
@@ -539,6 +546,12 @@ exports.verifyPan = async (req, res) => {
             // Sync Case snapshot
             const { syncCustomerSnapshots } = require('../services/case.service');
             syncCustomerSnapshots(customer_id, tenantId).catch(err => console.error('Snapshot sync failed:', err));
+
+            // Primary applicant's PAN just got verified — push it to
+            // scheme.cred2tech.com now instead of waiting for next login.
+            if (req.user.role === 'MSME_CUSTOMER') {
+                syncProfileToScheme(userId).catch(err => console.error('Cross-app profile sync failed:', err));
+            }
         }
 
         res.json(result);
