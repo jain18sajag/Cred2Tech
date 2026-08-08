@@ -787,6 +787,12 @@ export default function DsaTeamManagementPage() {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   <RoleBadge roleName="SUB_DSA" />
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); setEditingUser(u); }} 
+                    style={{ background: 'none', border: 'none', padding: '6px 12px', fontSize: 13, color: '#374151', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+                  >
+                    <Edit2 size={12} /> Edit User
+                  </button>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#7C3AED', fontWeight: 600 }}>
                     <Settings size={14} />
                     {expandedSubDsa[u.id] ? 'Hide' : 'Configure'} Payout

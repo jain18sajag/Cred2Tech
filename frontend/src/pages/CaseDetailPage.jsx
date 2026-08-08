@@ -980,7 +980,7 @@ export default function CaseDetailPage() {
                       <input
                         type="text"
                         value={disbursementSummary?.sanction?.loan_account_number || disbursementForm.loan_account_number || ''}
-                        disabled={!!disbursementSummary?.sanction?.loan_account_number || selectedStage === 'DISBURSED'}
+                        disabled={!!disbursementSummary?.sanction?.loan_account_number}
                         onChange={(e) => setDisbursementForm({ ...disbursementForm, loan_account_number: e.target.value })}
                         placeholder="e.g. LN123456789"
                         style={{ width: '100%', padding: '12px 14px', borderRadius: 10, border: '1.5px solid #FED7AA', fontSize: 15, outline: 'none', marginBottom: 16 }}
