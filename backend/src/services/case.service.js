@@ -97,10 +97,6 @@ async function createCase(customer_id, product_type, tenant_id, user_id) {
         where: { id: unlinkedPayment.id },
         data: { case_id: newCase.id }
       });
-      await prisma.case.update({
-        where: { id: newCase.id },
-        data: { case_payment_id: unlinkedPayment.id }
-      });
     }
   }
 

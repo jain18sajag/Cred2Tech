@@ -35,7 +35,7 @@ const directCustomerService = {
       }
     });
 
-    const [activeCases, unlinkedPayment, allCases] = await Promise.all([
+    const [nonTerminalCases, unlinkedPayment, allCases] = await Promise.all([
       prisma.case.findMany({
         where: {
           msme_customer_user_id: userId,
@@ -59,7 +59,19 @@ const directCustomerService = {
       prisma.case.findMany({ where: { msme_customer_user_id: userId }, select: { customer_id: true, created_at: true }, orderBy: { created_at: 'desc' } })
     ]);
 
-    const activeCase = dedupeByCustomer(activeCases)[0] || null;
+    // The dashboard's "your active case" summary should keep showing the
+    // customer's latest non-terminal case regardless of submission status —
+    // they still want to see it while a DSA/admin is working it.
+    const activeCase = dedupeByCustomer(nonTerminalCases)[0] || null;
+    // Payment gating is a stricter question: "is there a case I can still
+    // resume paying for, without charging again?" Only a case still being
+    // filled out in the wizard (never submitted) qualifies — once the
+    // customer hits Submit, msme_submitted_at is set and the case moves
+    // into the DSA/admin pipeline. Without this distinction, an old
+    // already-submitted case's PAID CasePayment gets reused as the
+    // paymentStatus source of truth forever, so a genuinely new case the
+    // customer starts afterwards never gets charged.
+    const resumableCase = activeCase && !activeCase.msme_submitted_at ? activeCase : null;
     const totalCasesCount = dedupeByCustomer(allCases).length;
 
     let paymentStatus = 'UNPAID';
@@ -68,13 +80,18 @@ const directCustomerService = {
     if (unlinkedPayment) {
       paymentStatus = 'PAID';
       responseActiveCase = null;
-    } else if (activeCase && activeCase.case_payment?.status === 'PAID') {
+    } else if (resumableCase && resumableCase.case_payment?.status === 'PAID') {
       paymentStatus = 'PAID';
     }
 
     return {
       user,
       activeCase: responseActiveCase,
+      // Case a fresh payment order (or the wizard's business-details save)
+      // should attach to — null once the customer's existing case has been
+      // submitted, so a new payment/case is started instead of silently
+      // reusing the finished one.
+      resumableCase: unlinkedPayment ? null : resumableCase,
       paymentStatus,
       emptyState: !responseActiveCase,
       totalCasesCount
@@ -156,7 +173,11 @@ const directCustomerService = {
     }
 
     const config = await directCustomerService.getPaymentConfig();
-    const activeCaseId = dashboard.activeCase ? dashboard.activeCase.id : null;
+    // Only attach this new payment to an existing case if that case is
+    // still resumable (unsubmitted) — never to an already-submitted one,
+    // otherwise a fresh charge for what the customer intends as a new case
+    // silently gets tied back to their old, finished application.
+    const activeCaseId = dashboard.resumableCase ? dashboard.resumableCase.id : null;
     const receipt = `msme_${userId}_${Date.now()}`;
     const order = await razorpayService.createOrder(config.amount_paise, receipt, 'INR');
 
@@ -244,10 +265,10 @@ const directCustomerService = {
       throw new Error("Payment required to open eligibility form");
     }
     
-    if (dashboard.activeCase) {
+    if (dashboard.resumableCase) {
       await prisma.activityLog.create({
         data: {
-          case_id: dashboard.activeCase.id,
+          case_id: dashboard.resumableCase.id,
           activity_type: 'ELIGIBILITY_FORM_STARTED',
           description: 'User resumed the eligibility form',
           performed_by_user_id: userId
@@ -255,7 +276,7 @@ const directCustomerService = {
       });
     }
     
-    return dashboard.activeCase;
+    return dashboard.resumableCase;
   },
 
   updateBusinessDetails: async (userId, data) => {
@@ -267,7 +288,7 @@ const directCustomerService = {
       throw new Error("Payment required to save business details");
     }
 
-    let activeCase = dashboard.activeCase;
+    let activeCase = dashboard.resumableCase;
 
     // Delayed Creation: Create Customer and Case if they don't exist yet
     if (!activeCase) {
@@ -376,7 +397,7 @@ const directCustomerService = {
 
   updateLoanDetails: async (userId, data) => {
     const dashboard = await directCustomerService.getDashboard(userId);
-    const activeCase = dashboard.activeCase;
+    const activeCase = dashboard.resumableCase;
     if (!activeCase) throw new Error("No active case found. Please complete business details first.");
 
     await prisma.case.update({
@@ -402,7 +423,7 @@ const directCustomerService = {
 
   runEligibility: async (userId) => {
     const dashboard = await directCustomerService.getDashboard(userId);
-    const activeCase = dashboard.activeCase;
+    const activeCase = dashboard.resumableCase;
     
     if (!activeCase) throw new Error("No active case found to run ESR");
     if (dashboard.paymentStatus !== 'PAID') {
@@ -431,10 +452,10 @@ const directCustomerService = {
 
   getEligibilityResult: async (userId) => {
     const dashboard = await directCustomerService.getDashboard(userId);
-    if (!dashboard.activeCase) throw new Error("No active case found");
+    if (!dashboard.resumableCase) throw new Error("No active case found");
 
     return await prisma.eligibilityReport.findFirst({
-      where: { case_id: dashboard.activeCase.id },
+      where: { case_id: dashboard.resumableCase.id },
       orderBy: { created_at: 'desc' },
       include: {
         lenders: true
@@ -444,7 +465,7 @@ const directCustomerService = {
 
   selectLender: async (userId, esrLenderId) => {
     const dashboard = await directCustomerService.getDashboard(userId);
-    const activeCase = dashboard.activeCase;
+    const activeCase = dashboard.resumableCase;
     if (!activeCase) throw new Error("No active case found");
 
     const esrLender = await prisma.eligibilityReportLender.findFirst({
@@ -481,8 +502,8 @@ const directCustomerService = {
     // Fallback to active case if caseId is not provided
     if (!targetCaseId) {
       const dashboard = await directCustomerService.getDashboard(userId);
-      if (!dashboard.activeCase) throw new Error("No active case found");
-      targetCaseId = dashboard.activeCase.id;
+      if (!dashboard.resumableCase) throw new Error("No active case found");
+      targetCaseId = dashboard.resumableCase.id;
     }
 
     const activeCase = await prisma.case.findFirst({

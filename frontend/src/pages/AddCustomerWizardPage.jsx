@@ -152,7 +152,7 @@ const restoreSession = async (preserveStep = false) => {
       business_email: caseData.customer?.business_email || '',
       pincode: primaryApp?.pincode || caseData.customer?.pan_profiles?.[0]?.principal_pincode || '',
       dob: caseData.customer?.dob || '',
-      mobile_verified: mode === 'MSME_SELF_SERVICE' ? true : (caseData.customer?.mobile_verified || false),
+      mobile_verified: caseData.customer?.mobile_verified || false,
       is_professional: caseData.customer?.is_professional || false,
       profession_type: caseData.customer?.profession_type || '',
       pan_verified: primaryApp?.pan_verified || !!caseData.customer?.pan_profiles?.length || !!caseData.customer?.business_name_source,
@@ -582,7 +582,7 @@ const removeApplicant = async (index) => {
 const handleStep1Submit = async (e) => {
   e.preventDefault();
   if (!formData.business_pan) return toast.error("Business PAN is required.");
-  if (!formData.mobile_verified && mode !== 'MSME_SELF_SERVICE') return toast.error("Primary Business Mobile must be verified before proceeding.");
+  if (!formData.mobile_verified) return toast.error("Primary Business Mobile must be verified before proceeding.");
   // Bureau/credit checks need PAN + DOB together for every applicant - PAN
   // alone isn't enough for the vendor to match a record, which otherwise
   // only surfaces later as a confusing "no obligations found" bureau error.
@@ -880,16 +880,14 @@ const handleStep3Submit = async (e) => {
                       }}
                       className="form-control"
                       placeholder="9820012345"
-                      disabled={formData.mobile_verified || mode === 'MSME_SELF_SERVICE'}
+                      disabled={formData.mobile_verified}
                     />
-                    {(!formData.mobile_verified && mode !== 'MSME_SELF_SERVICE') ? (
+                    {!formData.mobile_verified ? (
                       <button type="button" onClick={handleSendPrimaryOtp} disabled={saving || !formData.business_mobile || !formData.business_pan} className="btn btn-primary" style={{ padding: '0 20px' }}>Send OTP</button>
                     ) : (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--success)', fontWeight: 600, padding: '0 10px', whiteSpace: 'nowrap' }}>
                         <CheckCircle2 size={18} /> Verified
-                        {mode !== 'MSME_SELF_SERVICE' && (
-                          <button type="button" onClick={() => setFormData({ ...formData, mobile_verified: false })} style={{ marginLeft: 8, fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Edit</button>
-                        )}
+                        <button type="button" onClick={() => setFormData({ ...formData, mobile_verified: false })} style={{ marginLeft: 8, fontSize: 11, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Edit</button>
                       </div>
                     )}
                   </div>
@@ -1147,7 +1145,7 @@ const handleStep3Submit = async (e) => {
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
-            <button className="btn btn-primary btn-lg" type="submit" disabled={saving || (!formData.mobile_verified && mode !== 'MSME_SELF_SERVICE')}>
+            <button className="btn btn-primary btn-lg" type="submit" disabled={saving || !formData.mobile_verified}>
               {saving ? 'Processing...' : 'Continue to Financials →'}
             </button>
           </div>
@@ -1232,8 +1230,8 @@ const handleStep3Submit = async (e) => {
                       type="button"
                       className={`btn btn-sm ${app.bureau_fetched ? 'btn-secondary' : 'btn-primary'}`}
                       onClick={() => handleRunBureau(app.id)}
-                      disabled={bureauLoadingMap[app.id] || (!(app.otp_verified || (app.type === 'PRIMARY' && formData.mobile_verified)) && !(app.type === 'PRIMARY' && mode === 'MSME_SELF_SERVICE')) || app.bureau_fetched}
-                      title={(!(app.otp_verified || (app.type === 'PRIMARY' && formData.mobile_verified)) && !(app.type === 'PRIMARY' && mode === 'MSME_SELF_SERVICE')) ? "OTP Verification required before pulling Bureau" : ""}
+                      disabled={bureauLoadingMap[app.id] || !(app.otp_verified || (app.type === 'PRIMARY' && formData.mobile_verified)) || app.bureau_fetched}
+                      title={!(app.otp_verified || (app.type === 'PRIMARY' && formData.mobile_verified)) ? "OTP Verification required before pulling Bureau" : ""}
                     >
                       {bureauLoadingMap[app.id] ? 'Processing...' : (app.bureau_fetched ? 'Verified' : 'Run Bureau')}
                     </button>

@@ -182,7 +182,14 @@ async function createOrAttachCustomer(data, tenant_id, user_id, userRole) {
         business_name_source: business_name ? 'MANUAL' : null,
         is_professional: is_professional || false,
         profession_type: profession_type || null,
-        created_by_user_id: user_id
+        created_by_user_id: user_id,
+        // MSME self-service prefills this from the customer's own
+        // OTP-verified login mobile — trust it as already-verified at
+        // creation time. If they edit it away from that default, the
+        // wizard clears mobile_verified locally and routes them through
+        // the same OTP flow DSA-created customers use before it flips
+        // true again (see otp.service.js verifyOtp).
+        mobile_verified: userRole === 'MSME_CUSTOMER'
       }
     });
   } else {
