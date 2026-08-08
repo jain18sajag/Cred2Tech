@@ -159,6 +159,8 @@ const loanApplicationSummaryRoutes = require('./routes/loanApplicationSummary.ro
 const ticketRoutes = require('./routes/ticket.routes');
 const ticketRecipientRoutes = require('./routes/ticketRecipient.routes');
 const caseFeedbackRoutes = require('./routes/caseFeedback.routes');
+const contactSubmissionRoutes = require('./routes/contactSubmission.routes');
+const demoRequestRoutes = require('./routes/demoRequest.routes');
 
 // Rate Limiting Middlewares
 const loginLimiter = rateLimit({
@@ -255,6 +257,8 @@ apiRouter.use('/loan-application-summary', loanApplicationSummaryRoutes);
 apiRouter.use('/tickets', ticketRoutes);
 apiRouter.use('/admin/ticket-recipients', ticketRecipientRoutes);
 apiRouter.use('/case-feedback', caseFeedbackRoutes);
+apiRouter.use('/contact-submissions', contactSubmissionRoutes);
+apiRouter.use('/demo-requests', demoRequestRoutes);
 apiRouter.use('/msme/auth', directCustomerAuthRoutes);
 apiRouter.use('/msme', directCustomerRoutes);
 apiRouter.use('/admin/msme-cases', adminDirectCustomerRoutes);

@@ -3217,3 +3217,62 @@ model CaseFeedback {
   @@index([case_id])
   @@map("case_feedback")
 }
+
+// Leads submitted through the public marketing site's Contact Us form
+// (Cred2Tech-UI's /contact page) — genuinely anonymous/pre-auth, so unlike
+// Ticket there's no submitter user/tenant to attach this to. Read tracking
+// mirrors Ticket's unread-badge convention (is_read/read_at), kept as plain
+// scalars rather than a User relation since there's no admin-identity need
+// beyond "seen or not".
+model ContactSubmission {
+  id            Int    @id @default(autoincrement())
+  full_name     String
+  business_name String
+  mobile_number String
+  email         String
+  // Free text, not an enum — mirrors the frontend's <select> options
+  // (msme / Sourcing Partner / lender / investor / other) without coupling
+  // the DB schema to that list, which the marketing site may add to.
+  role          String
+  help_type     String
+  message       String? @db.Text
+
+  ip_address String?
+  is_read    Boolean   @default(false)
+  read_at    DateTime?
+
+  created_at DateTime @default(now())
+
+  @@index([created_at])
+  @@index([is_read])
+  @@map("contact_submissions")
+}
+
+// Leads submitted through the public marketing site's Request Demo form
+// (Cred2Tech-UI's /request-demo page). Same shape/rationale as
+// ContactSubmission (anonymous, no submitter identity to attach to) — kept
+// as a separate model rather than a shared "leads" table with a `kind`
+// discriminator, since the two forms collect different fields (`product`
+// here vs. `role`/`help_type` there) and the admin panel lists them as
+// distinct tabs.
+model DemoRequest {
+  id            Int    @id @default(autoincrement())
+  full_name     String
+  business_name String
+  mobile_number String
+  email         String
+  // Free text, not an enum — mirrors the frontend's <select> of demo-able
+  // products without coupling the DB schema to that list.
+  product       String
+  message       String? @db.Text
+
+  ip_address String?
+  is_read    Boolean   @default(false)
+  read_at    DateTime?
+
+  created_at DateTime @default(now())
+
+  @@index([created_at])
+  @@index([is_read])
+  @@map("demo_requests")
+}
