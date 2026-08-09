@@ -150,7 +150,14 @@ async function getProfile(req, res) {
     const customer = await prisma.customer.findFirst({
       // Scope by tenant at the query itself (not just the response check below) —
       // SUPER_ADMIN is the only role allowed to look across tenants.
-      where: isSuperAdmin ? { id: customerId } : { id: customerId, tenant_id: tenantId },
+      // Additionally, allow cross-tenant access if the tenant has an active case for this customer.
+      where: isSuperAdmin ? { id: customerId } : {
+        id: customerId,
+        OR: [
+          { tenant_id: tenantId },
+          { cases: { some: { tenant_id: tenantId } } }
+        ]
+      },
       include: {
         pan_profiles: { take: 1, orderBy: { created_at: 'desc' } },
         cases: {
@@ -197,9 +204,9 @@ async function getProfile(req, res) {
 
     if (!customer) return res.status(404).json({ error: 'Customer not found' });
 
-    // Tenant isolation (defense-in-depth — already enforced in the query above)
-    if (!isSuperAdmin && customer.tenant_id !== tenantId) {
-      return res.status(403).json({ error: 'Forbidden. Customer belongs to different tenant.' });
+    // Tenant isolation (defense-in-depth) - Allow if customer belongs to tenant OR has cases in tenant
+    if (!isSuperAdmin && customer.tenant_id !== tenantId && (!customer.cases || customer.cases.length === 0)) {
+      return res.status(403).json({ error: 'Forbidden.' });
     }
 
     // Direct MSME customers share one tenant with every other direct customer,
@@ -337,12 +344,18 @@ async function getApiAvailability(req, res) {
     const customerId = parseInt(req.params.customer_id, 10);
     const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
     const customer = await prisma.customer.findFirst({
-      where: isSuperAdmin ? { id: customerId } : { id: customerId, tenant_id: req.user.tenant_id },
-      include: { api_logs: true, cases: { include: { applicants: true } } }
+      where: isSuperAdmin ? { id: customerId } : {
+        id: customerId,
+        OR: [
+          { tenant_id: req.user.tenant_id },
+          { cases: { some: { tenant_id: req.user.tenant_id } } }
+        ]
+      },
+      include: { api_logs: true, cases: { where: { tenant_id: req.user.tenant_id }, include: { applicants: true } } }
     });
 
     if (!customer) return res.status(404).json({ error: 'Customer not found' });
-    if (!isSuperAdmin && customer.tenant_id !== req.user.tenant_id) {
+    if (!isSuperAdmin && customer.tenant_id !== req.user.tenant_id && (!customer.cases || customer.cases.length === 0)) {
       return res.status(403).json({ error: 'Forbidden.' });
     }
     if (req.user.role === 'MSME_CUSTOMER' && customer.created_by_user_id !== req.user.id) {

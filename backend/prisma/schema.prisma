@@ -236,6 +236,7 @@ model Customer {
   itr_analytics      ItrAnalyticsRequest[]
   documents          Document[]
   salary_ocr_results SalarySlipOcrResult[]
+  purge_audit_logs   PurgeAuditLog[]
 
   @@unique([tenant_id, business_pan])
   @@map("customers")
@@ -3072,6 +3073,22 @@ model VendorApiAuditLog {
   error_category         String?
   created_at             DateTime  @default(now())
 }
+
+model PurgeAuditLog {
+  id            Int      @id @default(autoincrement())
+  customer_id   Int
+  table_name    String
+  record_id     String
+  purged_fields Json
+  purged_at     DateTime @default(now())
+
+  customer Customer @relation(fields: [customer_id], references: [id])
+
+  @@index([customer_id])
+  @@index([purged_at])
+  @@map("purge_audit_logs")
+}
+
 
 // --- Feedback / Support Ticket System ---
 // One "Submit Feedback" form (MSME self-service + DSA/staff) feeds this

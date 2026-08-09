@@ -254,51 +254,10 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
       });
     }
 
-     // Clone ESR (Eligibility Report)
-    const parentESR = await tx.eligibilityReport.findFirst({
-      where: { case_id: parentCaseId, is_latest: true },
-      include: { lenders: true }
-    });
+    const expirationDate = new Date();
+    expirationDate.setDate(expirationDate.getDate() - 150);
 
-    if (parentESR) {
-      await tx.eligibilityReport.create({
-        data: {
-          case_id: childCase.id,
-          tenant_id: tenantId,
-          version_number: 1,
-          is_latest: true,
-          generated_by_user_id: userId,
-          combined_income: parentESR.combined_income,
-          property_value: parentESR.property_value,
-          primary_cibil_score: parentESR.primary_cibil_score,
-          lowest_cibil_score: parentESR.lowest_cibil_score,
-          total_emi_per_month: parentESR.total_emi_per_month,
-          input_snapshot: parentESR.input_snapshot,
-          raw_payload: parentESR.raw_payload,
-          status: parentESR.status,
-          lenders: {
-            create: parentESR.lenders.map(l => ({
-              tenant_lender_id: l.tenant_lender_id,
-              lender_id: l.lender_id,
-              lender_name: l.lender_name,
-              product_type: l.product_type,
-              product_display_name: l.product_display_name,
-              best_scheme_name: l.best_scheme_name,
-              is_eligible: l.is_eligible,
-              eligible_amount: l.eligible_amount,
-              roi: l.roi,
-              tenure_months: l.tenure_months,
-              emi: l.emi,
-              ltv: l.ltv,
-              foir: l.foir,
-              remarks: l.remarks,
-              rejection_reasons: l.rejection_reasons,
-              scheme_evaluations: l.scheme_evaluations
-            }))
-          }
-        }
-      });
-    }
+    let skippedReportsDueToExpiration = false;
 
 
     // Clone Bureau Checks
@@ -307,6 +266,10 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
       const childApplicantId = applicantIdMap[b.applicant_id];
       if (!childApplicantId) {
         console.warn(`[CLONE] Skipping bureau check — no applicant mapping for applicant_id=${b.applicant_id}`);
+        continue;
+      }
+      if (b.created_at < expirationDate) {
+        skippedReportsDueToExpiration = true;
         continue;
       }
       await tx.bureauVerification.create({
@@ -328,6 +291,10 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
 
     // Clone Bank Statements
     for (const b of parentCase.bank_statements) {
+      if (b.created_at < expirationDate) {
+        skippedReportsDueToExpiration = true;
+        continue;
+      }
       await tx.bankStatementAnalysisRequest.create({
         data: {
           tenant_id: tenantId,
@@ -352,6 +319,10 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
 
     // Clone ITR Analytics
     for (const i of parentCase.itr_analytics) {
+      if (i.created_at < expirationDate) {
+        skippedReportsDueToExpiration = true;
+        continue;
+      }
       await tx.itrAnalyticsRequest.create({
         data: {
           tenant_id: tenantId,
@@ -378,6 +349,10 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
 
     // Clone GST Requests
     for (const g of parentCase.gst_requests) {
+      if (g.created_at < expirationDate) {
+        skippedReportsDueToExpiration = true;
+        continue;
+      }
       await tx.gstrAnalyticsRequest.create({
         data: {
           tenant_id: tenantId,
@@ -409,6 +384,54 @@ async function cloneCaseForLender(parentCaseId, tenantId, lenderSnapshot, userId
           created_by_user_id: userId
         }
       });
+    }
+
+    // Clone ESR (Eligibility Report) ONLY IF no required core reports were expired
+    if (!skippedReportsDueToExpiration) {
+      const parentESR = await tx.eligibilityReport.findFirst({
+        where: { case_id: parentCaseId, is_latest: true },
+        include: { lenders: true }
+      });
+
+      if (parentESR) {
+        await tx.eligibilityReport.create({
+          data: {
+            case_id: childCase.id,
+            tenant_id: tenantId,
+            version_number: 1,
+            is_latest: true,
+            generated_by_user_id: userId,
+            combined_income: parentESR.combined_income,
+            property_value: parentESR.property_value,
+            primary_cibil_score: parentESR.primary_cibil_score,
+            lowest_cibil_score: parentESR.lowest_cibil_score,
+            total_emi_per_month: parentESR.total_emi_per_month,
+            input_snapshot: parentESR.input_snapshot,
+            raw_payload: parentESR.raw_payload,
+            status: parentESR.status,
+            lenders: {
+              create: parentESR.lenders.map(l => ({
+                tenant_lender_id: l.tenant_lender_id,
+                lender_id: l.lender_id,
+                lender_name: l.lender_name,
+                product_type: l.product_type,
+                product_display_name: l.product_display_name,
+                best_scheme_name: l.best_scheme_name,
+                is_eligible: l.is_eligible,
+                eligible_amount: l.eligible_amount,
+                roi: l.roi,
+                tenure_months: l.tenure_months,
+                emi: l.emi,
+                ltv: l.ltv,
+                foir: l.foir,
+                remarks: l.remarks,
+                rejection_reasons: l.rejection_reasons,
+                scheme_evaluations: l.scheme_evaluations
+              }))
+            }
+          }
+        });
+      }
     }
 
     // Clone Salary OCR Results

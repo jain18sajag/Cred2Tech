@@ -315,6 +315,9 @@ const seedDataMatrix = require('./utils/seed_matrix');
 //    seedDataMatrix();
 // });
 
+const { initJobs } = require('./jobs');
+initJobs();
+
 module.exports = app;
 module.exports.seedRolesIfMissing = seedRolesIfMissing;
 module.exports.seedMsmePricing = seedMsmePricing;

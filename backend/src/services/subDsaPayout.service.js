@@ -263,7 +263,7 @@ async function upsertPayoutConfig(tenantId, subDsaUserId, body) {
       data: { tenant_id: tenantId, sub_dsa_user_id: Number(subDsaUserId), ...parentData }
     });
 
-    if (parsed.overrides.length) await tx.subDsaLenderOverride.createMany({ data: parsed.overrides.map(o => ({ ...o, override_rate: o.override_rate.toNumber(), rule_id: rule.id })) });
+    if (parsed.overrides.length) await tx.subDsaLenderOverride.createMany({ data: parsed.overrides.map(o => ({ ...o, override_rate: o.override_rate.toNumber(), rule_id: rule.id, calculation_base: o.calculation_base || rule.calculation_base })) });
     if (parsed.slabs.length) await tx.subDsaCaseCountSlab.createMany({ data: parsed.slabs.map(s => ({ ...s, payout_per_case: s.payout_per_case.toNumber(), rule_id: rule.id })) });
     if (parsed.schemes.length) await tx.subDsaSpecialScheme.createMany({ data: parsed.schemes.map(s => ({ ...s, bonus_per_case: s.bonus_per_case?.toNumber() ?? null, bonus_percent: s.bonus_percent?.toNumber() ?? null, rule_id: rule.id })) });
     return tx.subDsaPayoutRule.findFirst({ where: { id: rule.id }, include: { overrides: true, case_count_slabs: true, special_schemes: true } });
@@ -390,7 +390,7 @@ async function calculatePayout(tenantId, subDsaUserId, commissionLedgerId, clien
     tds_base: subDsaPayout.toFixed(2),
     formula_components: {
       dsa_earned: dsaEarned.toFixed(2),
-      rate_payout: dsaEarned.mul(applicableRate).div(100).toDecimalPlaces(2).toFixed(2),
+      rate_payout: appliedBase.mul(applicableRate).div(100).toDecimalPlaces(2).toFixed(2),
       slab_bonus: slabBonus.toFixed(2),
       scheme_bonus: schemeBonus.toDecimalPlaces(2).toFixed(2)
     }
