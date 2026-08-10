@@ -394,15 +394,19 @@ function canonicalCaseFixture() {
     }],
     gst_requests: [{
       id: 1002, tenant_id: 7, customer_id: 70, case_id: 578, applicant_id: 701, status: 'COMPLETED', gstin: '27ABCDE1234F1Z5', updated_at: '2026-01-05',
-      raw_report_data: { 'Monthly Sales&Purchase': [{ 'Monthly Sale Summary': { data: gstMonths } }] },
+      raw_report_data: { GSTIN: '27ABCDE1234F1Z5', 'Monthly Sales&Purchase': [{ 'Monthly Sale Summary': { data: gstMonths } }] },
+      raw_fetch_data: { Rolling12MonthTurnover: 999999999999 },
       gst_financial_year_summaries: []
     }],
     bank_statements: [{
       id: 1003, tenant_id: 7, customer_id: 70, case_id: 578, applicant_id: 701, status: 'COMPLETED', updated_at: '2026-01-05',
-      raw_retrieve_response: {
+      files_payload: {
         overview: { monthlyAverageDailyBalance: [{ month: 'Apr 2024', averageDailyBalance: 311811.42 }] },
         accountLevelAnalysis: [{ bankName: 'Test Bank', accountNumber: '1234567890', avgMonthlyCredit: 1000000, totalCreditAmount: 12000000 }]
-      }
+      },
+      raw_analyze_response: { overview: { averageBalance: 999999999999, totalCredits: 999999999999 } },
+      raw_retrieve_response: { overview: { averageBalance: 888888888888, totalCredits: 888888888888 } },
+      raw_download_response: { overview: { averageBalance: 777777777777, totalCredits: 777777777777 } }
     }],
     income_entries: [{ id: 10, applicant_id: 701, income_type: 'Agriculture', annual_amount: 600000 }],
     property: { id: 12, market_value: 20000000, property_type: 'Residential', property_address: 'Verified Property Address', remarks: 'DO NOT USE AS ADDRESS' },
@@ -455,6 +459,36 @@ test('canonical LAS mapper gives raw JSON priority over conflicting structured s
   assert.deepEqual(report.sourceAvailability, { itrJson: true, gstJson: true, bankJson: true });
 });
 
+test('canonical LAS uses only the authoritative GST ITR and Bank JSON columns', () => {
+  const fixture = canonicalCaseFixture();
+  Object.assign(fixture.itr_analytics[0], {
+    raw_response: { '2024-2025': itrYear(999999999999, 9, 999999999999) },
+    raw_analytics_response: { ProfitAfterTax: 888888888888 }
+  });
+  const report = buildCanonicalLoanApplicationSummaryData(fixture);
+
+  assert.equal(report.financials.itr.latest.profitAfterTax, 1437483);
+  assert.ok(report.financials.gst.latest.turnover < 9000000);
+  assert.equal(report.financials.banking.latest.averageBalance, 311811.42);
+  assert.equal(report.sourceTrace['financials.gst.latest.turnover'].selectedSourceTable, 'gstr_analytics_requests');
+  assert.match(report.sourceTrace['financials.gst.latest.turnover'].jsonPath, /^raw_report_data/);
+  assert.equal(report.sourceTrace['financials.itr.latest.profitAfterTax'].selectedSourceTable, 'itr_analytics_requests');
+  assert.match(report.sourceTrace['financials.itr.latest.profitAfterTax'].jsonPath, /^analytics_payload/);
+  assert.equal(report.sourceTrace['financials.banking.latest.averageBalance'].selectedSourceTable, 'bank_statement_analysis_requests');
+  assert.match(report.sourceTrace['financials.banking.latest.averageBalance'].jsonPath, /^files_payload/);
+});
+
+test('canonical LAS reports file-metadata-only Bank files_payload without inventing metrics', () => {
+  const fixture = canonicalCaseFixture();
+  fixture.bank_statements[0].files_payload = [{ fileName: 'bank.pdf', documentId: 123 }];
+  const report = buildCanonicalLoanApplicationSummaryData(fixture);
+
+  assert.equal(report.financials.banking.sourceKind, 'NONE');
+  assert.equal(report.financials.banking.latest.averageBalance, null);
+  assert.equal(report.financials.banking.rolling12Months.totalCredits, null);
+  assert.ok(report.warnings.includes('Banking: bank_statement_analysis_requests.files_payload contains file metadata only and no bank analysis metrics.'));
+});
+
 test('canonical LAS does not suppress Excel fallback for empty or unusable JSON payloads', () => {
   const fixture = canonicalCaseFixture();
   fixture.loan_amount = 0;
@@ -462,8 +496,7 @@ test('canonical LAS does not suppress Excel fallback for empty or unusable JSON 
   fixture.esr_financials.requested_tenure_months = 0;
   fixture.itr_analytics[0].analytics_payload = {};
   fixture.gst_requests[0].raw_report_data = {};
-  fixture.bank_statements[0].raw_analyze_response = {};
-  fixture.bank_statements[0].raw_retrieve_response = null;
+  fixture.bank_statements[0].files_payload = {};
 
   const report = buildCanonicalLoanApplicationSummaryData(fixture);
   assert.deepEqual(report.sourceAvailability, { itrJson: false, gstJson: false, bankJson: false });
