@@ -288,7 +288,12 @@ pipeline {
                             # Jenkins credential is what lands in the release .env, and
                             # is what Health Check / Version Verification actually
                             # exercise against the live PM2 process further down.
-                            JWT_SECRET=ci-validate-placeholder node -e "require('./src/app.js'); console.log('app.js loads OK')"
+                            #
+                            # app.js schedules a node-cron job on require (src/jobs/index.js),
+                            # which keeps a timer alive and never lets the process exit on
+                            # its own. Force-exit once the require + log succeed, otherwise
+                            # this step (and the whole pipeline) hangs forever.
+                            JWT_SECRET=ci-validate-placeholder node -e "require('./src/app.js'); console.log('app.js loads OK'); process.exit(0)"
                             echo "Dependencies installed, Prisma client generated, app loads."
                         """
                     }
