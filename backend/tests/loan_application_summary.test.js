@@ -26,9 +26,11 @@ const {
   SHEET_NAMES,
   buildReportFileName,
   sanitizeExcelValue,
+  clearUnavailableDataPlaceholders,
   ensureWorksheetContract,
   validateWorkbook,
   copySourceWorkbookToSheet,
+  applySourceTablesToApprovedFormat,
   setFinancialCell,
   applyCanonicalSummaryData,
   validateCanonicalWorkbook,
@@ -41,7 +43,10 @@ const {
   extractLast12MonthGstrSales,
   extractProfitAndLoss,
   extractCreditTxnTotal,
-  extractMonthlyAverageBalance
+  extractMonthlyAverageBalance,
+  applyCanonicalAnalysisData,
+  applyLoanApplicationSummaryPresentation,
+  mergeFallbackSourcesIntoCanonicalReportData
 } = require('../src/services/reports/loanApplicationSummary.service');
 
 // Builds an ExcelJS workbook from a { sheetName: [[row1cells], [row2cells], ...] }
@@ -97,6 +102,7 @@ test('loan application summary sanitizes unsafe and missing display values', () 
   assert.equal(sanitizeExcelValue('-'), '-');
   assert.equal(sanitizeExcelValue('undefined'), 'N/A');
   assert.equal(sanitizeExcelValue(Number.NaN, 'N/A'), 'N/A');
+  assert.equal(sanitizeExcelValue('enc:v1:d:sensitive-ciphertext'), '');
 });
 test('loan application summary copies source Excel sections into existing report sheet', () => {
   const target = new ExcelJS.Workbook();
@@ -222,6 +228,103 @@ test('loan application summary maps ITR profit and revenue from Profit and Loss 
   assert.equal(pnl.revenueFromOperations, 3000);
   assert.equal(pnl.depreciation, 30);
   assert.equal(pnl.interestOnLoan, 33);
+  assert.equal(pnl.olderNetProfitAfterTax, 100);
+  assert.equal(pnl.olderRevenueFromOperations, 1000);
+});
+
+test('approved ITR format maps Balance Sheet and P&L by particulars column, not serial number', () => {
+  const report = makeWorkbook({
+    Summary: [], 'Bank Statement Analysis.': [], 'ITR Analysis': [], 'GST Analysis': [], 'Cibil - Transunion': []
+  });
+  const target = report.getWorksheet('ITR Analysis');
+  target.getCell('A82').value = 1;
+  target.getCell('B82').value = "Share Capital /Proprietor's Capital";
+  target.getCell('A173').value = 32;
+  target.getCell('B173').value = 'Profit after Tax';
+  target.getCell('A180').value = 'Current Ratio';
+
+  const itr = makeWorkbook({
+    'General Information': [], 'Tax Calculation': [],
+    'Balance Sheet': [[], [], [], [], [], [null, 1, "Share Capital/Proprietor's Capital", null, 38787975, 42335061]],
+    'Profit and Loss Statement': [[], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [null, 32, 'Profit after Tax', null, 1371165, 1437483]],
+    'Ratio Analysis': [[], [], [], [], [], [null, 'Current Ratio', 'Current Ratio', null, 1.56, 1.29]]
+  });
+
+  applySourceTablesToApprovedFormat(report, { itr });
+
+  assert.equal(target.getCell('C82').value, 38787975);
+  assert.equal(target.getCell('D82').value, 42335061);
+  assert.equal(target.getCell('C173').value, 1371165);
+  assert.equal(target.getCell('D173').value, 1437483);
+  assert.equal(target.getCell('C180').value, 1.56);
+  assert.equal(target.getCell('C180').numFmt, '0.00');
+});
+
+test('loan application summary leaves unavailable report values blank', () => {
+  const workbook = makeWorkbook({
+    Summary: [['N/A', 'Available']],
+    'Bank Statement Analysis.': [['No Bank Statement source data is available for this case.']],
+    'ITR Analysis': [['No ITR source data is available for this case.']],
+    'GST Analysis': [['No GST source data is available for this case.']],
+    'Cibil - Transunion': [['Not Available']]
+  });
+
+  clearUnavailableDataPlaceholders(workbook);
+
+  assert.equal(workbook.getWorksheet('Summary').getCell('A1').value, '');
+  assert.equal(workbook.getWorksheet('Summary').getCell('B1').value, 'Available');
+  assert.equal(workbook.getWorksheet('Bank Statement Analysis.').getCell('A1').value, '');
+  assert.equal(workbook.getWorksheet('ITR Analysis').getCell('A1').value, '');
+  assert.equal(workbook.getWorksheet('GST Analysis').getCell('A1').value, '');
+  assert.equal(workbook.getWorksheet('Cibil - Transunion').getCell('A1').value, '');
+});
+
+test('loan application summary places one Cred2Tech logo at the same anchor on every sheet', () => {
+  const workbook = makeWorkbook(Object.fromEntries(SHEET_NAMES.map(name => [name, [['Title']]])));
+  applyLoanApplicationSummaryPresentation(workbook);
+
+  workbook.worksheets.forEach((ws) => {
+    const images = ws.getImages();
+    assert.equal(images.length, 1);
+    assert.equal(images[0].range.tl.nativeCol, 0);
+    assert.equal(images[0].range.tl.nativeRow, 0);
+    assert.equal(images[0].range.tl.nativeColOff, 0);
+    assert.equal(images[0].range.tl.nativeRowOff, 0);
+    assert.deepEqual(images[0].range.ext, { width: 132, height: 46 });
+  });
+});
+
+test('loan application summary preserves the approved two-year ITR analysis layout', () => {
+  const mapped = mapSourceWorkbooks({
+    itr: makeWorkbook({
+      'Profit and Loss Statement': [
+        ['Sl. No.', 'Particulars', 2023, 2024, 2025],
+        [1, 'Revenue from Operations', 1000, 2000, 3000],
+        [2, 'Depreciation and Amortization', 10, 20, 30],
+        [3, 'Profit After Tax', 100, 200, 300]
+      ]
+    })
+  });
+  const report = {
+    case: {}, primaryApplicant: {}, business: {},
+    financials: { itr: { latest: {}, previous: {}, older: {}, sourceKind: 'NONE' }, gst: {}, banking: {} }
+  };
+  mergeFallbackSourcesIntoCanonicalReportData(report, mapped);
+  const workbook = new ExcelJS.Workbook();
+  const itrSheet = workbook.addWorksheet('ITR Analysis');
+  itrSheet.getCell('B146').value = 'Revenue from Operations';
+  itrSheet.getCell('B164').value = 'Depreciation and Amortization';
+  itrSheet.getCell('B173').value = 'Profit after Tax';
+  workbook.addWorksheet('Bank Statement Analysis.');
+  workbook.addWorksheet('GST Analysis');
+
+  applyCanonicalAnalysisData(workbook, report);
+
+  assert.equal(itrSheet.getCell('F2').value, '2024');
+  assert.equal(itrSheet.getCell('H2').value, '2025');
+  assert.deepEqual(['C141', 'D141'].map(cell => itrSheet.getCell(cell).value), ['2024', '2025']);
+  assert.deepEqual(['C173', 'D173'].map(cell => itrSheet.getCell(cell).value), [200, 300]);
+  assert.deepEqual(['C146', 'D146'].map(cell => itrSheet.getCell(cell).value), [2000, 3000]);
 });
 
 test('loan application summary maps Bank credit total and average monthly balance', () => {
@@ -457,6 +560,32 @@ test('canonical LAS mapper gives raw JSON priority over conflicting structured s
   assert.ok(report.financials.gst.rolling12Months.turnover > 8000000);
   assert.equal(report.financials.banking.latest.averageBalance, 311811.42);
   assert.deepEqual(report.sourceAvailability, { itrJson: true, gstJson: true, bankJson: true });
+});
+
+test('canonical LAS maps nested GST financial years and monthly sales from raw_report_data', () => {
+  const fixture = canonicalCaseFixture();
+  fixture.gst_requests[0].raw_report_data = {
+    data: [{
+      Overview_Yearly: {
+        'Overview of GST Returns': [
+          { 'Month Year': 'FY 2023-24', 'GSTR 1 Gross Sales (E=A+B-C+D)': 100 },
+          { 'Month Year': 'FY 2024-25', 'GSTR 1 Gross Sales (E=A+B-C+D)': 200 },
+          { 'Month Year': 'FY 2025-26', 'GSTR 1 Gross Sales (E=A+B-C+D)': 300 }
+        ]
+      }
+    }, {
+      'Monthly Sales&Purchase': [{
+        'Monthly Sale Summary': [{ data: [
+          { Month: 'Apr 2025', 'Taxable Value': 10, Tax: 2 },
+          { Month: 'May 2025', 'Taxable Value': 20, Tax: 4 }
+        ] }]
+      }]
+    }]
+  };
+  const gst = buildCanonicalLoanApplicationSummaryData(fixture).financials.gst;
+
+  assert.deepEqual([gst.latest.turnover, gst.previous.turnover, gst.older.turnover], [300, 200, 100]);
+  assert.deepEqual(gst.monthlySales.map(row => row.taxableValue), [10, 20]);
 });
 
 test('canonical LAS uses only the authoritative GST ITR and Bank JSON columns', () => {

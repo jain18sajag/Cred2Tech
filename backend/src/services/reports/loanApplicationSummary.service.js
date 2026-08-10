@@ -20,6 +20,7 @@
 const fs = require('fs');
 const path = require('path');
 const ExcelJS = require('exceljs');
+const JSZip = require('jszip');
 const axios = require('axios');
 const prisma = require('../../../config/db');
 const { getStorageProvider } = require('../storage');
@@ -73,6 +74,9 @@ function sanitizeExcelValue(value, fallback = '') {
   if (resolved === undefined || resolved === null || resolved === '') return fallback;
   if (typeof resolved === 'number') return Number.isFinite(resolved) ? resolved : fallback;
   if (resolved instanceof Date) return resolved;
+  // Never expose an encrypted-at-rest envelope in a customer-facing report.
+  // If decryption is unavailable or fails, the field is treated as missing.
+  if (/^enc:v\d+:/i.test(String(resolved).trim())) return '';
   const text = String(resolved)
     .replace(/\b(null|undefined|NaN|None)\b/gi, 'N/A')
     .trim();
@@ -406,6 +410,35 @@ function isExcelDocument(doc) {
     || mime.includes('excel');
 }
 
+async function loadSourceXlsx(buffer) {
+  const workbook = new ExcelJS.Workbook();
+  try {
+    await workbook.xlsx.load(buffer);
+    return workbook;
+  } catch (error) {
+    if (!/drawing|anchors/i.test(String(error?.message || ''))) throw error;
+  }
+
+  // Some provider files contain unsupported or malformed drawing XML even
+  // though their worksheet data is valid. Remove image/drawing parts from an
+  // in-memory copy and retry; cell data, formulas and styles are untouched.
+  const archive = await JSZip.loadAsync(buffer);
+  for (const name of Object.keys(archive.files)) {
+    if (name.startsWith('xl/drawings')) {
+      archive.remove(name);
+      continue;
+    }
+    if (/^xl\/worksheets\/sheet\d+\.xml$/.test(name)) {
+      const xml = await archive.file(name).async('string');
+      archive.file(name, xml.replace(/<(?:drawing|legacyDrawing)\b[^>]*\/>/g, ''));
+    }
+  }
+  const sanitized = await archive.generateAsync({ type: 'nodebuffer' });
+  const recovered = new ExcelJS.Workbook();
+  await recovered.xlsx.load(sanitized);
+  return recovered;
+}
+
 async function readExcelWorkbookFromDocument(doc) {
   if (!doc?.storage_path || !isExcelDocument(doc)) return null;
   // Read back from wherever this specific document actually lives — not
@@ -415,16 +448,15 @@ async function readExcelWorkbookFromDocument(doc) {
   const stream = await storage.getStream(doc.storage_path);
   const buffer = await streamToBuffer(stream);
   if (!buffer.length) return null;
-  const workbook = new ExcelJS.Workbook();
   try {
-    await workbook.xlsx.load(buffer);
+    const workbook = await loadSourceXlsx(buffer);
+    return { workbook, document: doc, source: 'document' };
   } catch (err) {
     // Legacy binary .xls (or a corrupt/non-Excel file) — exceljs only reads
     // OOXML .xlsx. Fall through to the caller's null-handling.
     console.warn(`[loanApplicationSummary] Could not parse source document #${doc.id} as .xlsx: ${err.message}`);
     return null;
   }
-  return { workbook, document: doc, source: 'document' };
 }
 
 async function findStoredExcelDocument({
@@ -556,14 +588,13 @@ async function readExcelWorkbookFromUrl(sourceUrl) {
   }
   const buffer = Buffer.from(response.data);
   if (!buffer.length || buffer.length > MAX_SOURCE_EXCEL_SIZE_BYTES) return null;
-  const workbook = new ExcelJS.Workbook();
   try {
-    await workbook.xlsx.load(buffer);
+    const workbook = await loadSourceXlsx(buffer);
+    return { workbook, source: 'url' };
   } catch (err) {
     console.warn(`[loanApplicationSummary] Could not parse source URL as .xlsx: ${err.message}`);
     return null;
   }
-  return { workbook, source: 'url' };
 }
 
 async function readSourceExcelWorkbook({
@@ -586,7 +617,12 @@ async function readSourceExcelWorkbook({
     applicantId
   });
 
-  const fromDocument = await readExcelWorkbookFromDocument(resolvedDocument);
+  let fromDocument = null;
+  try {
+    fromDocument = await readExcelWorkbookFromDocument(resolvedDocument);
+  } catch (error) {
+    console.warn('[LoanApplicationSummary] Stored source document read failed; trying the scoped vendor URL.', error.message);
+  }
   if (fromDocument) return fromDocument;
 
   return readExcelWorkbookFromUrl(sourceUrl);
@@ -685,20 +721,26 @@ function findRowByLabels(rows, labels) {
 
 function findRowIndexByLabels(rows, labels) {
   const labelList = Array.isArray(labels) ? labels : [labels];
+  const exact = rows.findIndex(row => row?.some(value => labelList.some(label => normalizeKey(value) === normalizeKey(label))));
+  if (exact >= 0) return exact;
   return rows.findIndex(row => row?.some(value => labelList.some(label => labelsMatch(value, label))));
 }
 
 function findLabelColumn(row, labels) {
   const labelList = Array.isArray(labels) ? labels : [labels];
+  const exact = (row || []).findIndex(value => labelList.some(label => normalizeKey(value) === normalizeKey(label)));
+  if (exact >= 0) return exact;
   return (row || []).findIndex(value => labelList.some(label => labelsMatch(value, label)));
 }
 
 function findHeaderRowForMetric(rows, metricRowIndex) {
-  for (let i = metricRowIndex - 1; i >= Math.max(0, metricRowIndex - 12); i -= 1) {
+  for (let i = metricRowIndex - 1; i >= Math.max(0, metricRowIndex - 100); i -= 1) {
     const row = rows[i] || [];
     const hasTotal = row.some(value => labelsMatch(value, 'Total'));
     const hasMonth = row.some(value => isMonthHeader(value));
-    const hasYear = row.some(value => /^(FY|AY)?\s*20\d{2}(?:[-/]\d{2,4})?$/i.test(String(value || '').trim()));
+    const numericValues = row.filter(value => toNumber(value) !== null);
+    const yearValues = row.filter(value => /^(FY|AY)?\s*20\d{2}(?:[-/]\d{2,4})?$/i.test(String(value || '').trim()));
+    const hasYear = yearValues.length > 0 && yearValues.length === numericValues.length;
     if (hasTotal || hasMonth || hasYear) return row;
   }
   return null;
@@ -850,6 +892,7 @@ function extractMonthlyMetricEntries(rows, labels) {
 
 function extractSimpleMonthlyTable(rows, sectionLabels = []) {
   let headerIndex = -1;
+  let sectionColumn = -1;
   for (let i = 0; i < rows.length; i += 1) {
     const row = rows[i] || [];
     const hasMonth = row.some(value => labelsMatch(value, 'Month'));
@@ -857,10 +900,12 @@ function extractSimpleMonthlyTable(rows, sectionLabels = []) {
     if (!hasMonth || !hasTaxable) continue;
 
     if (sectionLabels.length) {
-      const priorText = rows.slice(Math.max(0, i - 4), i)
-        .flat()
-        .join(' ');
-      if (!sectionLabels.some(label => labelsMatch(priorText, label))) continue;
+      const priorRows = rows.slice(Math.max(0, i - 4), i);
+      for (const priorRow of priorRows) {
+        const matchedColumn = priorRow.findIndex(value => sectionLabels.some(label => labelsMatch(value, label)));
+        if (matchedColumn >= 0) sectionColumn = matchedColumn;
+      }
+      if (sectionColumn < 0) continue;
     }
     headerIndex = i;
     break;
@@ -868,9 +913,14 @@ function extractSimpleMonthlyTable(rows, sectionLabels = []) {
   if (headerIndex < 0) return [];
 
   const header = rows[headerIndex];
-  const monthIndex = header.findIndex(value => labelsMatch(value, 'Month'));
-  const taxableIndex = header.findIndex(value => labelsMatch(value, 'Taxable Value'));
-  const taxIndex = header.findIndex(value => labelsMatch(value, 'Tax'));
+  const monthCandidates = header
+    .map((value, index) => labelsMatch(value, 'Month') ? index : -1)
+    .filter(index => index >= 0);
+  const monthIndex = sectionColumn >= 0
+    ? monthCandidates.find(index => index >= sectionColumn) ?? monthCandidates[0]
+    : monthCandidates[0];
+  const taxableIndex = header.findIndex((value, index) => index > monthIndex && labelsMatch(value, 'Taxable Value'));
+  const taxIndex = header.findIndex((value, index) => index > monthIndex && labelsMatch(value, 'Tax'));
   const result = [];
 
   for (let i = headerIndex + 1; i < rows.length; i += 1) {
@@ -1036,7 +1086,11 @@ function extractTaxCalculation(itrWorkbook) {
     salaryIncome: salary.latest?.value ?? null,
     previousSalaryIncome: salary.previous?.value ?? null,
     agriculturalIncome: agricultural.latest?.value ?? null,
-    previousAgriculturalIncome: agricultural.previous?.value ?? null
+    previousAgriculturalIncome: agricultural.previous?.value ?? null,
+    olderGrossTotalIncome: gross.older?.value ?? null,
+    olderTotalTaxableIncome: taxable.older?.value ?? null,
+    olderSalaryIncome: salary.older?.value ?? null,
+    olderAgriculturalIncome: agricultural.older?.value ?? null
   };
 }
 
@@ -1057,7 +1111,12 @@ function extractProfitAndLoss(itrWorkbook) {
     interestOnLoan: finance.latest?.value ?? null,
     previousInterestOnLoan: finance.previous?.value ?? null,
     revenueFromOperations: revenue.latest?.value ?? null,
-    previousRevenueFromOperations: revenue.previous?.value ?? null
+    previousRevenueFromOperations: revenue.previous?.value ?? null,
+    olderYear: pat.older?.label || revenue.older?.label || '',
+    olderNetProfitAfterTax: pat.older?.value ?? null,
+    olderDepreciation: depreciation.older?.value ?? null,
+    olderInterestOnLoan: finance.older?.value ?? null,
+    olderRevenueFromOperations: revenue.older?.value ?? null
   };
 }
 
@@ -1112,7 +1171,13 @@ function extractMonthlyAverageBalance(bankWorkbook) {
 }
 
 function extractBankCharges(bankWorkbook) {
-  return metricFlowTotal(getSourceRows(bankWorkbook, ['Summary', 'Bank Statement Analysis']), ['Bank Charges', 'Minimum Balance Charges']);
+  const rows = getSourceRows(bankWorkbook, ['Summary', 'Bank Statement Analysis']);
+  const wanted = new Set(['Bank Charges', 'Minimum Balance Charges'].map(normalizeKey));
+  for (const row of rows.filter(candidate => candidate.some(value => wanted.has(normalizeKey(value))))) {
+    const values = row.slice(1).map(toNumber).filter(value => value !== null);
+    if (values.length) return values[values.length - 1];
+  }
+  return null;
 }
 
 function extractCashDeposit(bankWorkbook) {
@@ -1184,17 +1249,22 @@ function mapSourceWorkbooks(sourceWorkbooks = {}) {
     const salesSeries = splitLatestPrevious(extractMetricSeries(yearlyRows, ['GSTR 1 Gross Sales E A B C D', 'GSTR 1 Gross Sales']));
     const purchaseSeries = splitLatestPrevious(extractMetricSeries(yearlyRows, ['GSTR 2A Gross Purchases', 'Gross Purchases']));
     const monthlyRows = getSourceRows(sourceWorkbooks.gst, ['Overview Monthly', 'Monthly Sales Summary', 'GST Analysis']);
+    const monthlyTableRows = getSourceRows(sourceWorkbooks.gst, [
+      'Monthly Sales and Purchase', 'Monthly Sales&Purchase', 'Monthly Sales Summary', 'GST Analysis'
+    ]);
     return {
       companyProfile: profile,
       annualGstrSales: salesSeries.latest?.value ?? extractAnnualGstrSales(sourceWorkbooks.gst),
       previousAnnualGstrSales: salesSeries.previous?.value ?? null,
+      olderAnnualGstrSales: salesSeries.older?.value ?? null,
       annualGstrSalesYear: salesSeries.latest?.label || '',
       previousAnnualGstrSalesYear: salesSeries.previous?.label || '',
+      olderAnnualGstrSalesYear: salesSeries.older?.label || '',
       annualPurchases: purchaseSeries.latest?.value ?? null,
       previousAnnualPurchases: purchaseSeries.previous?.value ?? null,
       last12MonthGstrSales: extractLast12MonthGstrSales(sourceWorkbooks.gst),
-      monthlySales: extractSimpleMonthlyTable(monthlyRows, ['Monthly Sales Summary']),
-      monthlyPurchases: extractSimpleMonthlyTable(monthlyRows, ['Monthly Purchase Summary'])
+      monthlySales: extractSimpleMonthlyTable(monthlyTableRows, ['Monthly Sales Summary']),
+      monthlyPurchases: extractSimpleMonthlyTable(monthlyTableRows, ['Monthly Purchases Summary', 'Monthly Purchase Summary'])
     };
   })() : {};
 
@@ -1228,7 +1298,7 @@ function mapSourceWorkbooks(sourceWorkbooks = {}) {
         inwardBounces: extractMonthlyMetricEntries(rows, ['I/W Cheque Bounces', 'Inward Cheque Bounces']),
         outwardBounces: extractMonthlyMetricEntries(rows, ['O/W Cheque Bounces', 'Outward Cheque Bounces']),
         emiLoanPayments: extractMonthlyMetricEntries(rows, ['EMI / Loan Payments', 'EMI Loan Payments', 'EMI/ Loan Payments']),
-        bankCharges: extractMonthlyMetricEntries(rows, ['Bank Charges', 'Minimum Balance Charges'])
+        bankCharges: extractMonthlyMetricEntries(rows, 'Bank Charges')
       }
     };
   })() : {};
@@ -1377,6 +1447,128 @@ function copySourceWorkbookToSheet(targetSheet, sourceWorkbook, sourceType) {
   return true;
 }
 
+function findExactSourceRow(sheet, label, labelColumns = [1, 2, 3]) {
+  if (!sheet || isBlank(label)) return null;
+  const wanted = normalizeKey(label);
+  const sourceAliases = {
+    iwchequebouncesinsufficientfundscount: 'inwardchequebouncedcount',
+    owchequebounces: 'outwardchequebouncedcount',
+    sellingpromotionaladvertisementexpenses: 'sellingpromotionalandadvertisementexpenses',
+    totaloutsideliabilitytotalnetworth: 'totaloutsideliabilitytototalnetworth',
+    debtebitda: 'debttoebitda'
+  };
+  const accepted = new Set([wanted, sourceAliases[wanted]].filter(Boolean));
+  for (let row = 1; row <= sheet.rowCount; row += 1) {
+    for (const column of labelColumns) {
+      if (accepted.has(normalizeKey(rawCellValue(sheet.getCell(row, column))))) return row;
+    }
+  }
+  return null;
+}
+
+function copyItrSectionByLabel({ target, source, targetStart, targetEnd, targetLabelColumns = [1, 2], sourceLabelColumns, sourceValueColumns, targetValueColumns, numberFormat = null }) {
+  if (!target || !source) return;
+  for (let row = targetStart; row <= targetEnd; row += 1) {
+    const label = firstNonBlank(...targetLabelColumns.map(column => rawCellValue(target.getCell(row, column))));
+    const sourceRow = findExactSourceRow(source, label, sourceLabelColumns);
+    if (!sourceRow) continue;
+    sourceValueColumns.forEach((sourceColumn, index) => {
+      const targetColumn = targetValueColumns[index];
+      if (!targetColumn) return;
+      const cell = target.getCell(row, targetColumn);
+      setCell(target, cell.address, rawCellValue(source.getCell(sourceRow, sourceColumn)));
+      if (numberFormat && typeof cell.value === 'number') cell.numFmt = numberFormat;
+    });
+  }
+}
+
+function applySourceTablesToApprovedFormat(workbook, sourceWorkbooks = {}) {
+  const copied = { bank: false, itr: false, gst: false };
+
+  const bankTarget = workbook.getWorksheet('Bank Statement Analysis.');
+  const bankSource = sourceWorkbooks.bank?.getWorksheet('Summary');
+  if (bankTarget && bankSource) {
+    // Provider versions can insert rows (for example Balance on 1st), so map
+    // every metric by its label and never assume equal row numbers.
+    for (let row = 2; row <= 66; row += 1) {
+      const label = rawCellValue(bankTarget.getCell(row, 1));
+      const sourceRow = findExactSourceRow(bankSource, label, [1]);
+      if (!sourceRow) continue;
+      for (let column = 2; column <= Math.min(14, bankSource.columnCount); column += 1) {
+        setCell(bankTarget, bankTarget.getCell(row, column).address, rawCellValue(bankSource.getCell(sourceRow, column)));
+      }
+    }
+    // Month headers belong to the table schema rather than a metric label.
+    for (let column = 2; column <= 14; column += 1) {
+      setCell(bankTarget, bankTarget.getCell(16, column).address, rawCellValue(bankSource.getCell(16, column)));
+    }
+    copied.bank = true;
+  }
+
+  const itrTarget = workbook.getWorksheet('ITR Analysis');
+  if (itrTarget && sourceWorkbooks.itr) {
+    copyItrSectionByLabel({ target: itrTarget, source: sourceWorkbooks.itr.getWorksheet('General Information'), targetStart: 2, targetEnd: 34, sourceLabelColumns: [2], sourceValueColumns: [9, 11], targetValueColumns: [6, 8] });
+    copyItrSectionByLabel({ target: itrTarget, source: sourceWorkbooks.itr.getWorksheet('Tax Calculation'), targetStart: 38, targetEnd: 76, sourceLabelColumns: [2], sourceValueColumns: [8, 9], targetValueColumns: [7, 8] });
+    copyItrSectionByLabel({ target: itrTarget, source: sourceWorkbooks.itr.getWorksheet('Balance Sheet'), targetStart: 81, targetEnd: 137, targetLabelColumns: [2], sourceLabelColumns: [3], sourceValueColumns: [5, 6], targetValueColumns: [3, 4] });
+    copyItrSectionByLabel({ target: itrTarget, source: sourceWorkbooks.itr.getWorksheet('Profit and Loss Statement'), targetStart: 142, targetEnd: 174, targetLabelColumns: [2], sourceLabelColumns: [3], sourceValueColumns: [5, 6], targetValueColumns: [3, 4] });
+    copyItrSectionByLabel({ target: itrTarget, source: sourceWorkbooks.itr.getWorksheet('Ratio Analysis'), targetStart: 179, targetEnd: 218, sourceLabelColumns: [2, 3], sourceValueColumns: [5, 6], targetValueColumns: [3, 4], numberFormat: '0.00' });
+    const general = sourceWorkbooks.itr.getWorksheet('General Information');
+    const tax = sourceWorkbooks.itr.getWorksheet('Tax Calculation');
+    const balance = sourceWorkbooks.itr.getWorksheet('Balance Sheet');
+    const pnl = sourceWorkbooks.itr.getWorksheet('Profit and Loss Statement');
+    const ratios = sourceWorkbooks.itr.getWorksheet('Ratio Analysis');
+    [['F2', rawCellValue(general?.getCell('I4'))], ['H2', rawCellValue(general?.getCell('K4'))],
+     ['G37', rawCellValue(tax?.getCell('H4'))], ['H37', rawCellValue(tax?.getCell('I4'))],
+     ['C80', rawCellValue(balance?.getCell('E4'))], ['D80', rawCellValue(balance?.getCell('F4'))],
+     ['C141', rawCellValue(pnl?.getCell('E4'))], ['D141', rawCellValue(pnl?.getCell('F4'))],
+     ['C178', rawCellValue(ratios?.getCell('E4'))], ['D178', rawCellValue(ratios?.getCell('F4'))]]
+      .forEach(([address, value]) => setCell(itrTarget, address, value));
+    copied.itr = true;
+  }
+
+  const gstTarget = workbook.getWorksheet('GST Analysis');
+  const entity = sourceWorkbooks.gst?.getWorksheet('Entity Details');
+  const account = sourceWorkbooks.gst?.getWorksheet('Account Details');
+  const yearly = sourceWorkbooks.gst?.getWorksheet('Overview Yearly');
+  if (gstTarget && sourceWorkbooks.gst) {
+    const details = new Map();
+    [entity, account].filter(Boolean).forEach((sheet) => {
+      for (let row = 1; row <= sheet.rowCount; row += 1) {
+        for (let column = 1; column < sheet.columnCount; column += 1) {
+          const label = normalizeKey(rawCellValue(sheet.getCell(row, column)));
+          const value = rawCellValue(sheet.getCell(row, column + 1));
+          if (label && !isBlank(value)) details.set(label, value);
+        }
+      }
+    });
+    const detailAliases = {
+      gstinuin: 'gstin', gstinuinstatus: 'gstinstatus', reportperiod: 'periodfrom',
+      stateofoperations: 'stateofoperationsbasedonmaxgrosssales'
+    };
+    for (let row = 3; row <= 20; row += 1) {
+      const key = normalizeKey(rawCellValue(gstTarget.getCell(row, 1)));
+      const value = details.get(key) ?? details.get(detailAliases[key]);
+      if (!isBlank(value)) setCell(gstTarget, `B${row}`, value);
+    }
+    if (yearly) {
+      for (let row = 25; row <= 29; row += 1) {
+        const sourceRow = findExactSourceRow(yearly, rawCellValue(gstTarget.getCell(row, 1)), [2]);
+        if (!sourceRow) continue;
+        [[2, 3], [3, 5], [4, 6]].forEach(([targetColumn, sourceColumn]) => setCell(gstTarget, gstTarget.getCell(row, targetColumn).address, rawCellValue(yearly.getCell(sourceRow, sourceColumn))));
+      }
+      [['B24', 'Total'], ['C24', rawCellValue(yearly.getCell('E5'))], ['D24', rawCellValue(yearly.getCell('F5'))],
+       ['B68', 'Total'], ['C68', rawCellValue(yearly.getCell('D47'))], ['D68', rawCellValue(yearly.getCell('E47'))], ['E68', rawCellValue(yearly.getCell('F47'))],
+       ['B80', 'Total'], ['C80', rawCellValue(yearly.getCell('D47'))], ['D80', rawCellValue(yearly.getCell('E47'))], ['E80', rawCellValue(yearly.getCell('F47'))]]
+        .forEach(([address, value]) => setCell(gstTarget, address, value));
+      [[69, 48], [70, 49], [71, 50], [72, 51], [73, 52], [74, 53], [75, 54], [76, 55], [77, 56], [81, 58], [82, 59], [83, 60], [84, 61]]
+        .forEach(([targetRow, sourceRow]) => [3, 4, 5, 6].forEach((sourceColumn, index) => setCell(gstTarget, gstTarget.getCell(targetRow, index + 2).address, rawCellValue(yearly.getCell(sourceRow, sourceColumn)))));
+    }
+    copied.gst = true;
+  }
+
+  return copied;
+}
+
 async function copyStoredSourceWorkbook({ workbook, targetSheetName, sourceType, documentId, tenantId, sourceUrl, documentTypes = [] }) {
   const source = await readSourceExcelWorkbook({ documentId, tenantId, sourceUrl, documentTypes });
   if (!source?.workbook) return false;
@@ -1411,6 +1603,12 @@ async function loadAvailableSourceWorkbooks(caseRecord, tenantId) {
     applicantId,
     ['gst', 'gstr']
   );
+  const bureauDocument = findCaseExcelDocument(
+    caseRecord,
+    ['BUREAU_EXCEL', 'CIBIL_EXCEL', 'EXPERIAN_REPORT', 'BUREAU_REPORT'],
+    applicantId,
+    ['experian', 'cibil', 'bureau', 'credit report']
+  );
 
   const read = async (label, args) => {
     try {
@@ -1421,7 +1619,7 @@ async function loadAvailableSourceWorkbooks(caseRecord, tenantId) {
     }
   };
 
-  const [bankSource, itrSource, gstSource] = await Promise.all([
+  const [bankSource, itrSource, gstSource, bureauSource] = await Promise.all([
     read('Bank', {
       document: bankDocument,
       documentId: bank?.bank_excel_document_id,
@@ -1451,6 +1649,14 @@ async function loadAvailableSourceWorkbooks(caseRecord, tenantId) {
       caseId,
       customerId,
       applicantId
+    }),
+    read('Bureau', {
+      document: bureauDocument,
+      tenantId,
+      documentTypes: ['BUREAU_EXCEL', 'CIBIL_EXCEL', 'EXPERIAN_REPORT', 'BUREAU_REPORT'],
+      caseId,
+      customerId,
+      applicantId
     })
   ]);
 
@@ -1458,10 +1664,12 @@ async function loadAvailableSourceWorkbooks(caseRecord, tenantId) {
     bank: bankSource?.workbook || null,
     itr: itrSource?.workbook || null,
     gst: gstSource?.workbook || null,
+    bureau: bureauSource?.workbook || null,
     metadata: {
       bank: bankSource ? { source: bankSource.source, documentId: bankSource.document?.id || null } : null,
       itr: itrSource ? { source: itrSource.source, documentId: itrSource.document?.id || null } : null,
-      gst: gstSource ? { source: gstSource.source, documentId: gstSource.document?.id || null } : null
+      gst: gstSource ? { source: gstSource.source, documentId: gstSource.document?.id || null } : null,
+      bureau: bureauSource ? { source: bureauSource.source, documentId: bureauSource.document?.id || null } : null
     }
   };
 }
@@ -1932,6 +2140,13 @@ function applyLoanApplicationSummaryPresentation(workbook) {
   workbook.worksheets.forEach((ws) => {
     normalizeTopHeaderRow(ws);
 
+    // Templates and provider workbooks may already contain an image with a
+    // sheet-specific offset. Remove those image anchors so every output sheet
+    // receives exactly the same Cred2Tech logo placement below.
+    if (Array.isArray(ws._media)) {
+      ws._media = ws._media.filter((media) => media.type !== 'image');
+    }
+
     const tabColor =
       SHEET_TAB_COLORS[ws.name];
 
@@ -1944,17 +2159,11 @@ function applyLoanApplicationSummaryPresentation(workbook) {
       };
     }
 
-    if (
-      imageId !== null
-      && (
-        !ws.getImages
-        || ws.getImages().length === 0
-      )
-    ) {
+    if (imageId !== null) {
       ws.addImage(imageId, {
         tl: {
-          col: 0.04,
-          row: 0.04
+          col: 0,
+          row: 0
         },
         ext: {
           width: 132,
@@ -2011,6 +2220,19 @@ function applyLoanApplicationSummaryPresentation(workbook) {
         + '&C&"Arial"&9Page &P of &N'
         + '&R&"Arial"&9Generated by Cred2Tech'
     };
+  });
+}
+
+function clearUnavailableDataPlaceholders(workbook) {
+  if (!workbook) return;
+  const unavailable = /^(?:n\/?a|not available|no (?:bank statement|itr|gst|source) source data is available for this case\.)$/i;
+  workbook.worksheets.forEach((ws) => {
+    ws.eachRow((row) => {
+      row.eachCell({ includeEmpty: false }, (cell) => {
+        const value = cell.value?.result ?? cell.value?.text ?? cell.value;
+        if (typeof value === 'string' && unavailable.test(value.trim())) cell.value = '';
+      });
+    });
   });
 }
 
@@ -2221,6 +2443,13 @@ function findTemplateRowByLabel(
 
   for (let row = startRow; row <= finalRow; row += 1) {
     for (const column of columns) {
+      const value = rawCellValue(ws.getCell(row, column));
+      if (wanted.some(label => normalizeKey(value) === normalizeKey(label))) return row;
+    }
+  }
+
+  for (let row = startRow; row <= finalRow; row += 1) {
+    for (const column of columns) {
       const value = rawCellValue(
         ws.getCell(row, column)
       );
@@ -2310,6 +2539,7 @@ function mergeFallbackSourcesIntoCanonicalReportData(reportData, mappedSources =
   bank.rolling12Months ||= {};
   bank.monthly ||= {};
   const bankFallback = mappedSources.bank || {};
+  const bankStructuredOnly = bank.sourceKind === 'STRUCTURED';
   const bankAccount = bankFallback.accountDetails || {};
   let bankUsed = false;
 
@@ -2345,6 +2575,16 @@ function mergeFallbackSourcesIntoCanonicalReportData(reportData, mappedSources =
       bankUsed = true;
     }
   });
+  if (bankStructuredOnly) {
+    if (!isBlank(bankFallback.monthlyAverageBalance)) bank.latest.averageBalance = bankFallback.monthlyAverageBalance;
+    if (!isBlank(bankFallback.creditTxnTotal)) {
+      bank.latest.totalCredits = bankFallback.creditTxnTotal;
+      bank.rolling12Months.totalCredits = bankFallback.creditTxnTotal;
+      bank.rolling12Months.averageMonthlyCredits = bankFallback.creditTxnTotal / 12;
+    }
+    bank.sourceKind = 'EXCEL';
+    bankUsed = true;
+  }
   if (bankUsed && bank.sourceKind === 'NONE') bank.sourceKind = 'EXCEL';
 
   const itr = reportData.financials.itr || (reportData.financials.itr = {});
@@ -2355,6 +2595,7 @@ function mergeFallbackSourcesIntoCanonicalReportData(reportData, mappedSources =
   const itrGeneral = itrFallback.generalInformation || {};
   const itrPnl = itrFallback.profitAndLoss || {};
   const itrTax = itrFallback.taxCalculation || {};
+  const itrStructuredOnly = itr.sourceKind === 'STRUCTURED';
   let itrUsed = false;
 
   [
@@ -2386,11 +2627,38 @@ function mergeFallbackSourcesIntoCanonicalReportData(reportData, mappedSources =
   ].forEach(([key, value]) => { itrUsed = assignFallback(itr.previous, key, value) || itrUsed; });
 
   [
+    ['year', itrPnl.olderYear],
+    ['profitAfterTax', itrPnl.olderNetProfitAfterTax],
+    ['depreciation', itrPnl.olderDepreciation],
+    ['financeCost', itrPnl.olderInterestOnLoan],
+    ['grossReceipts', itrPnl.olderRevenueFromOperations],
+    ['agriculturalIncome', itrTax.olderAgriculturalIncome],
+    ['salaryIncome', itrTax.olderSalaryIncome],
+    ['grossTotalIncome', itrTax.olderGrossTotalIncome],
+    ['totalTaxableIncome', itrTax.olderTotalTaxableIncome]
+  ].forEach(([key, value]) => { itrUsed = assignFallback(itr.older, key, value) || itrUsed; });
+
+  [
     ['email', itrGeneral.email],
     ['mobile', itrGeneral.mobile],
     ['dob', itrGeneral.dob],
     ['registeredAddress', itrGeneral.address]
   ].forEach(([key, value]) => { itrUsed = assignFallback(itr, key, value) || itrUsed; });
+  if (itrStructuredOnly && !isBlank(itrPnl.netProfitAfterTax)) {
+    Object.assign(itr.latest, {
+      year: itrPnl.latestYear || itrGeneral.latestYear || itr.latest.year,
+      profitAfterTax: itrPnl.netProfitAfterTax,
+      depreciation: itrPnl.depreciation,
+      financeCost: itrPnl.interestOnLoan,
+      grossReceipts: itrPnl.revenueFromOperations,
+      agriculturalIncome: itrTax.agriculturalIncome,
+      salaryIncome: itrTax.salaryIncome,
+      grossTotalIncome: itrTax.grossTotalIncome,
+      totalTaxableIncome: itrTax.totalTaxableIncome
+    });
+    itr.sourceKind = 'EXCEL';
+    itrUsed = true;
+  }
   if (itrUsed && itr.sourceKind === 'NONE') itr.sourceKind = 'EXCEL';
 
   const gst = reportData.financials.gst || (reportData.financials.gst = {});
@@ -2426,6 +2694,8 @@ function mergeFallbackSourcesIntoCanonicalReportData(reportData, mappedSources =
   gstUsed = assignFallback(gst.latest, 'turnover', gstFallback.annualGstrSales) || gstUsed;
   gstUsed = assignFallback(gst.previous, 'year', gstFallback.previousAnnualGstrSalesYear) || gstUsed;
   gstUsed = assignFallback(gst.previous, 'turnover', gstFallback.previousAnnualGstrSales) || gstUsed;
+  gstUsed = assignFallback(gst.older, 'year', gstFallback.olderAnnualGstrSalesYear) || gstUsed;
+  gstUsed = assignFallback(gst.older, 'turnover', gstFallback.olderAnnualGstrSales) || gstUsed;
   gstUsed = assignFallback(gst.rolling12Months, 'turnover', gstFallback.last12MonthGstrSales) || gstUsed;
   gstUsed = assignFallback(gst.rolling12Months, 'averageMonthlySales', gstFallback.last12MonthGstrSales ? gstFallback.last12MonthGstrSales / 12 : null) || gstUsed;
 
@@ -2703,7 +2973,7 @@ function applyCanonicalAnalysisData(workbook, reportData) {
 
     setMonthlyMetricByLabel(bankWs, ['Credit Txns(₹)', 'Credit Txns'], bank.monthly?.creditTransactions || bank.monthly?.credits, bank.rolling12Months?.totalCredits, { startRow: 16 });
     setMonthlyMetricByLabel(bankWs, ['Monthly Average Balance', 'Average EOD Balance'], bank.monthly?.averageBalance, bank.latest?.averageBalance, { startRow: 16 });
-    setMonthlyMetricByLabel(bankWs, ['Bank Charges', 'Minimum Balance Charges'], bank.monthly?.bankCharges, bank.bankCharges, { startRow: 16 });
+    setMonthlyMetricByLabel(bankWs, 'Bank Charges', bank.monthly?.bankCharges, bank.bankCharges, { startRow: 16 });
     setMonthlyMetricByLabel(bankWs, ['Cash Deposit(₹)', 'Cash Deposit'], bank.monthly?.cashDeposit, bank.cashDeposit, { startRow: 16 });
     setMonthlyMetricByLabel(bankWs, ['Cash Withdrawal(₹)', 'Cash Withdrawal'], bank.monthly?.cashWithdrawal, bank.cashWithdrawal, { startRow: 16 });
     setMonthlyMetricByLabel(bankWs, ['I/W Cheque Bounces', 'Inward Cheque Bounces'], bank.monthly?.inwardBounces, bank.inwardChequeBounces, { startRow: 16 });
@@ -2747,6 +3017,7 @@ function applyCanonicalAnalysisData(workbook, reportData) {
       setFinancialByLabel(itrWs, label, itr.latest?.[key], 8, { startRow: 36, endRow: 76 });
     });
 
+    // The approved template has two P&L year columns (D:E is merged).
     setCell(itrWs, 'C141', itr.previous?.year);
     setCell(itrWs, 'D141', itr.latest?.year);
     [
@@ -3879,7 +4150,9 @@ async function fetchReportCase(caseId, tenantId, currentUser) {
           gst_profiles: { orderBy: { created_at: 'desc' }, take: 1 }
         }
       },
-      created_by: true,
+      created_by: {
+        select: { id: true, name: true, email: true, hierarchy_path: true }
+      },
       applicants: {
         include: {
           bureau_checks: { orderBy: { created_at: 'desc' }, take: 3 },
@@ -3917,7 +4190,8 @@ async function fetchReportCase(caseId, tenantId, currentUser) {
 async function generateLoanApplicationSummaryWorkbook({
   caseId,
   tenantId,
-  user
+  user,
+  sourceWorkbooks: suppliedSourceWorkbooks = null
 }) {
   if (!fs.existsSync(TEMPLATE_PATH)) {
     throw new Error(
@@ -3968,8 +4242,8 @@ async function generateLoanApplicationSummaryWorkbook({
    * never replace the approved report
    * template.
    */
-  const sourceWorkbooks =
-    await loadAvailableSourceWorkbooks(
+  const sourceWorkbooks = suppliedSourceWorkbooks
+    || await loadAvailableSourceWorkbooks(
       caseRecord,
       tenantId
     );
@@ -3999,6 +4273,19 @@ async function generateLoanApplicationSummaryWorkbook({
     caseRecord
   );
 
+  // Fill all cells supported by the approved compact report tables without
+  // changing their dimensions, merges, section order or column positions.
+  const approvedFormatSourceTables = applySourceTablesToApprovedFormat(
+    workbook,
+    sourceWorkbooks
+  );
+
+  // Report contract: available values are printed; unavailable values stay
+  // blank instead of displaying N/A/no-data placeholders.
+  clearUnavailableDataPlaceholders(
+    workbook
+  );
+
   /*
    * This must be the final presentation pass
    * so every worksheet gets one top-left
@@ -4016,6 +4303,7 @@ async function generateLoanApplicationSummaryWorkbook({
       tenantId: caseRecord.tenant_id,
       warnings: reportData.warnings,
       providerExcelSources: sourceWorkbooks.metadata,
+      approvedFormatSourceTables,
       sourceTrace: reportData.sourceTrace
     })
   );
@@ -4097,6 +4385,7 @@ module.exports = {
   applyCanonicalAnalysisData,
   fillCibilSheet,
   applyLoanApplicationSummaryPresentation,
+  clearUnavailableDataPlaceholders,
   mergeFallbackSourcesIntoCanonicalReportData,
   loadAvailableSourceWorkbooks,
   findCaseExcelDocument,
@@ -4107,6 +4396,7 @@ module.exports = {
   ensureWorksheetContract,
   validateWorkbook,
   copySourceWorkbookToSheet,
+  applySourceTablesToApprovedFormat,
   writeNoDataMessage,
   findStoredExcelDocument,
   isSafeHttpsSourceUrl,
@@ -4120,11 +4410,13 @@ module.exports = {
   extractAccountDetails,
   extractCreditTxnTotal,
   extractMonthlyAverageBalance,
+  extractBankCharges,
   calculateAverageFromMonthlyValues,
   calculateLast12MonthTotal,
   safeNumber,
   safeCurrency,
   safePercent,
+  loadSourceXlsx,
   generateLoanApplicationSummaryWorkbook,
   generateAndSaveLoanApplicationSummary
 };

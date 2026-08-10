@@ -183,10 +183,9 @@ function extractGstMonthlyRows(payload, type) {
 
   const direct = deepArray(payload, keyCandidates);
   if (direct.length) {
-    const nestedData = direct.length === 1 && direct[0]?.data && Array.isArray(direct[0].data)
-      ? direct[0].data
-      : direct;
-    return normalizeMonthlyRows(nestedData);
+    const nestedData = direct.flatMap(item => Array.isArray(item?.data) ? item.data : []);
+    const normalized = normalizeMonthlyRows(nestedData.length ? nestedData : direct);
+    if (normalized.length) return normalized;
   }
 
   const containers = deepFindValues(payload, keyCandidates, { limit: 20 });
@@ -197,6 +196,23 @@ function extractGstMonthlyRows(payload, type) {
     }
   }
   return [];
+}
+
+function extractGstFinancialYears(payload) {
+  const candidates = deepFindValues(payload, ['OverviewOfGSTReturns'], { arraysOnly: true, limit: 20 });
+  const rows = candidates.flatMap(value => Array.isArray(value) ? value : [])
+    .filter(row => row && typeof row === 'object' && !Array.isArray(row))
+    .map(row => ({
+      financial_year: row['Month Year'] ?? row.financial_year ?? row.financialYear,
+      turnover: firstNumber(
+        row['GSTR 1 Gross Sales (E=A+B-C+D)'],
+        row.gstr1GrossSales,
+        row.turnover
+      )
+    }))
+    .filter(row => /^FY\s*\d{4}[-/]\d{2,4}$/i.test(String(row.financial_year || '')) && row.turnover !== null);
+
+  return rows.sort((a, b) => String(b.financial_year).localeCompare(String(a.financial_year)));
 }
 
 function deterministicSort(records = []) {
@@ -499,7 +515,10 @@ function buildGst(record, applicantId, sourceTrace, warnings, caseId) {
   }
   const payloadRoots = [gstPayload];
   const extracted = extractGstDetails(gstPayload) || {};
-  const extractedSummaries = extractAllGstSummaries(gstPayload, null) || [];
+  const extractedSummaries = [
+    ...extractGstFinancialYears(gstPayload),
+    ...(extractAllGstSummaries(gstPayload, null) || [])
+  ];
   const summaries = [...extractedSummaries]
     .filter(row => number(row?.turnover) !== null)
     .sort((a, b) => String(b.financial_year || '').localeCompare(String(a.financial_year || '')));
