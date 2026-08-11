@@ -336,6 +336,12 @@ model Case {
   alert_flag    String?
   lead_date     DateTime @default(now())
   is_locked     Boolean  @default(false)
+  // Set once, permanently, the moment every purge-eligible record for this
+  // case (bureau/GST/ITR/bank — see DataRetentionSchedule) has been purged,
+  // whether by the nightly retention job or a manual admin request. Distinct
+  // from is_locked, which unlocks again on a stage rollback below
+  // PARTLY_DISBURSED (case.service.js) — this must never be unset once set.
+  data_purged_at DateTime?
 
   // Financial Summary Snapshot (Source of Truth is Disbursement table)
   sanctioned_amount             Decimal?  @db.Decimal(18, 2)
@@ -902,6 +908,7 @@ model GstrAnalyticsRequest {
 
   @@index([tenant_id])
   @@index([provider_request_id])
+  @@index([created_at])
   @@map("gstr_analytics_requests")
 }
 
@@ -985,6 +992,7 @@ model ItrAnalyticsRequest {
 
   @@index([tenant_id])
   @@index([reference_id])
+  @@index([created_at])
   @@map("itr_analytics_requests")
 }
 
@@ -1047,6 +1055,7 @@ model BankStatementAnalysisRequest {
 
   @@index([tenant_id])
   @@index([report_id])
+  @@index([created_at])
   @@map("bank_statement_analysis_requests")
 }
 
@@ -1091,6 +1100,7 @@ model BureauVerification {
   case_entity Case      @relation(fields: [case_id], references: [id])
   applicant   Applicant @relation(fields: [applicant_id], references: [id])
 
+  @@index([created_at])
   @@map("bureau_verifications")
 }
 
@@ -3074,19 +3084,89 @@ model VendorApiAuditLog {
   created_at             DateTime  @default(now())
 }
 
-model PurgeAuditLog {
-  id            Int      @id @default(autoincrement())
-  customer_id   Int
-  table_name    String
-  record_id     String
-  purged_fields Json
-  purged_at     DateTime @default(now())
+enum PurgeAuditStatus {
+  SUCCESS
+  FAILED
+}
 
-  customer Customer @relation(fields: [customer_id], references: [id])
+enum PurgeTriggerType {
+  SCHEDULED // nightly 1AM retention-expiry job
+  MANUAL    // admin-initiated, e.g. right-to-erasure / consent withdrawal request
+}
+
+model PurgeAuditLog {
+  id                    Int              @id @default(autoincrement())
+  // Nullable (relaxed from the original NOT NULL): BureauVerification has no
+  // direct customer_id — it's resolved via a join through Case. If that join
+  // ever fails to resolve, a NOT NULL FK would throw and destroy the one
+  // write that must never be lost: the audit row itself.
+  customer_id           Int?
+  tenant_id             Int?
+  table_name            String
+  record_id             String
+  purged_fields         Json
+  status                PurgeAuditStatus  @default(SUCCESS)
+  error_message         String?
+  files_deleted         Boolean           @default(false)
+  retention_schedule_id Int?
+  trigger_type          PurgeTriggerType  @default(SCHEDULED)
+  // Set only for MANUAL purges — which admin (User.id) triggered it and why.
+  // This is the durable evidence CT-004-DPP Step 1 ("Purging Request
+  // Register") calls for on admin-initiated purges.
+  triggered_by_user_id  Int?
+  reason                String?
+  purged_at             DateTime          @default(now())
+
+  customer           Customer?               @relation(fields: [customer_id], references: [id])
+  retention_schedule DataRetentionSchedule?  @relation(fields: [retention_schedule_id], references: [id])
 
   @@index([customer_id])
   @@index([purged_at])
+  @@index([status])
+  @@index([retention_schedule_id])
+  @@index([trigger_type])
   @@map("purge_audit_logs")
+}
+
+enum PurgeScheduleStatus {
+  PENDING // discovered by reconciliation, not yet due
+  QUEUED  // due, claimed by the 1AM scheduler, BullMQ job enqueued
+  PURGED  // worker completed successfully
+  FAILED  // worker exhausted retries; last_error holds why
+}
+
+// One row per sensitive record across the 4 purge-eligible tables — the
+// "when was this recorded, when does it expire" ledger. Decoupled from any
+// single table's own created_at so the nightly job can query one small,
+// indexed table instead of scanning all 4 source tables every run.
+model DataRetentionSchedule {
+  id           Int      @id @default(autoincrement())
+  // 'bureau_verifications' | 'gstr_analytics_requests' | 'itr_analytics_requests' | 'bank_statement_analysis_requests'
+  source_table String
+  // String so this one column can hold both BureauVerification's uuid id
+  // and the Int autoincrement ids of the other 3 tables.
+  record_id    String
+  tenant_id    Int?
+  customer_id  Int?
+  case_id      Int?
+  applicant_id Int?
+  // Copied from the source row's own created_at — "when the data was entered"
+  recorded_at  DateTime
+  // recorded_at + 179 days, computed once at schedule-row creation time
+  expiry_date  DateTime
+  status       PurgeScheduleStatus @default(PENDING)
+  purged_at    DateTime?
+  last_error   String?
+  attempts     Int      @default(0)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  purge_audit_logs PurgeAuditLog[]
+
+  @@unique([source_table, record_id])
+  @@index([status, expiry_date])
+  @@index([expiry_date])
+  @@map("data_retention_schedules")
 }
 
 

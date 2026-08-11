@@ -792,6 +792,14 @@ async function updateStage(caseId, tenantId, newStage, userId, tx = null) {
   // 1. Stage Change Idempotency
   if (existingCase.stage === newStage) return existingCase;
 
+  // 1a. Permanent purge lock — once every purge-eligible record for this
+  // case has been deleted (see dataRetentionPurge.service.js's
+  // maybeNotifyCasePurged), the case can never be reopened or progressed,
+  // unlike is_locked below which unlocks again on a stage rollback.
+  if (existingCase.data_purged_at) {
+    throw new Error('This case’s data has been permanently purged per data retention policy and can no longer be reopened.');
+  }
+
   // 2. Strict State Machine Dictionary
   const STATE_TRANSITIONS = {
     'DRAFT': ['LEAD_CREATED', 'REJECTED'],

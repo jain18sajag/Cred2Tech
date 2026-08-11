@@ -1,14 +1,11 @@
-const cron = require('node-cron');
-const purgeConfidentialData = require('./purgeConfidentialData');
+const { registerPurgeSchedulerJob } = require('./purgeScheduler');
+const { initPurgeWorker } = require('../workers/purge.worker');
 
 function initJobs() {
   console.log('Initializing scheduled cron jobs...');
 
-  // Run the data purge job every day at midnight server time (0 0 * * *)
-  cron.schedule('0 0 * * *', async () => {
-    console.log('[CRON] Running daily purgeConfidentialData job...');
-    await purgeConfidentialData();
-  });
+  registerPurgeSchedulerJob();
+  initPurgeWorker();
 
   console.log('Scheduled cron jobs initialized.');
 }

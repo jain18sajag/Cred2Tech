@@ -1,3 +1,22 @@
+-- Retroactive fix: this migration uses "DataPullType" and "DataPullFlowType"
+-- below, but on this repo's history those enums are only ever created by
+-- the LATER migration 20260620000001_stage_a_fixes — a real ordering bug
+-- (not just drift), invisible on every environment that already has them
+-- from a db push, but fatal on a genuinely fresh `prisma migrate deploy`.
+-- Guarded the same way 20260620000001_stage_a_fixes already guards its own
+-- (now redundant, still safe) copy of these same CREATE TYPE statements.
+DO $$ BEGIN
+    CREATE TYPE "DataPullType" AS ENUM ('GST', 'ITR', 'BANK', 'BUREAU');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE "DataPullFlowType" AS ENUM ('GST_AUTH_LINK', 'GST_OTP', 'GST_PASSWORD', 'ITR_FORM', 'ITR_ANALYTICS', 'BANK_STATEMENT', 'BUREAU');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
 -- CreateEnum
 CREATE TYPE "DataPullJobStatus" AS ENUM ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'EXPIRED', 'CANCELLED', 'AWAITING_CUSTOMER_ACTION');
 
