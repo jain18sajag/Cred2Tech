@@ -18,6 +18,7 @@ const { streamDocument } = require('../services/document.service');
 const { getStorageProvider } = require('../services/storage/index');
 const { logSensitiveAccess } = require('../utils/auditLog');
 const { sendCaughtError } = require('../utils/sendError');
+const { assertCaseNotPurged } = require('../utils/casePurgeGuard');
 
 // Mirrors document.service.js#buildStorageKey — year/month/uuid layout, kept
 // as the one thing recorded in the DB (never an absolute path), consistent
@@ -201,9 +202,10 @@ async function uploadDocument(req, res) {
             : { id: parseInt(case_id, 10), tenant_id: tenantId };
         const caseRecord = await prisma.case.findFirst({
             where: caseWhere,
-            select: { id: true, customer_id: true }
+            select: { id: true, customer_id: true, data_purged_at: true }
         });
         if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
+        assertCaseNotPurged(caseRecord);
 
         // If applicant_id is provided, verify it belongs to this case
         if (applicant_id) {
@@ -307,16 +309,23 @@ async function deleteDocument(req, res) {
         // touch documents belonging to their own case/customer.
         if (req.user.role === 'MSME_CUSTOMER') {
             if (doc.case_id) {
-                const caseObj = await prisma.case.findFirst({ where: { id: doc.case_id } });
+                const caseObj = await prisma.case.findFirst({ where: { id: doc.case_id }, select: { msme_customer_user_id: true, data_purged_at: true } });
                 if (!caseObj || caseObj.msme_customer_user_id !== req.user.id) {
                     return res.status(403).json({ error: 'Forbidden. MSME does not own this document.' });
                 }
+                assertCaseNotPurged(caseObj);
             } else if (doc.customer_id) {
-                const caseObj = await prisma.case.findFirst({ where: { customer_id: doc.customer_id, msme_customer_user_id: req.user.id } });
+                const caseObj = await prisma.case.findFirst({ where: { customer_id: doc.customer_id, msme_customer_user_id: req.user.id }, select: { id: true, data_purged_at: true } });
                 if (!caseObj) return res.status(403).json({ error: 'Forbidden. MSME does not own this customer document.' });
+                assertCaseNotPurged(caseObj);
             } else {
                 return res.status(403).json({ error: 'Forbidden' });
             }
+        } else if (doc.case_id) {
+            // Non-MSME roles (DSA/admin) previously had no purge check on delete
+            // at all — only the MSME-ownership branch above did a case lookup.
+            const caseObj = await prisma.case.findFirst({ where: { id: doc.case_id }, select: { data_purged_at: true } });
+            assertCaseNotPurged(caseObj);
         }
 
         if (doc.status === 'DELETED') {

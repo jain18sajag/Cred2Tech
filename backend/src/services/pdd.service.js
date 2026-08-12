@@ -1,4 +1,5 @@
 const prisma = require('../../config/db');
+const { assertCaseNotPurged } = require('../utils/casePurgeGuard');
 
 async function listPddTasks(user, filters) {
   const tenantId = user.tenant_id;
@@ -162,6 +163,7 @@ async function updatePddStatus(pddId, tenantId, userId, updateData) {
     if (!task) {
       throw new Error('PDD Task not found or unauthorized.');
     }
+    assertCaseNotPurged(task.case_entity);
 
     const oldStatus = task.status;
     const newStatus = updateData.status;

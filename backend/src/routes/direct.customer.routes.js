@@ -1,6 +1,6 @@
 const express = require('express');
 const {
-  getDashboard, getCases, updateProfile, initiateEligibility, startForm, updateBusinessDetails,
+  getDashboard, getCases, getPayments, updateProfile, initiateEligibility, startForm, updateBusinessDetails,
   updateLoanDetails, getPaymentConfig, createPaymentOrder, verifyPayment,
   runEligibility, getEligibilityResult, selectLender, submitCase
 } = require('../controllers/direct.customer.controller');
@@ -14,6 +14,7 @@ router.use(requireRole('MSME_CUSTOMER'));
 
 router.get('/dashboard', getDashboard);
 router.get('/cases', getCases);
+router.get('/payments', getPayments);
 router.put('/profile', updateProfile);
 
 router.post('/eligibility/initiate', initiateEligibility);

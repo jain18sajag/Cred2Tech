@@ -73,6 +73,9 @@ async function updateStatus(req, res) {
     if (error.message === 'PDD Task not found or unauthorized.') {
       return res.status(404).json({ error: error.message });
     }
+    if (error.status) {
+      return res.status(error.status).json({ error: error.message });
+    }
     console.error('[PDD Controller] Error updating status:', error);
     res.status(500).json({ error: 'Internal server error while updating PDD task status.' });
   }

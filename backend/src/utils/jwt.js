@@ -9,8 +9,11 @@ if (!JWT_SECRET) {
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '1d';
 const JWT_ALGORITHM = 'HS256';
 
-function generateToken(payload) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN, algorithm: JWT_ALGORITHM });
+function generateToken(payload, opts = {}) {
+  return jwt.sign(payload, JWT_SECRET, {
+    expiresIn: opts.expiresIn || JWT_EXPIRES_IN,
+    algorithm: JWT_ALGORITHM,
+  });
 }
 
 function verifyToken(token) {

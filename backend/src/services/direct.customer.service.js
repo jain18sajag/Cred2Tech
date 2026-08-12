@@ -8,6 +8,16 @@ const razorpayService = require('./razorpay.service');
 // disconnected rows. Collapse to one per customer_id, keeping whichever was
 // created most recently (the one actually being worked on now). Cases are
 // expected pre-sorted newest-first.
+//
+// Only ever apply this to a single-case *summary* (e.g. getDashboard's
+// activeCase) — never to a full case listing. createCaseFromExisting is
+// DSA-only (AddCustomerWizardPage's checkPanDuplicate/handleContinueAsNewCase
+// short-circuit for MSME actors), so it can never be the source of a
+// same-customer_id row here; the only way two cases in this MSME-scoped
+// dataset share a customer_id now is the "New Case" button — a genuinely
+// separate application the customer deliberately started and paid for a
+// second time, which must show up as its own row, not get silently merged
+// into the newer one.
 function dedupeByCustomer(cases) {
   const seen = new Set();
   const deduped = [];
@@ -46,7 +56,7 @@ const directCustomerService = {
           customer: true,
           applicants: { where: { is_primary: true } },
           case_payment: true,
-          assigned_dsa_user: { select: { name: true } }
+          assigned_dsa_user: { select: { name: true, tenant: { select: { name: true } } } }
         }
       }),
       // Unlinked paid payment (paid but case not started yet)
@@ -54,9 +64,11 @@ const directCustomerService = {
         where: { user_id: userId, case_id: null, status: 'PAID' },
         orderBy: { created_at: 'desc' }
       }),
-      // All-time cases for this customer, across every stage — deduped the
-      // same way as activeCase so the dashboard's count matches the list.
-      prisma.case.findMany({ where: { msme_customer_user_id: userId }, select: { customer_id: true, created_at: true }, orderBy: { created_at: 'desc' } })
+      // All-time cases for this customer, across every stage — must match
+      // getCases()'s count, so NOT deduped by customer_id either (see the
+      // note on dedupeByCustomer above): a customer with two paid "New Case"
+      // runs against the same business has two cases, not one.
+      prisma.case.findMany({ where: { msme_customer_user_id: userId }, select: { id: true }, orderBy: { created_at: 'desc' } })
     ]);
 
     // The dashboard's "your active case" summary should keep showing the
@@ -72,28 +84,44 @@ const directCustomerService = {
     // paymentStatus source of truth forever, so a genuinely new case the
     // customer starts afterwards never gets charged.
     const resumableCase = activeCase && !activeCase.msme_submitted_at ? activeCase : null;
-    const totalCasesCount = dedupeByCustomer(allCases).length;
+    const totalCasesCount = allCases.length;
 
     let paymentStatus = 'UNPAID';
-    let responseActiveCase = activeCase;
 
     if (unlinkedPayment) {
       paymentStatus = 'PAID';
-      responseActiveCase = null;
     } else if (resumableCase && resumableCase.case_payment?.status === 'PAID') {
       paymentStatus = 'PAID';
     }
 
     return {
       user,
-      activeCase: responseActiveCase,
+      // Always the customer's real latest non-terminal case, regardless of
+      // any unlinked payment sitting around — those are independent facts
+      // now that "New Case" lets a customer have both a fully submitted
+      // case AND a separate unclaimed payment for a next one. This used to
+      // null activeCase out entirely whenever unlinkedPayment existed (a
+      // leftover from before "New Case" existed, when an unlinked payment
+      // always meant "no case yet at all") — which blanked a customer's own
+      // dashboard case summary to "No Active Applications" the moment they
+      // paid for a second case, even though their first case was very much
+      // still active.
+      activeCase,
       // Case a fresh payment order (or the wizard's business-details save)
       // should attach to — null once the customer's existing case has been
       // submitted, so a new payment/case is started instead of silently
       // reusing the finished one.
       resumableCase: unlinkedPayment ? null : resumableCase,
       paymentStatus,
-      emptyState: !responseActiveCase,
+      // Distinct from paymentStatus: true only when there's a paid amount
+      // not yet claimed by any case (case_id: null) — i.e. genuinely
+      // spendable on a deliberately NEW case without paying again.
+      // paymentStatus alone can already read 'PAID' purely because an old,
+      // still-unsubmitted case's own payment is settled; that money is
+      // earmarked for that case, not free to skip the gateway for a second
+      // one (see msme/cases "New Case" button).
+      hasUnclaimedPayment: !!unlinkedPayment,
+      emptyState: !activeCase,
       totalCasesCount
     };
   },
@@ -117,11 +145,48 @@ const directCustomerService = {
         stage: true,
         created_at: true,
         updated_at: true,
-        assigned_dsa_user: { select: { name: true } },
+        data_purged_at: true,
+        assigned_dsa_user: { select: { name: true, tenant: { select: { name: true } } } },
         case_payment: { select: { status: true } },
       },
     });
-    return { cases: dedupeByCustomer(cases) };
+    // Every one of this customer's own cases, including multiple against the
+    // same business/PAN from separate "New Case" runs — do NOT dedupe by
+    // customer_id here (see the note on dedupeByCustomer above).
+    return { cases };
+  },
+
+  // Full payment history for this MSME customer — every CasePayment row
+  // regardless of status (INITIATED/PAID/FAILED), not just the PAID ones
+  // getDashboard cares about, so a customer can see an attempt that failed
+  // or never completed too. Scoped strictly to user_id, same as getCases.
+  // Deliberately omits razorpay_signature (verification-only, never needed
+  // client-side) and only returns the last 4 of the razorpay payment id, not
+  // the full order/payment ids, since those aren't otherwise sensitive but
+  // also serve no purpose being exposed in full to the browser.
+  getPayments: async (userId) => {
+    const payments = await prisma.casePayment.findMany({
+      where: { user_id: userId },
+      orderBy: { created_at: 'desc' },
+      select: {
+        id: true,
+        case_id: true,
+        purpose: true,
+        amount_inr: true,
+        currency: true,
+        status: true,
+        failure_reason: true,
+        razorpay_payment_id: true,
+        verified_at: true,
+        created_at: true,
+      },
+    });
+    return {
+      payments: payments.map((p) => ({
+        ...p,
+        razorpay_payment_id: p.razorpay_payment_id ? `••••${p.razorpay_payment_id.slice(-6)}` : null,
+      })),
+    };
   },
 
   updateProfile: async (userId, data) => {
@@ -166,9 +231,17 @@ const directCustomerService = {
     };
   },
 
-  createPaymentOrder: async (userId) => {
+  // forceNew: the "New Case" button's payment (msme/cases page) — a
+  // deliberate second case, not a continuation of whatever's currently
+  // resumable. Gated on hasUnclaimedPayment (not the general paymentStatus)
+  // and never pre-attached to the old resumable case, otherwise this order
+  // settling as PAID would silently fund that old case instead of the new
+  // one about to be created (case.service.js#createCase claims any
+  // still-unlinked PAID payment for whatever case it creates next).
+  createPaymentOrder: async (userId, { forceNew = false } = {}) => {
     const dashboard = await directCustomerService.getDashboard(userId);
-    if (dashboard.paymentStatus === 'PAID') {
+    const alreadyPaid = forceNew ? dashboard.hasUnclaimedPayment : dashboard.paymentStatus === 'PAID';
+    if (alreadyPaid) {
       throw new Error("Payment already completed or valid paid access exists");
     }
 
@@ -177,7 +250,7 @@ const directCustomerService = {
     // still resumable (unsubmitted) — never to an already-submitted one,
     // otherwise a fresh charge for what the customer intends as a new case
     // silently gets tied back to their old, finished application.
-    const activeCaseId = dashboard.resumableCase ? dashboard.resumableCase.id : null;
+    const activeCaseId = (!forceNew && dashboard.resumableCase) ? dashboard.resumableCase.id : null;
     const receipt = `msme_${userId}_${Date.now()}`;
     const order = await razorpayService.createOrder(config.amount_paise, receipt, 'INR');
 

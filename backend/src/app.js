@@ -162,6 +162,7 @@ const ticketRecipientRoutes = require('./routes/ticketRecipient.routes');
 const caseFeedbackRoutes = require('./routes/caseFeedback.routes');
 const contactSubmissionRoutes = require('./routes/contactSubmission.routes');
 const demoRequestRoutes = require('./routes/demoRequest.routes');
+const mfaRoutes = require('./routes/mfa.routes');
 
 // Rate Limiting Middlewares
 const loginLimiter = rateLimit({
@@ -218,6 +219,7 @@ apiRouter.use('/otp/verify', otpVerifyLimiter);
 apiRouter.use('/documents/upload', uploadLimiter);
 apiRouter.use('/cases/:caseId/applicants/:applicantId/salary-slips', uploadLimiter);
 
+apiRouter.use('/auth/mfa', mfaRoutes);
 apiRouter.use('/auth', authRoutes);
 apiRouter.use('/users', userRoutes);
 apiRouter.use('/tenants', tenantRoutes);

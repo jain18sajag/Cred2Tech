@@ -5,8 +5,8 @@
  * baseline NIST/OWASP recommendation.
  */
 function validatePasswordPolicy(password) {
-  if (typeof password !== 'string' || password.length < 8) {
-    throw Object.assign(new Error('Password must be at least 8 characters long.'), { status: 400 });
+  if (typeof password !== 'string' || password.length < 12) {
+    throw Object.assign(new Error('Password must be at least 12 characters long.'), { status: 400 });
   }
   if (password.length > 128) {
     throw Object.assign(new Error('Password must be at most 128 characters long.'), { status: 400 });

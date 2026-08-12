@@ -17,14 +17,20 @@ async function login(req, res) {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    const { user, token, activeSessionsCount } = await authService.loginUser(email, password, ipAddress);
+    const result = await authService.loginUser(email, password, ipAddress);
 
-    // Limit sessions
-    if (activeSessionsCount > 3) {
-      // You can notify or automatically revoke the oldest, or just pass a warning.
+    // Password verified — every account here now requires MFA, so a plain
+    // token/session is never issued directly from login. See
+    // src/services/mfa.service.js for the setup/challenge flow that follows.
+    if (result.mfaSetupRequired) {
+      return res.json({ mfaSetupRequired: true, setupToken: result.setupToken });
     }
-
-    res.json({ message: 'Login successful', user, token });
+    res.json({
+      mfaRequired: true,
+      methods: result.methods,
+      recoveryOptions: result.recoveryOptions,
+      challengeToken: result.challengeToken,
+    });
   } catch (error) {
     sendCaughtError(res, error, 'Authentication failed', 401);
   }

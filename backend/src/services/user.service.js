@@ -158,22 +158,37 @@ async function createUser(data, currentUser) {
 }
 
 async function getUsers(currentUser) {
+  // Self-registered direct-MSME borrowers are seeded into the CRED2TECH
+  // platform tenant (see direct.customer.auth.service.js) since they don't
+  // belong to any DSA — but this endpoint backs Employee/Team Management
+  // (getTeam in user.controller.js reuses it too), which must only ever
+  // list staff. Without this, every branch below that scopes by tenant_id
+  // pulls those customer accounts in alongside real team members purely
+  // because they share a tenant_id.
+  const excludeCustomers = { role: { name: { not: 'MSME_CUSTOMER' } } };
   let whereClause = {};
 
-  if (currentUser.role === 'SUPER_ADMIN') {
-    // SUPER_ADMIN can see everyone across all tenants
-    whereClause = {};
-  } else if (currentUser.role === 'DSA_ADMIN' || currentUser.role === 'CRED2TECH_MEMBER') {
-    // Admin for a specific tenant sees everyone in that tenant.
+  if (currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'DSA_ADMIN' || currentUser.role === 'CRED2TECH_MEMBER') {
+    // Admin for a specific tenant sees everyone in that tenant — including
+    // SUPER_ADMIN, whose own tenant IS the CRED2TECH platform tenant. This
+    // endpoint backs "Employee Management" (SUPER_ADMIN's nav label for
+    // /users): it used to have no tenant scoping at all for SUPER_ADMIN
+    // ("sees everyone across all tenants"), which meant Cred2Tech's own
+    // ~6-person team was buried under every DSA's entire workforce on their
+    // own team-management page. Cross-tenant employee lookups aren't needed
+    // elsewhere: CaseDetailPage's "Allocate to Employee" (the one place that
+    // could plausibly need it) is gated to DSA_ADMIN only, which was always
+    // correctly tenant-scoped here.
     // ('TENANT_ADMIN' was referenced here previously but is not a seeded role —
     // it could never match, silently forcing every non-SUPER_ADMIN/DSA_ADMIN caller
     // into the narrower hierarchy-only branch below.)
-    whereClause = { tenant_id: currentUser.tenant_id };
+    whereClause = { tenant_id: currentUser.tenant_id, ...excludeCustomers };
   } else {
     // Sub-roles (DSA_MEMBER, SUB_DSA) only see themselves and their subordinates
     whereClause = {
       tenant_id: currentUser.tenant_id,
-      hierarchy_path: { startsWith: currentUser.hierarchy_path }
+      hierarchy_path: { startsWith: currentUser.hierarchy_path },
+      ...excludeCustomers
     };
   }
 

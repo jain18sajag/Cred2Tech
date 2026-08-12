@@ -27,6 +27,15 @@ async function getCases(req, res) {
   }
 }
 
+async function getPayments(req, res) {
+  try {
+    const result = await directCustomerService.getPayments(req.user.id);
+    return res.status(200).json(result);
+  } catch (err) {
+    sendCaughtError(res, err, 'Failed to fetch payment history');
+  }
+}
+
 async function updateProfile(req, res) {
   try {
     const result = await directCustomerService.updateProfile(req.user.id, req.body);
@@ -83,7 +92,7 @@ async function getPaymentConfig(req, res) {
 
 async function createPaymentOrder(req, res) {
   try {
-    const result = await directCustomerService.createPaymentOrder(req.user.id);
+    const result = await directCustomerService.createPaymentOrder(req.user.id, { forceNew: !!req.body?.forceNew });
     return res.status(200).json(result);
   } catch (err) {
     sendCaughtError(res, err, 'Failed to create payment order');
@@ -143,7 +152,7 @@ async function submitCase(req, res) {
 }
 
 module.exports = {
-  getDashboard, getCases, updateProfile, initiateEligibility, startForm, updateBusinessDetails, updateLoanDetails,
+  getDashboard, getCases, getPayments, updateProfile, initiateEligibility, startForm, updateBusinessDetails, updateLoanDetails,
   getPaymentConfig, createPaymentOrder, verifyPayment, runEligibility, getEligibilityResult,
   selectLender, submitCase
 };

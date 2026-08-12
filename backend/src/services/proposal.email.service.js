@@ -5,6 +5,7 @@
 const nodemailer = require('nodemailer');
 const prisma = require('../../config/db');
 const { renderBrandedEmail, esc, BRAND_COLORS: C, BRAND_FONT: FONT } = require('../utils/emailTemplate');
+const { sendSms: sendProposalSms } = require('../utils/sms');
 
 // ── Build transporter (lazy-init) ─────────────────────────────────────────────
 let _transporter = null;
@@ -264,32 +265,6 @@ Disclaimer: This application is being submitted by ${dsaName} on behalf of the a
   `.trim();
 
   return { subject, bodyText, bodyHtml };
-}
-
-// ── Send SMS (Twilio or silent fallback) ──────────────────────────────────────
-async function sendProposalSms({ mobile, message }) {
-  if (!mobile) return { smsSent: false, reason: 'No mobile number' };
-
-  const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER } = process.env;
-
-  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) {
-    console.log('[sms] Twilio not configured — SMS skipped');
-    return { smsSent: false, reason: 'SMS provider not configured' };
-  }
-
-  try {
-    const twilio = require('twilio');
-    const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-    const msg = await client.messages.create({
-      body: message,
-      from: TWILIO_PHONE_NUMBER,
-      to: mobile.startsWith('+') ? mobile : `+91${mobile}`,
-    });
-    return { smsSent: true, sid: msg.sid };
-  } catch (err) {
-    console.error('[sms] Send failed:', err.message);
-    return { smsSent: false, reason: err.message };
-  }
 }
 
 // ── Orchestrator: Send by Proposal ID ─────────────────────────────────────────

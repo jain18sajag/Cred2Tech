@@ -18,6 +18,21 @@ async function authenticate(req, res, next) {
 
   try {
     const decoded = verifyToken(token);
+
+    // mfa_setup / mfa_pending tokens (issued after a correct password, before
+    // MFA is verified — see src/services/mfa.service.js) must never be usable
+    // here. Real session tokens (auth.service.js loginUser /
+    // finalizeChallengeSuccess) never carry a `purpose` claim, so any token
+    // that does is by definition not a real session and must be rejected —
+    // otherwise a leaked setup/challenge token would grant full access
+    // without ever completing the MFA step (no UserSession row exists for
+    // these yet, and the revocation check below only rejects a token if a
+    // matching, explicitly-deactivated session row is found — no row at all
+    // would otherwise pass through undetected).
+    if (decoded.purpose) {
+      return res.status(401).json({ error: 'Invalid token.' });
+    }
+
     const userId = decoded.id || decoded.userId;
 
     const user = await prisma.user.findUnique({

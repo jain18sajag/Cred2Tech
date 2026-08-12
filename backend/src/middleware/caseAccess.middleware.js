@@ -1,4 +1,5 @@
 const prisma = require('../../config/db');
+const { assertCaseNotPurged } = require('../utils/casePurgeGuard');
 
 async function requireCaseAccess(req, res, next) {
   try {
@@ -61,16 +62,29 @@ async function requireCaseAccess(req, res, next) {
         ...(user.role === 'MSME_CUSTOMER' || isPlatformAdmin ? {} : { tenant_id: user.tenant_id }),
         ...filter
       },
-      select: { id: true }
+      select: { id: true, data_purged_at: true }
     });
 
     if (!caseRecord) {
       return res.status(403).json({ error: 'Case not found or access denied due to permissions.' });
     }
 
+    // Reads (GET) always stay allowed — a purged case must remain fully
+    // viewable, only mutations are blocked. This single check covers every
+    // route wired through this middleware (case.routes.js, onboarding.routes.js
+    // — stage/applicant/product/document/income/obligation/ESR/proposal/
+    // send-to-lender/sanction/disbursement/allocation mutations all funnel
+    // through here) — see src/utils/casePurgeGuard.js.
+    if (req.method !== 'GET') {
+      assertCaseNotPurged(caseRecord);
+    }
+
     req.verifiedCaseId = caseId;
     next();
   } catch (err) {
+    if (err.status) {
+      return res.status(err.status).json({ error: err.message });
+    }
     console.error('[requireCaseAccess] Error checking case access:', err);
     res.status(500).json({ error: 'Internal server error during access verification.' });
   }

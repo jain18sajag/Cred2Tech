@@ -231,6 +231,7 @@ async function getDsaRecentCases(user, period, customStart, customEnd) {
       stage: true,
       lead_date: true,
       esr_generated: true,
+      data_purged_at: true,
     },
   });
 
@@ -243,6 +244,7 @@ async function getDsaRecentCases(user, period, customStart, customEnd) {
     stage: c.stage,
     lead_date: c.lead_date,
     next_action: deriveNextAction(c.stage),
+    data_purged_at: c.data_purged_at,
   }));
 }
 

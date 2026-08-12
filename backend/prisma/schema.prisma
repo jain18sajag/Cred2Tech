@@ -137,7 +137,7 @@ model User {
   // sibling app. `synced_pan_verified` gates that short-circuit; false/unset
   // means "no trustworthy cross-app verification yet," same fill-only-when-
   // empty rule as the rest of this cache.
-  synced_pan_verified             Boolean  @default(false)
+  synced_pan_verified             Boolean @default(false)
   synced_gstin                    String?
   synced_constitution_of_business String?
   synced_legal_name               String?
@@ -149,6 +149,20 @@ model User {
   synced_annual_turnover_range    String?
 
   locked_until DateTime?
+
+  // Mandatory MFA (see src/services/mfa.service.js). At least one of these
+  // two must be true once mfa_setup is complete — enforced app-side, never
+  // both false again after first setup. mfa_totp_secret is AES-256-GCM
+  // encrypted at rest via src/utils/fieldEncryption.js (random mode).
+  mfa_email_enabled Boolean @default(false)
+  mfa_totp_enabled  Boolean @default(false)
+  mfa_totp_secret   String?
+
+  mfa_backup_codes  MfaBackupCode[]
+  mfa_challenges    MfaChallenge[]
+  mfa_email_otps    MfaEmailOtp[]
+  mfa_audit_logs    MfaAuditLog[]   @relation("MfaAuditSubject")
+  mfa_actions_taken MfaAuditLog[]   @relation("MfaAuditActor")
 
   role         Role   @relation(fields: [role_id], references: [id])
   tenant       Tenant @relation(fields: [tenant_id], references: [id])
@@ -330,12 +344,12 @@ model Case {
   msme_selected_lender_esr_id Int? // EligibilityReportLender.id chosen
 
   // Pipeline Snapshot Fields (Performance Design)
-  customer_name String?
-  entity_type   String?
-  cibil_score   Int?
-  alert_flag    String?
-  lead_date     DateTime @default(now())
-  is_locked     Boolean  @default(false)
+  customer_name  String?
+  entity_type    String?
+  cibil_score    Int?
+  alert_flag     String?
+  lead_date      DateTime  @default(now())
+  is_locked      Boolean   @default(false)
   // Set once, permanently, the moment every purge-eligible record for this
   // case (bureau/GST/ITR/bank — see DataRetentionSchedule) has been purged,
   // whether by the nightly retention job or a manual admin request. Distinct
@@ -2930,6 +2944,87 @@ model UserSession {
   @@map("user_sessions")
 }
 
+// One-time recovery codes for MFA (10 generated at first setup / on
+// regeneration). Hashed with bcrypt like password_hash — never stored or
+// shown again after the single moment they're generated.
+model MfaBackupCode {
+  id         Int       @id @default(autoincrement())
+  user_id    Int
+  code_hash  String
+  used_at    DateTime?
+  created_at DateTime  @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@map("mfa_backup_codes")
+}
+
+// Short-lived state for the post-password, pre-session gap in the login
+// flow (see src/services/auth.service.js loginUser + src/services/mfa.service.js).
+// A challenge is bound 1:1 to the short-lived JWT issued after a correct
+// password — challenge_token_hash lets that JWT be single-use/revocable
+// server-side rather than relying on JWT expiry alone, and attempts caps
+// brute-forcing a 6-digit code within the token's validity window.
+model MfaChallenge {
+  id                   Int       @id @default(autoincrement())
+  user_id              Int
+  challenge_token_hash String    @unique
+  method               String?
+  otp_hash             String?
+  otp_expires_at       DateTime?
+  attempts             Int       @default(0)
+  expires_at           DateTime
+  consumed             Boolean   @default(false)
+  created_at           DateTime  @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@map("mfa_challenges")
+}
+
+// Pending email-OTP state for MFA *setup*/*change* (as opposed to
+// MfaChallenge, which is login-time only). One row per in-flight
+// verification: enabling email MFA for the first time (pending_email =
+// null, verifying the account's current email) or changing the MFA email
+// (pending_email = the new address — never sent to the old one, proves
+// ownership of the new address before the switch takes effect).
+model MfaEmailOtp {
+  id            Int      @id @default(autoincrement())
+  user_id       Int
+  pending_email String?
+  otp_hash      String
+  attempts      Int      @default(0)
+  expires_at    DateTime
+  created_at    DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@map("mfa_email_otps")
+}
+
+// Append-only audit trail for MFA lifecycle events — setup, method changes,
+// login verification outcomes, admin-forced resets. actor_id is set only
+// when an admin acted on someone else's MFA (distinct from user_id, the
+// subject); both are needed since an admin reset means actor != subject.
+model MfaAuditLog {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  action     String
+  actor_id   Int?
+  ip_address String?
+  detail     String?
+  created_at DateTime @default(now())
+
+  user  User  @relation("MfaAuditSubject", fields: [user_id], references: [id], onDelete: Cascade)
+  actor User? @relation("MfaAuditActor", fields: [actor_id], references: [id], onDelete: SetNull)
+
+  @@index([user_id])
+  @@map("mfa_audit_log")
+}
+
 /// Append-only audit trail for reads of sensitive customer data (documents,
 /// KYC/PAN profiles, bureau pulls) — an RBI requirement this backend
 /// previously had no equivalent of at all (VAPT H-7). No FK relations on
@@ -3091,7 +3186,7 @@ enum PurgeAuditStatus {
 
 enum PurgeTriggerType {
   SCHEDULED // nightly 1AM retention-expiry job
-  MANUAL    // admin-initiated, e.g. right-to-erasure / consent withdrawal request
+  MANUAL // admin-initiated, e.g. right-to-erasure / consent withdrawal request
 }
 
 model PurgeAuditLog {
@@ -3105,20 +3200,20 @@ model PurgeAuditLog {
   table_name            String
   record_id             String
   purged_fields         Json
-  status                PurgeAuditStatus  @default(SUCCESS)
+  status                PurgeAuditStatus @default(SUCCESS)
   error_message         String?
-  files_deleted         Boolean           @default(false)
+  files_deleted         Boolean          @default(false)
   retention_schedule_id Int?
-  trigger_type          PurgeTriggerType  @default(SCHEDULED)
+  trigger_type          PurgeTriggerType @default(SCHEDULED)
   // Set only for MANUAL purges — which admin (User.id) triggered it and why.
   // This is the durable evidence CT-004-DPP Step 1 ("Purging Request
   // Register") calls for on admin-initiated purges.
   triggered_by_user_id  Int?
   reason                String?
-  purged_at             DateTime          @default(now())
+  purged_at             DateTime         @default(now())
 
-  customer           Customer?               @relation(fields: [customer_id], references: [id])
-  retention_schedule DataRetentionSchedule?  @relation(fields: [retention_schedule_id], references: [id])
+  customer           Customer?              @relation(fields: [customer_id], references: [id])
+  retention_schedule DataRetentionSchedule? @relation(fields: [retention_schedule_id], references: [id])
 
   @@index([customer_id])
   @@index([purged_at])
@@ -3130,9 +3225,9 @@ model PurgeAuditLog {
 
 enum PurgeScheduleStatus {
   PENDING // discovered by reconciliation, not yet due
-  QUEUED  // due, claimed by the 1AM scheduler, BullMQ job enqueued
-  PURGED  // worker completed successfully
-  FAILED  // worker exhausted retries; last_error holds why
+  QUEUED // due, claimed by the 1AM scheduler, BullMQ job enqueued
+  PURGED // worker completed successfully
+  FAILED // worker exhausted retries; last_error holds why
 }
 
 // One row per sensitive record across the 4 purge-eligible tables — the
@@ -3140,7 +3235,7 @@ enum PurgeScheduleStatus {
 // single table's own created_at so the nightly job can query one small,
 // indexed table instead of scanning all 4 source tables every run.
 model DataRetentionSchedule {
-  id           Int      @id @default(autoincrement())
+  id           Int                 @id @default(autoincrement())
   // 'bureau_verifications' | 'gstr_analytics_requests' | 'itr_analytics_requests' | 'bank_statement_analysis_requests'
   source_table String
   // String so this one column can hold both BureauVerification's uuid id
@@ -3157,9 +3252,9 @@ model DataRetentionSchedule {
   status       PurgeScheduleStatus @default(PENDING)
   purged_at    DateTime?
   last_error   String?
-  attempts     Int      @default(0)
-  created_at   DateTime @default(now())
-  updated_at   DateTime @updatedAt
+  attempts     Int                 @default(0)
+  created_at   DateTime            @default(now())
+  updated_at   DateTime            @updatedAt
 
   purge_audit_logs PurgeAuditLog[]
 
@@ -3168,7 +3263,6 @@ model DataRetentionSchedule {
   @@index([expiry_date])
   @@map("data_retention_schedules")
 }
-
 
 // --- Feedback / Support Ticket System ---
 // One "Submit Feedback" form (MSME self-service + DSA/staff) feeds this
@@ -3342,7 +3436,7 @@ model CaseFeedback {
 // scalars rather than a User relation since there's no admin-identity need
 // beyond "seen or not".
 model ContactSubmission {
-  id            Int    @id @default(autoincrement())
+  id            Int     @id @default(autoincrement())
   full_name     String
   business_name String
   mobile_number String
@@ -3373,7 +3467,7 @@ model ContactSubmission {
 // here vs. `role`/`help_type` there) and the admin panel lists them as
 // distinct tabs.
 model DemoRequest {
-  id            Int    @id @default(autoincrement())
+  id            Int     @id @default(autoincrement())
   full_name     String
   business_name String
   mobile_number String

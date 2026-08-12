@@ -35,19 +35,24 @@ async function createCase(customer_id, product_type, tenant_id, user_id) {
     throw Object.assign(new Error('Customer not found or unauthorized.'), { status: 403 });
   }
 
-  // Idempotency check: Look for an existing DRAFT MSME case for this customer
-  // in the last 24 hours. Scoped to category: MSME too — the same
+  // Idempotency check: absorb an accidental double-click / page-reload
+  // retry of the exact same "create case" request landing here twice in a
+  // row — not a deliberate second case sometime later. This used to look
+  // back 24 hours, which meant the MSME self-service portal's "New Case"
+  // button could silently hand back yesterday's abandoned draft instead of
+  // actually starting a new one. Scoped to category: MSME too — the same
   // customer/PAN can have a recent SALARIED draft going at the same time,
   // and that must never be handed back here as if it were this MSME case.
-  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const idempotencyWindow = new Date(Date.now() - 2 * 60 * 1000);
   const existingDraftCase = await prisma.case.findFirst({
     where: {
       customer_id: customer.id,
       tenant_id: tenant_id,
       stage: 'DRAFT',
       category: 'MSME',
-      created_at: { gte: twentyFourHoursAgo }
-    }
+      created_at: { gte: idempotencyWindow }
+    },
+    orderBy: { created_at: 'desc' }
   });
 
   if (existingDraftCase) {

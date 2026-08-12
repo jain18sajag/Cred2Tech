@@ -1,4 +1,5 @@
 const prisma = require('../../config/db');
+const { assertCaseNotPurged } = require('../utils/casePurgeGuard');
 
 const VALID_TYPES = ['PARTIAL', 'FULL'];
 
@@ -23,9 +24,10 @@ const caseFeedbackService = {
 
     const caseRecord = await prisma.case.findFirst({
       where: { id: caseId, tenant_id: actor.tenant_id },
-      select: { id: true },
+      select: { id: true, data_purged_at: true },
     });
     if (!caseRecord) throw Object.assign(new Error('Case not found.'), { status: 404 });
+    assertCaseNotPurged(caseRecord);
 
     return prisma.caseFeedback.upsert({
       where: { case_id_type: { case_id: caseId, type } },

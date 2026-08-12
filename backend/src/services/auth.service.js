@@ -1,10 +1,10 @@
 const prisma = require('../../config/db');
 const { comparePassword, hashPassword } = require('../utils/hash');
-const { generateToken } = require('../utils/jwt');
 const crypto = require('crypto');
 const { sendMail } = require('../utils/mailer');
 const { renderBrandedEmail } = require('../utils/emailTemplate');
 const { validatePasswordPolicy } = require('../utils/passwordPolicy');
+const mfaService = require('./mfa.service');
 
 async function loginUser(email, password, ipAddress) {
   const normalizedEmail = email.toLowerCase().trim();
@@ -63,47 +63,27 @@ async function loginUser(email, password, ipAddress) {
     throw new Error('Invalid email or password');
   }
 
-  // Success login
+  // Password verified. failed_login_attempts/locked_until reset immediately
+  // (brute-force protection is about the password guess, which has now
+  // succeeded) — but last_login_at, the real session JWT, and the
+  // UserSession row are NOT issued yet: login isn't complete until MFA is
+  // verified too (see src/services/mfa.service.js). Every account in this
+  // path (staff/DSA/admin) has mandatory MFA; MSME_CUSTOMER borrowers never
+  // reach this function (separate direct.customer.auth.service.js flow).
   await prisma.loginAttempt.create({ data: { email: normalizedEmail, ip_address: ipAddress, success: true }});
 
   await prisma.user.update({
     where: { id: user.id },
-    data: { 
-      last_login_at: now,
-      failed_login_attempts: 0,
-      locked_until: null
-    },
+    data: { failed_login_attempts: 0, locked_until: null },
   });
 
-  const tokenPayload = {
-    userId: user.id,
-    roleId: user.role_id,
-    roleName: user.role.name,
-    tenantId: user.tenant_id,
-    hierarchyLevel: user.hierarchy_level,
-    hierarchyPath: user.hierarchy_path,
-  };
+  if (!mfaService.hasMfaEnabled(user)) {
+    const setupToken = mfaService.issueSetupToken(user);
+    return { mfaSetupRequired: true, setupToken };
+  }
 
-  const token = generateToken(tokenPayload);
-
-  // Manage Sessions
-  await prisma.userSession.create({
-    data: {
-      user_id: user.id,
-      session_token: token,
-      ip_address: ipAddress,
-      is_active: true,
-      last_activity_at: now
-    }
-  });
-
-  const activeSessionsCount = await prisma.userSession.count({
-    where: { user_id: user.id, is_active: true }
-  });
-
-  const { password_hash, ...userWithoutPassword } = user;
-
-  return { user: { ...userWithoutPassword, last_login_at: now }, token, activeSessionsCount };
+  const { challengeToken, methods, recoveryOptions } = await mfaService.issueChallenge(user);
+  return { mfaRequired: true, challengeToken, methods, recoveryOptions };
 }
 
 async function initiatePasswordReset(email) {
