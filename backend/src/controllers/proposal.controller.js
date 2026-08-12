@@ -165,7 +165,10 @@ async function send(req, res) {
         res.json({ success: true, ...result });
     } catch (err) {
         console.error('[Proposal] send error:', err.message);
-        res.status(500).json({ error: 'Failed to send proposal.' });
+        // Surface the real reason (e.g. "attach at least one document",
+        // "no email contact configured") instead of a generic message — the
+        // DSA needs to know what to fix, not just that it failed.
+        res.status(400).json({ error: err.message || 'Failed to send proposal.' });
     }
 }
 

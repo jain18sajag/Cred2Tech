@@ -122,6 +122,18 @@ async function runBureauVerification(req, res) {
             pincode: applicant.pincode || panProfile?.principal_pincode || '560026'
          };
 
+         // Veri5 (credit score) and Experian (obligations/tradelines) are two
+         // independent vendor calls with no dependency on each other — they
+         // used to share one try/catch, so a Veri5 gateway timeout (a vendor
+         // infrastructure issue, seen in practice as sandbox 504s) meant
+         // Experian never even ran. The frontend then reported "no
+         // obligations found... may be missing valid PAN/DOB data", which is
+         // wrong on both counts: it's not a data problem, and obligations
+         // were never actually attempted. Each now gets its own try/catch so
+         // one vendor's outage never silently skips the other's pull.
+         let scoreSucceeded = false;
+         let obligationsSucceeded = false;
+
          try {
             const response = await walletService.executePaidApi({
                apiCode: 'BUREAU_PULL',
@@ -137,22 +149,14 @@ async function runBureauVerification(req, res) {
                }
             });
 
-            // Immediately trigger Experian to get obligations
-            // Not running through wallet as it might not be configured as a paid API yet, or we want it silently alongside
-            await experianService.runExperianCheck({
-               caseId: caseId,
-               applicantId: applicant.id,
-               payloadData: experianPayload
-            });
+            scoreSucceeded = true;
 
-            successCount++;
-            
             // Sync the DB state regardless of whether this was a live pull or a cached response
             await prisma.applicant.update({
                where: { id: applicant.id },
-               data: { 
-                  bureau_fetched: true, 
-                  cibil_score: response.score ? parseInt(response.score, 10) : null 
+               data: {
+                  bureau_fetched: true,
+                  cibil_score: response.score ? parseInt(response.score, 10) : null
                }
             });
 
@@ -162,9 +166,23 @@ async function runBureauVerification(req, res) {
                results.coApplicantScores.push({ applicantId: applicant.id, score: response.score });
             }
          } catch (e) {
-            console.error(`Bureau failed for applicant ${applicant.id}:`, e.message);
-            results.errors.push({ applicantId: applicant.id, error: e.message });
+            console.error(`Bureau score pull failed for applicant ${applicant.id}:`, e.message);
+            results.errors.push({ applicantId: applicant.id, stage: 'SCORE', error: e.message });
          }
+
+         try {
+            await experianService.runExperianCheck({
+               caseId: caseId,
+               applicantId: applicant.id,
+               payloadData: experianPayload
+            });
+            obligationsSucceeded = true;
+         } catch (e) {
+            console.error(`Experian obligations pull failed for applicant ${applicant.id}:`, e.message);
+            results.errors.push({ applicantId: applicant.id, stage: 'OBLIGATIONS', error: e.message });
+         }
+
+         if (scoreSucceeded || obligationsSucceeded) successCount++;
       }
 
       // Only mark COMPLETE if at least one applicant was processed

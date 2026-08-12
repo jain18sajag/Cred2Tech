@@ -3634,7 +3634,19 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
             isEligible = false;
             failure_reasons.push('GRP gross receipt not available');
         }
-        if (!grpResolution.profileText && ['INDIA_SHELTERS', 'PIRAMAL', 'TATA_HOUSING'].includes(lenderPolicy.key)) {
+        // GRP is a professional-income-only method — "Are You A Professional?"
+        // must be explicitly Yes. This used to only be enforced for 3 lenders
+        // (India Shelters/Piramal/Tata Housing) via an indirect "no profession
+        // text present" signal below — resolveGrpMultiplierForPolicy's
+        // defaultMultiplier falls back to a hardcoded 3 for ICICI/HDFC/DEFAULT
+        // regardless of profession, so GRP still evaluated (and could come back
+        // eligible) for those lenders even when the customer said No. Checking
+        // esr.is_professional directly here covers every lender.
+        if (esr.is_professional !== true) {
+            isEligible = false;
+            failure_reasons.push('PROFESSION_REQUIRED_FOR_GRP');
+            policyWarnings.push('PROFESSION_REQUIRED_FOR_GRP');
+        } else if (!grpResolution.profileText && ['INDIA_SHELTERS', 'PIRAMAL', 'TATA_HOUSING'].includes(lenderPolicy.key)) {
             isEligible = false;
             failure_reasons.push('PROFESSION_REQUIRED_FOR_GRP');
             policyWarnings.push('PROFESSION_REQUIRED_FOR_GRP');

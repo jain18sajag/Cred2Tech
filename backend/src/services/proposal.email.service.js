@@ -6,6 +6,7 @@ const nodemailer = require('nodemailer');
 const prisma = require('../../config/db');
 const { renderBrandedEmail, esc, BRAND_COLORS: C, BRAND_FONT: FONT } = require('../utils/emailTemplate');
 const { sendSms: sendProposalSms } = require('../utils/sms');
+const { resolveCustomerName } = require('../utils/entityName');
 
 // ── Build transporter (lazy-init) ─────────────────────────────────────────────
 let _transporter = null;
@@ -81,7 +82,13 @@ function buildProposalEmailFromTemplate({
   tenant,
   documents
 }) {
-  const customerName = customer.name || 'Customer';
+  // Customer has no `name`/`company_type` columns — those were always
+  // undefined, silently falling back to "Customer" / "—" on every proposal
+  // email. resolveCustomerName() is the app's existing canonical fallback
+  // chain (proprietor_name → legal_business_name → pan_holder_name →
+  // business_name); entity_type is the real column for constitution
+  // (Proprietorship/Partnership/Pvt Ltd/...).
+  const customerName = resolveCustomerName(customer, 'Customer');
   const businessName = customer.business_name || customer.name || 'Customer';
   const productType = proposal.product_type || caseData.product_type || 'LAP';
 
@@ -134,7 +141,7 @@ function buildProposalEmailFromTemplate({
   const customerLoanRows = [
     ['Customer Name', esc(customerName)],
     ['Business Name', esc(customer.business_name || '—')],
-    ['Entity Type', esc(customer.company_type || '—')],
+    ['Entity Type', esc(customer.entity_type || '—')],
     ['Product Type', esc(productType)],
     ['Loan Amount Required', `₹${amountLakhs} Lakhs`, `font-weight:800;color:${C.emerald};`],
     ['Loan Tenor Required', `${tenureMonths} Months`],
@@ -229,7 +236,7 @@ I hope this message finds you well. I am writing to introduce a loan application
 Customer & Loan Details
 - Customer Name: ${customerName}
 - Business Name: ${customer.business_name || '—'}
-- Entity Type: ${customer.company_type || '—'}
+- Entity Type: ${customer.entity_type || '—'}
 - Product Type: ${productType}
 - Loan Amount Required: ₹${amountLakhs} Lakhs
 - Loan Tenor Required: ${tenureMonths} Months
@@ -298,11 +305,51 @@ async function dispatchProposalEmailByProposalId({ proposalId, tenantId, userId,
   const tenant = caseData.tenant;
   const esrFinancials = caseData.esr_financials || {};
   const applicants = caseData.applicants;
-  const selectedDocs = proposal.documents.map(pd => pd.document);
+  // JSON files are raw data exports, never required in a lender-facing
+  // proposal — excluded here as a safety net regardless of how a document
+  // got attached (e.g. a stale attachment predating this exclusion, or any
+  // future path that attaches documents without going through the UI's own
+  // category filtering).
+  const isJsonDoc = (doc) =>
+    doc.mime_type === 'application/json' ||
+    doc.extension?.toLowerCase() === 'json' ||
+    (doc.original_file_name || doc.file_name || '').toLowerCase().endsWith('.json');
+
+  const selectedDocs = proposal.documents.map(pd => pd.document).filter(doc => !isJsonDoc(doc));
 
   if (selectedDocs.length === 0) {
     throw new Error('Please attach at least one document before sending proposal.');
   }
+
+  // Fallback for proposals auto-created by the Send / Send-to-Other-Lender
+  // buttons before those endpoints resolved a platform lender_id — those rows
+  // have tenure_months/requested_amount left null because createProposalDraft
+  // had nothing to look up an EligibilityReportLender row by. Resolve it now
+  // from the case's latest ESR result via tenant_lender_id (always present)
+  // or lender_id, so an already-broken proposal's email still shows the
+  // lender's actual eligible tenure/amount instead of a permanent "—".
+  let effectiveTenureMonths = proposal.tenure_months;
+  let effectiveRequestedAmount = proposal.requested_amount;
+  if (!effectiveTenureMonths || !effectiveRequestedAmount) {
+    const report = await prisma.eligibilityReport.findFirst({
+      where: { case_id: caseData.id, is_latest: true },
+    });
+    if (report && (proposal.lender_id || proposal.tenant_lender_id)) {
+      const lenderRow = await prisma.eligibilityReportLender.findFirst({
+        where: {
+          esr_id: report.id,
+          ...(proposal.lender_id
+            ? { lender_id: String(proposal.lender_id) }
+            : { tenant_lender_id: Number(proposal.tenant_lender_id) }),
+        },
+      });
+      if (lenderRow) {
+        effectiveTenureMonths = effectiveTenureMonths || lenderRow.tenure_months;
+        effectiveRequestedAmount = effectiveRequestedAmount || lenderRow.eligible_amount;
+      }
+    }
+  }
+  const effectiveProposal = { ...proposal, tenure_months: effectiveTenureMonths, requested_amount: effectiveRequestedAmount };
 
   // 2. Resolve lender contact
   const { resolveContactForLender, resolveContactById } = require('./tenantLender.service');
@@ -325,46 +372,33 @@ async function dispatchProposalEmailByProposalId({ proposalId, tenantId, userId,
     throw new Error('No email contact configured for this lender/product. Please check Lender Contacts.');
   }
 
-  // 3. Fetch sender (DSA user) and related hierarchy
-  const sender = await prisma.user.findUnique({
-    where: { id: Number(userId) },
-    select: { id: true, name: true, email: true, mobile: true, designation: true, manager_id: true }
-  });
-
-  // Fetch Case Creator
-  let caseCreator = null;
-  if (caseData.created_by) {
-    caseCreator = await prisma.user.findUnique({
-      where: { id: caseData.created_by },
-      select: { email: true, manager_id: true }
-    });
-  }
-
-  // Fetch Managers
-  let creatorManager = null;
-  if (caseCreator?.manager_id) {
-    creatorManager = await prisma.user.findUnique({
-      where: { id: caseCreator.manager_id },
+  // 3. Fetch sender (DSA user) and related hierarchy — these 3 are
+  // independent of each other (only the manager lookups below depend on
+  // their results), so run them in parallel rather than paying 3 sequential
+  // round-trips.
+  const [sender, caseCreator, dsaAdmins] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: Number(userId) },
+      select: { id: true, name: true, email: true, mobile: true, designation: true, manager_id: true }
+    }),
+    caseData.created_by
+      ? prisma.user.findUnique({ where: { id: caseData.created_by }, select: { email: true, manager_id: true } })
+      : Promise.resolve(null),
+    prisma.user.findMany({
+      where: { tenant_id: Number(tenantId), role: { name: 'DSA' } },
       select: { email: true }
-    });
-  }
+    }),
+  ]);
 
-  let senderManager = null;
-  if (sender?.manager_id && sender.manager_id !== caseCreator?.manager_id) {
-    senderManager = await prisma.user.findUnique({
-      where: { id: sender.manager_id },
-      select: { email: true }
-    });
-  }
-
-  // Fetch DSA Admins
-  const dsaAdmins = await prisma.user.findMany({
-    where: {
-      tenant_id: Number(tenantId),
-      role: { name: 'DSA' }
-    },
-    select: { email: true }
-  });
+  // Fetch Managers — also independent of each other, given sender/caseCreator above.
+  const [creatorManager, senderManager] = await Promise.all([
+    caseCreator?.manager_id
+      ? prisma.user.findUnique({ where: { id: caseCreator.manager_id }, select: { email: true } })
+      : Promise.resolve(null),
+    (sender?.manager_id && sender.manager_id !== caseCreator?.manager_id)
+      ? prisma.user.findUnique({ where: { id: sender.manager_id }, select: { email: true } })
+      : Promise.resolve(null),
+  ]);
 
   // Consolidate CC list
   const ccEmails = new Set();
@@ -375,9 +409,47 @@ async function dispatchProposalEmailByProposalId({ proposalId, tenantId, userId,
   dsaAdmins.forEach(admin => { if (admin.email) ccEmails.add(admin.email); });
   const ccEmailString = Array.from(ccEmails).join(', ');
 
-  // 4. Build content
+  // 4. Resolve attachments — every document is written straight to whichever
+  // storage provider it was uploaded under (S3 by default, see
+  // services/storage/index.js), never to this server's local disk, so the
+  // old "check UPLOADS_ROOT + storage_path on local disk" logic never found
+  // anything and silently sent zero attachments while the email body still
+  // listed every document as "enclosed". downloadToTempFile() knows how to
+  // fetch from whichever provider each document actually lives in.
+  const { downloadToTempFile } = require('./document.service');
+  const fs = require('fs');
+
+  // Downloaded in parallel — these were previously fetched one at a time
+  // (await inside a for-loop), so a 4-document proposal paid the sum of all
+  // 4 S3 round-trips sequentially instead of the cost of the single slowest
+  // one. This was the single biggest contributor to "sending takes time".
+  const downloadResults = await Promise.allSettled(
+    selectedDocs.map(doc => downloadToTempFile(doc).then(tempPath => ({ doc, tempPath })))
+  );
+
+  const attachedDocs = [];
+  const tempFilePaths = [];
+  downloadResults.forEach((result, i) => {
+    if (result.status === 'fulfilled') {
+      attachedDocs.push(result.value);
+      tempFilePaths.push(result.value.tempPath);
+    } else {
+      const doc = selectedDocs[i];
+      console.error(`[PROPOSAL SEND] Failed to fetch document #${doc.id} (${doc.storage_path}) from storage:`, result.reason?.message);
+    }
+  });
+
+  const attachments = attachedDocs.map(({ doc, tempPath }) => ({
+    filename: doc.original_file_name || doc.file_name || `${doc.document_type}.pdf`,
+    path: tempPath,
+  }));
+
+  // 5. Build content — the "Documents Enclosed" list must reflect only the
+  // documents that were actually pulled from storage above, never the full
+  // selectedDocs set, so the email body can never claim something is
+  // attached when the storage fetch silently failed.
   const { subject, bodyText, bodyHtml } = buildProposalEmailFromTemplate({
-    proposal,
+    proposal: effectiveProposal,
     caseData,
     customer,
     applicants,
@@ -385,33 +457,15 @@ async function dispatchProposalEmailByProposalId({ proposalId, tenantId, userId,
     lenderContact: contact,
     sender,
     tenant,
-    documents: selectedDocs
+    documents: attachedDocs.map(a => a.doc)
   });
-
-  // 5. Resolve attachments
-  const fs = require('fs');
-  const path = require('path');
-  const UPLOADS_ROOT = path.resolve(process.env.UPLOADS_ROOT || './uploads');
-
-  const attachments = selectedDocs
-    .filter(d => {
-      if (d.storage_path) {
-        const absPath = path.resolve(UPLOADS_ROOT, d.storage_path);
-        return fs.existsSync(absPath);
-      }
-      return d.source_url && d.source_url.startsWith('http');
-    })
-    .map(d => ({
-      filename: d.original_file_name || d.file_name || `${d.document_type}.pdf`,
-      path: d.storage_path ? path.resolve(UPLOADS_ROOT, d.storage_path) : d.source_url,
-    }));
 
   // 6. Mandatory Runtime Logging
   console.log('[PROPOSAL SEND] Using template email builder');
   console.log('[PROPOSAL SEND] proposal_id:', proposal.id);
-  console.log('[PROPOSAL SEND] requested_amount:', proposal.requested_amount);
-  console.log('[PROPOSAL SEND] tenure_months:', proposal.tenure_months);
-  console.log('[PROPOSAL SEND] document_count:', selectedDocs.length);
+  console.log('[PROPOSAL SEND] requested_amount:', effectiveProposal.requested_amount);
+  console.log('[PROPOSAL SEND] tenure_months:', effectiveProposal.tenure_months);
+  console.log('[PROPOSAL SEND] document_count:', selectedDocs.length, '| attached:', attachedDocs.length);
   console.log('[PROPOSAL SEND] email_subject:', subject);
 
   // 7. Send
@@ -452,9 +506,15 @@ async function dispatchProposalEmailByProposalId({ proposalId, tenantId, userId,
     emailSent = true;
   }
 
+  // Clean up the temp files downloadToTempFile() wrote to disk — nodemailer
+  // has already read them by this point regardless of send success/failure.
+  for (const p of tempFilePaths) {
+    fs.unlink(p, () => {});
+  }
+
   // 8. SMS (Optional)
   const dsaCode = contact.dsa_code || `DSA-${String(tenant.id).padStart(4, '0')}`;
-  const smsMessage = `Cred2Tech: New proposal from DSA ${sender.name} (${dsaCode}). Customer: ${customer.name || customer.business_name}. Amount: ₹${(proposal.requested_amount / 100000).toFixed(1)}L. Case: CASE-${caseData.id}.`;
+  const smsMessage = `Cred2Tech: New proposal from DSA ${sender.name} (${dsaCode}). Customer: ${resolveCustomerName(customer, customer.business_name)}. Amount: ₹${((effectiveProposal.requested_amount || 0) / 100000).toFixed(1)}L. Case: CASE-${caseData.id}.`;
 
   if (contact.contact_mobile) {
     // Fire and forget SMS
@@ -462,34 +522,36 @@ async function dispatchProposalEmailByProposalId({ proposalId, tenantId, userId,
   }
 
   // 9. Child Case Lifecycle Linkage (Standardize Lender Tracking)
-  let childCaseId = proposal.child_case_id;
-  try {
-    const { cloneCaseForLender } = require('./case.clone.service');
-    const lenderSnapshot = {
-      product_type: proposal.product_type || caseData.product_type,
-      lender_name: lenderName,
-      platform_lender_id: proposal.lender_id,
-      tenant_lender_id: proposal.tenant_lender_id,
-      contact_id: contact.id,
-      dsa_code: contact.dsa_code,
-      contact_name: contact.contact_name,
-      contact_email: contact.contact_email,
-      contact_mobile: contact.contact_mobile
-    };
-
-    const cloneResult = await cloneCaseForLender(caseData.id, tenantId, lenderSnapshot, userId);
-    childCaseId = cloneResult.case.id;
-
-    // Link Proposal to Child Case
-    await prisma.proposal.update({
+  // Fire-and-forget — cloneCaseForLender runs a full transactional case clone
+  // (applicants, documents, ESR data, etc.), which was previously awaited
+  // here and was the single biggest contributor to "sending takes a long
+  // time": the DSA sat waiting on a case-clone transaction that has nothing
+  // to do with whether the email actually went out (already sent above) and
+  // was already treated as non-fatal on failure. Nothing in the frontend
+  // reads `childCaseId` from the send response, so there's no correctness
+  // reason to block on it either — it just links up moments later.
+  const childCaseId = proposal.child_case_id;
+  const { cloneCaseForLender } = require('./case.clone.service');
+  const lenderSnapshot = {
+    product_type: proposal.product_type || caseData.product_type,
+    lender_name: lenderName,
+    platform_lender_id: proposal.lender_id,
+    tenant_lender_id: proposal.tenant_lender_id,
+    contact_id: contact.id,
+    dsa_code: contact.dsa_code,
+    contact_name: contact.contact_name,
+    contact_email: contact.contact_email,
+    contact_mobile: contact.contact_mobile
+  };
+  cloneCaseForLender(caseData.id, tenantId, lenderSnapshot, userId)
+    .then(cloneResult => prisma.proposal.update({
       where: { id: proposal.id },
-      data: { child_case_id: childCaseId }
+      data: { child_case_id: cloneResult.case.id }
+    }).then(() => console.log(`[PROPOSAL SEND] Linked to Child Case: CASE-${cloneResult.case.id}`)))
+    .catch(err => {
+      console.error('[PROPOSAL SEND] Child Case Linkage Error (Non-Fatal):', err.message);
+      console.error('[PROPOSAL SEND] Stack:', err.stack);
     });
-    console.log(`[PROPOSAL SEND] Linked to Child Case: CASE-${childCaseId}`);
-  } catch (err) {
-    console.error('[PROPOSAL SEND] Child Case Linkage Error (Non-Fatal):', err.message);
-    console.error('[PROPOSAL SEND] Stack:', err.stack);
-  }
 
   return {
     emailSent,

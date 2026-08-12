@@ -243,8 +243,13 @@ async function resolveContactForLender({ tenantId, lenderName, productType }) {
   productType = productType || 'ALL';
 
   // 1. Try exact match
+  // platform_lender_id is joined in so callers (e.g. case.sendToLender
+  // .controller.js) can create the resulting Proposal against the correct
+  // platform Lender — without it, createProposalDraft has no lender_id to
+  // look up an EligibilityReportLender row by, so it silently skips
+  // prefilling tenure_months/roi/eligible_amount from the ESR result.
   let rows = await prisma.$queryRawUnsafe(`
-    SELECT tlc.*, tl.lender_name
+    SELECT tlc.*, tl.lender_name, tl.platform_lender_id
     FROM tenant_lender_contacts tlc
     JOIN tenant_lenders tl ON tl.id = tlc.tenant_lender_id
     WHERE tlc.tenant_id = $1
@@ -260,7 +265,7 @@ async function resolveContactForLender({ tenantId, lenderName, productType }) {
   // 2. Try 'ALL' match as fallback
   if (productType.toUpperCase() !== 'ALL') {
     rows = await prisma.$queryRawUnsafe(`
-      SELECT tlc.*, tl.lender_name
+      SELECT tlc.*, tl.lender_name, tl.platform_lender_id
       FROM tenant_lender_contacts tlc
       JOIN tenant_lenders tl ON tl.id = tlc.tenant_lender_id
       WHERE tlc.tenant_id = $1
@@ -280,7 +285,7 @@ async function resolveContactForLender({ tenantId, lenderName, productType }) {
 // ── Resolve contact by contact ID (for "send to other lender" flow) ───────────
 async function resolveContactById(contactId, tenantId) {
   const rows = await prisma.$queryRawUnsafe(`
-    SELECT tlc.*, tl.lender_name
+    SELECT tlc.*, tl.lender_name, tl.platform_lender_id
     FROM tenant_lender_contacts tlc
     JOIN tenant_lenders tl ON tl.id = tlc.tenant_lender_id
     WHERE tlc.id = $1 AND tlc.tenant_id = $2 AND tl.is_active = true

@@ -576,6 +576,10 @@ async function getCasePurgeStatus(caseId) {
       tenant: { select: { id: true, name: true, type: true } },
       created_by: { select: { id: true, name: true, email: true } },
       assigned_dsa_user: { select: { id: true, name: true, email: true } },
+      // Surfaced for the hard-delete danger-zone confirmation on the frontend
+      // — those get cascade-deleted along with the case, so the admin needs
+      // to see them before confirming.
+      child_cases: { select: { id: true, stage: true, customer_name: true } },
     },
   });
   const schedules = await prisma.dataRetentionSchedule.findMany({

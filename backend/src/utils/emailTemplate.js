@@ -67,7 +67,7 @@ function renderBrandedEmail(opts) {
   const appUrl = opts.appUrl || 'https://cred2tech.com';
 
   const logoUrl = opts.logoUrl || DEFAULT_LOGO_URL;
-  const logoBlock = `<img src="${esc(logoUrl)}" alt="Cred2Tech" height="28" style="display:block;border:0;height:28px;" />`;
+  const logoBlock = `<img src="${esc(logoUrl)}" alt="Cred2Tech" height="64" style="display:block;border:0;height:64px;" />`;
 
   const intro = opts.intro
     ? `<p style="margin:0 0 14px;font-family:${FONT};font-size:15px;line-height:1.6;color:${C.ink};font-weight:600;">${esc(opts.intro)}</p>`
@@ -124,7 +124,7 @@ function renderBrandedEmail(opts) {
     <tr><td align="center">
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:100%;background:${C.card};border:1px solid ${C.line};">
         <!-- Header -->
-        <tr><td style="background:${C.primary};padding:20px 28px;border-bottom:3px solid ${C.emerald};">
+        <tr><td style="background:${C.primary};padding:16px 28px;border-bottom:3px solid ${C.emerald};">
           ${logoBlock}
         </td></tr>
         <!-- Body -->
@@ -141,7 +141,7 @@ function renderBrandedEmail(opts) {
         <tr><td style="padding:18px 28px;background:${C.panel};border-top:1px solid ${C.line};">
           <p style="margin:0 0 4px;font-family:${FONT};font-size:12px;font-weight:700;color:${C.ink};">Cred2Tech</p>
           <p style="margin:0 0 8px;font-family:${FONT};font-size:11px;line-height:1.6;color:${C.muted};">
-            Multi-Lender Eligibility. Minutes Away.
+            Credit simplified
           </p>
           <p style="margin:0;font-family:${FONT};font-size:11px;color:${C.faint};">
             <a href="${esc(appUrl)}" target="_blank" style="color:${C.primary};text-decoration:none;">${esc(appUrl.replace(/^https?:\/\//, ''))}</a>

@@ -603,6 +603,57 @@ function hasUsableGstFetchPayload(dataRes) {
 }
 
 /**
+ * Fetch the vendor's report bundle (PDF/Excel/JSON) for a GST request and
+ * ingest whichever files aren't already saved as Documents. Pure side effect
+ * on storage/Document rows — callers decide what to do with dbReq.status.
+ *
+ * @param {object} dbReq - the GstrAnalyticsRequest row
+ * @returns {Promise<{pdfDocId, excelDocId, jsonDocId, reportRes}|null>} null if the vendor has no report yet
+ */
+async function ingestGstReportDocuments(dbReq) {
+    const reportRes = await gstService.fetchReport(dbReq.provider_request_id);
+    if (!reportRes.pdfUrl && !reportRes.jsonDataUrl && !reportRes.excelUrl) return null;
+
+    let pdfDocId = dbReq.gst_pdf_document_id;
+    let excelDocId = dbReq.gst_excel_document_id;
+    let jsonDocId = dbReq.gst_json_document_id;
+
+    const ingestionBase = {
+        tenantId: dbReq.tenant_id,
+        customerId: dbReq.customer_id,
+        caseId: dbReq.case_id,
+        uploadedByUserId: dbReq.created_by_user_id,
+        metadata: { gst_request_id: dbReq.id, gstin: dbReq.gstin, source: 'signzy_gst_sync' }
+    };
+
+    const gstIngestionJobs = [];
+    if (reportRes.pdfUrl && !pdfDocId) {
+        gstIngestionJobs.push(
+            documentService.ingestFromUrl({ ...ingestionBase, vendorUrl: reportRes.pdfUrl, documentType: 'GST_REPORT_PDF', originalFileName: `gst_report_${dbReq.gstin}.pdf` })
+                .then(doc => { pdfDocId = doc.id; })
+                .catch(e => console.error('[pullSync] GST PDF ingestion failed:', e.message))
+        );
+    }
+    if (reportRes.excelUrl && !excelDocId) {
+        gstIngestionJobs.push(
+            documentService.ingestFromUrl({ ...ingestionBase, vendorUrl: reportRes.excelUrl, documentType: 'GST_REPORT_EXCEL', originalFileName: `gst_report_${dbReq.gstin}.xlsx` })
+                .then(doc => { excelDocId = doc.id; })
+                .catch(e => console.error('[pullSync] GST Excel ingestion failed:', e.message))
+        );
+    }
+    if (reportRes.jsonDataUrl && !jsonDocId) {
+        gstIngestionJobs.push(
+            documentService.ingestFromUrl({ ...ingestionBase, vendorUrl: reportRes.jsonDataUrl, documentType: 'GST_REPORT_JSON', originalFileName: `gst_report_${dbReq.gstin}.json` })
+                .then(doc => { jsonDocId = doc.id; })
+                .catch(e => console.error('[pullSync] GST JSON ingestion failed:', e.message))
+        );
+    }
+    await Promise.allSettled(gstIngestionJobs);
+
+    return { pdfDocId, excelDocId, jsonDocId, reportRes };
+}
+
+/**
  * Advance a GST journey: fetch the raw return data, then the generated report
  * bundle, ingesting each into our own document storage as it appears.
  *
@@ -613,6 +664,39 @@ async function syncGstRequest(dbReq) {
 
     let currentStatus = dbReq.status;
     let dataSynced = false;
+
+    // Self-heal: finalizeGstAnalyticsRequest() can mark a request COMPLETED
+    // as soon as raw fetch data is enough to compute metrics — independent of
+    // whether the polished report (PDF/Excel/JSON) was ever fetched and
+    // ingested as a Document below. Once status is COMPLETED, the two blocks
+    // below never run again (they're gated on PROCESSING/DATA_READY/
+    // REPORT_READY), so a request that raced past finalization before its
+    // report ingested was stuck with no attachable GST document forever. This
+    // recovers that specific state without touching `status` — the request
+    // really is complete, it was just missing its report documents.
+    if (currentStatus === 'COMPLETED' && !dbReq.gst_pdf_document_id && !dbReq.gst_excel_document_id && !dbReq.gst_json_document_id) {
+        try {
+            const ingested = await ingestGstReportDocuments(dbReq);
+            if (ingested) {
+                await prisma.gstrAnalyticsRequest.update({
+                    where: { id: dbReq.id },
+                    data: {
+                        report_json_url: ingested.reportRes.jsonDataUrl || dbReq.report_json_url,
+                        report_excel_url: ingested.reportRes.excelUrl || dbReq.report_excel_url,
+                        report_pdf_url: ingested.reportRes.pdfUrl || dbReq.report_pdf_url,
+                        report_status: 'COMPLETED',
+                        gst_pdf_document_id: ingested.pdfDocId || undefined,
+                        gst_excel_document_id: ingested.excelDocId || undefined,
+                        gst_json_document_id: ingested.jsonDocId || undefined,
+                    }
+                });
+                console.log(`[pullSync] Self-healed missing GST report documents for request #${dbReq.id}`);
+            }
+        } catch (err) {
+            console.error('[pullSync] GST self-heal report ingestion error:', err.message);
+        }
+        return { changed: false, status: currentStatus, dataSynced: false };
+    }
 
     // Fetch data safely without re-billing (data is the raw payload)
     if (['PROCESSING', 'DATA_READY', 'REPORT_READY'].includes(currentStatus)) {

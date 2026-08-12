@@ -11,5 +11,9 @@ router.use(requireRole('SUPER_ADMIN'));
 
 router.get('/case/:caseId', adminPurgeController.getStatus);
 router.post('/case/:caseId', adminPurgeController.purgeCase);
+// Permanent, irreversible full-case deletion — every related row across
+// every table, plus storage files. Deliberately its own route/verb rather
+// than folded into purgeCase above, so it can never be reached by accident.
+router.delete('/case/:caseId/hard-delete', adminPurgeController.hardDeleteCase);
 
 module.exports = router;

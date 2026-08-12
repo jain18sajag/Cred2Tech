@@ -371,8 +371,12 @@ async function getProposalForPrep({ proposal_id, case_id, tenant_id }) {
 
     const categories = { 'KYC': [], 'Income Proof': [], 'Banking': [], 'Property': [], 'Other': [] };
     const KYC_DOC_TYPES = ['PAN_CARD', 'AADHAAR', 'PASSPORT', 'VOTER_ID'];
-    const INCOME_DOC_TYPES = ['ITR', 'FORM_16', 'SALARY_SLIP', 'CA_CERTIFICATE', 'GST_PDF', 'GST_EXCEL', 'GST_JSON'];
-    const BANK_DOC_TYPES = ['BANK_JSON', 'BANK_EXCEL', 'BANK_STATEMENT'];
+    // GST_EXCEL/GST_JSON were never real DocumentType values (see
+    // schema.prisma) — the pipeline actually saves GST_REPORT_PDF/EXCEL/JSON
+    // and ITR_EXCEL, which weren't listed here at all. JSON variants are
+    // deliberately excluded — raw data files, not required in the proposal.
+    const INCOME_DOC_TYPES = ['ITR', 'ITR_EXCEL', 'FORM_16', 'SALARY_SLIP', 'CA_CERTIFICATE', 'GST_PDF', 'GST_REPORT_PDF', 'GST_REPORT_EXCEL', 'GST_RETURNS'];
+    const BANK_DOC_TYPES = ['BANK_EXCEL', 'BANK_STATEMENT'];
     const PROPERTY_DOC_TYPES = ['PROPERTY_DOCUMENT', 'SALE_DEED', 'TITLE_DEED', 'NOC'];
 
     for (const doc of allCaseDocs) {
@@ -436,6 +440,20 @@ async function getProposalForPrep({ proposal_id, case_id, tenant_id }) {
         ...(panProfile?.principal_address ? [{ id: 'gst_principal', text: panProfile.principal_address, source: 'GST' }] : []),
     ];
 
+    // applicant.otp_verified is seeded from customer.mobile_verified only at
+    // creation time (case.service.js) — if the customer's mobile gets
+    // verified afterward (a common ordering: KYC/bureau pull happens before
+    // the mobile OTP step completes), nothing retroactively syncs the
+    // already-created applicant row, so it can permanently show "KYC Status:
+    // Pending" even though the exact same mobile number is verified on the
+    // customer. Corrected here for display rather than touching the stored
+    // flag itself (avoids re-litigating every other otp_verified consumer in
+    // the app for what is a display staleness issue, not a security check).
+    const applicantsWithKycStatus = applicants.map(a => ({
+        ...a,
+        otp_verified: a.otp_verified || !!(customer.mobile_verified && a.mobile && a.mobile === customer.business_mobile),
+    }));
+
     return {
         proposal: { ...proposal, lender_name: lender.name || 'Unknown', lender_code: lender.code || '' },
         lender_eligibility: lenderEligibility,
@@ -468,8 +486,8 @@ async function getProposalForPrep({ proposal_id, case_id, tenant_id }) {
             office_address: panProfile?.principal_address || null,
             address_candidates: addressCandidates,
         },
-        applicants,
-        co_applicants: applicants.filter(a => a.type !== 'PRIMARY'),
+        applicants: applicantsWithKycStatus,
+        co_applicants: applicantsWithKycStatus.filter(a => a.type !== 'PRIMARY'),
         financial_summary: {
             gst: finalGst,
             itr_years: finalItrYears,

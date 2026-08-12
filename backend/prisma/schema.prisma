@@ -3264,6 +3264,35 @@ model DataRetentionSchedule {
   @@map("data_retention_schedules")
 }
 
+// Permanent record of an admin-initiated full case deletion (see
+// hardDeleteCase.service.js) — deliberately outlives the case itself (no FK
+// to Case, which is gone by the time this is useful) so "who deleted case
+// #X, when, and why" stays answerable forever. triggered_by_user_id is a
+// plain scalar, not an enforced relation — same soft-reference pattern
+// PurgeAuditLog already uses for the same field, so this row can never be
+// blocked/lost over a User-side issue.
+model CaseHardDeleteLog {
+  id                   Int      @id @default(autoincrement())
+  case_id              Int
+  child_case_ids       Int[]    @default([])
+  tenant_id            Int?
+  customer_id          Int?
+  customer_name        String?
+  case_stage           String?
+  triggered_by_user_id Int
+  reason               String
+  // Per-table row counts actually removed, e.g. {"documents": 12, "applicants": 2, ...}
+  row_counts           Json
+  documents_deleted    Int      @default(0)
+  files_deleted        Int      @default(0)
+  files_failed         Int      @default(0)
+  deleted_at           DateTime @default(now())
+
+  @@index([case_id])
+  @@index([deleted_at])
+  @@map("case_hard_delete_logs")
+}
+
 // --- Feedback / Support Ticket System ---
 // One "Submit Feedback" form (MSME self-service + DSA/staff) feeds this
 // unified model. FEEDBACK submissions get an auto-reply acknowledgement;

@@ -189,16 +189,31 @@ const directCustomerService = {
     };
   },
 
+  // Partial update — only the fields actually present in `data` get
+  // validated and written. The /msme/profile page always sends both name
+  // and email together (a full form save), so that caller is unaffected;
+  // this also lets the onboarding wizard silently sync just the email the
+  // instant the customer types it (see business_email's onBlur), without
+  // needing to know/resend their current name to satisfy a "both required"
+  // rule that has nothing to do with what it's actually updating.
   updateProfile: async (userId, data) => {
-    const name = data.name?.trim();
-    const email = data.email?.trim().toLowerCase();
-    if (!name) throw new Error('Full name is required.');
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('A valid email address is required.');
+    const updateData = {};
+    if (data.name !== undefined) {
+      const name = data.name?.trim();
+      if (!name) throw new Error('Full name is required.');
+      updateData.name = name;
+    }
+    if (data.email !== undefined) {
+      const email = data.email?.trim().toLowerCase();
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('A valid email address is required.');
+      updateData.email = email;
+    }
+    if (Object.keys(updateData).length === 0) throw new Error('Nothing to update.');
 
     try {
       const user = await prisma.user.update({
         where: { id: userId },
-        data: { name, email }
+        data: updateData
       });
       // Never echo password_hash back to the client.
       const { password_hash, ...safeUser } = user;
