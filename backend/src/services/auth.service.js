@@ -5,8 +5,9 @@ const { sendMail } = require('../utils/mailer');
 const { renderBrandedEmail } = require('../utils/emailTemplate');
 const { validatePasswordPolicy } = require('../utils/passwordPolicy');
 const mfaService = require('./mfa.service');
+const trustedDeviceService = require('./trustedDevice.service');
 
-async function loginUser(email, password, ipAddress) {
+async function loginUser(email, password, ipAddress, { trustToken } = {}) {
   const normalizedEmail = email.toLowerCase().trim();
   
   const user = await prisma.user.findUnique({
@@ -82,6 +83,19 @@ async function loginUser(email, password, ipAddress) {
     return { mfaSetupRequired: true, setupToken };
   }
 
+  // "Trust this device" — checked only after confirming MFA is actually
+  // enabled, so an account that's never completed MFA setup always goes
+  // through setup, never silently skips it. Scoped to this exact user (see
+  // validateTrustedDevice) so a trust cookie left on a shared browser can
+  // never bypass MFA for a *different* account logging in on it.
+  if (trustToken) {
+    const device = await trustedDeviceService.validateTrustedDevice({ userId: user.id, rawToken: trustToken });
+    if (device) {
+      const result = await mfaService.finalizeTrustedDeviceLogin(user, ipAddress, device);
+      return { loginComplete: true, ...result };
+    }
+  }
+
   const { challengeToken, methods, recoveryOptions } = await mfaService.issueChallenge(user);
   return { mfaRequired: true, challengeToken, methods, recoveryOptions };
 }
@@ -154,6 +168,10 @@ async function resetPassword(rawToken, newPassword) {
       data: { is_active: false }
     })
   ]);
+
+  // Same reasoning as changePassword in mfa.service.js — a password reset is
+  // exactly the "assume compromise" moment a trust grant should not survive.
+  await trustedDeviceService.revokeAllTrustedDevices({ userId: resetToken.user_id });
 }
 
 module.exports = {

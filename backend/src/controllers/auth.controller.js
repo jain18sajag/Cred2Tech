@@ -3,6 +3,8 @@ const prisma = require('../../config/db');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const { sendCaughtError } = require('../utils/sendError');
+const trustedDeviceService = require('../services/trustedDevice.service');
+const { TRUST_COOKIE_NAME, clearTrustDeviceCookieOptions } = require('../utils/trustDeviceCookie');
 
 async function login(req, res) {
   try {
@@ -17,13 +19,26 @@ async function login(req, res) {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    const result = await authService.loginUser(email, password, ipAddress);
+    const trustToken = req.cookies?.[TRUST_COOKIE_NAME];
+    const result = await authService.loginUser(email, password, ipAddress, { trustToken });
 
     // Password verified — every account here now requires MFA, so a plain
-    // token/session is never issued directly from login. See
-    // src/services/mfa.service.js for the setup/challenge flow that follows.
+    // token/session is never issued directly from login UNLESS this exact
+    // browser presented a still-valid "trust this device" cookie for this
+    // exact user (result.loginComplete) — see
+    // src/services/mfa.service.js for the setup/challenge flow that
+    // otherwise follows.
     if (result.mfaSetupRequired) {
       return res.json({ mfaSetupRequired: true, setupToken: result.setupToken });
+    }
+    if (result.loginComplete) {
+      return res.json({
+        loginComplete: true,
+        message: 'Login successful',
+        user: result.user,
+        token: result.token,
+        activeSessionsCount: result.activeSessionsCount,
+      });
     }
     res.json({
       mfaRequired: true,
@@ -118,11 +133,47 @@ async function revokeSession(req, res) {
   }
 }
 
+// ── Trusted devices ("trust this device for 30 days") — Profile page ──
+async function listTrustedDevices(req, res) {
+  try {
+    const currentRawToken = req.cookies?.[TRUST_COOKIE_NAME];
+    const devices = await trustedDeviceService.listTrustedDevices({ userId: req.user.id, currentRawToken });
+    res.json(devices);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch trusted devices' });
+  }
+}
+
+async function revokeTrustedDevice(req, res) {
+  try {
+    const deviceId = parseInt(req.params.id, 10);
+    const currentRawToken = req.cookies?.[TRUST_COOKIE_NAME];
+    const revokedHash = await trustedDeviceService.revokeTrustedDevice({
+      userId: req.user.id,
+      deviceId,
+      ipAddress: req.ip,
+    });
+    // If the device just revoked is the one this browser is currently
+    // using, also clear the cookie — otherwise the DB row is gone but a
+    // now-orphaned cookie value lingers client-side until it expires,
+    // which is harmless (validateTrustedDevice would still reject it) but
+    // pointless to keep around.
+    if (currentRawToken && trustedDeviceService.hashToken(currentRawToken) === revokedHash) {
+      res.clearCookie(TRUST_COOKIE_NAME, clearTrustDeviceCookieOptions(req));
+    }
+    res.json({ message: 'Device trust revoked.' });
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message || 'Failed to revoke device' });
+  }
+}
+
 module.exports = {
   login,
   getMe,
   forgotPassword,
   resetPassword,
   getSessions,
-  revokeSession
+  revokeSession,
+  listTrustedDevices,
+  revokeTrustedDevice
 };

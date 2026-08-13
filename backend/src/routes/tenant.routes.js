@@ -1,6 +1,6 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
-const { createTenant, getTenants, updateTenantStatus, publicRegisterDSA, updateTenant } = require('../controllers/tenant.controller');
+const { createTenant, getTenants, getTenantById, updateTenantStatus, publicRegisterDSA, updateTenant } = require('../controllers/tenant.controller');
 const { authenticate } = require('../middleware/auth.middleware');
 const { requireRole } = require('../middleware/role.middleware');
 
@@ -26,6 +26,7 @@ router.post('/public-register', publicRegisterLimiter, publicRegisterDSA);
 router.post('/', authenticate, requireRole('SUPER_ADMIN'), createTenant);
 router.get('/', authenticate, requireRole('SUPER_ADMIN'), getTenants);
 router.patch('/:id/status', authenticate, requireRole('SUPER_ADMIN'), updateTenantStatus);
+router.get('/:id', authenticate, requireRole('SUPER_ADMIN', 'DSA_ADMIN'), getTenantById);
 router.put('/:id', authenticate, requireRole('SUPER_ADMIN', 'DSA_ADMIN'), updateTenant);
 
 module.exports = router;

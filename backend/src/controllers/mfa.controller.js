@@ -1,5 +1,7 @@
 const prisma = require('../../config/db');
 const mfaService = require('../services/mfa.service');
+const trustedDeviceService = require('../services/trustedDevice.service');
+const { TRUST_COOKIE_NAME, trustDeviceCookieOptions } = require('../utils/trustDeviceCookie');
 const { sendCaughtError } = require('../utils/sendError');
 
 function safeUser(user) {
@@ -33,7 +35,7 @@ async function setupTotpConfirm(req, res) {
   try {
     const { secret, code } = req.body;
     const { backupCodes } = await mfaService.totpConfirm(req.mfaUser, secret, code);
-    const finished = await finishSetupIfComplete(req.mfaUser, req.ip);
+    const finished = await finishSetupIfComplete(req.mfaUser, req.ip, req.headers['user-agent'] || null);
     res.json({ message: 'TOTP enabled.', backupCodes: backupCodes || undefined, ...finished });
   } catch (error) {
     sendCaughtError(res, error, 'Failed to confirm TOTP');
@@ -53,7 +55,7 @@ async function setupEmailConfirm(req, res) {
   try {
     const { code } = req.body;
     const { backupCodes } = await mfaService.emailSetupConfirm(req.mfaUser, code);
-    const finished = await finishSetupIfComplete(req.mfaUser, req.ip);
+    const finished = await finishSetupIfComplete(req.mfaUser, req.ip, req.headers['user-agent'] || null);
     res.json({ message: 'Email verification enabled.', backupCodes: backupCodes || undefined, ...finished });
   } catch (error) {
     sendCaughtError(res, error, 'Failed to confirm email code');
@@ -62,13 +64,13 @@ async function setupEmailConfirm(req, res) {
 
 // Once at least one method is enabled, the setup token's job is done — issue
 // the real session exactly as a completed login-time challenge would.
-async function finishSetupIfComplete(mfaUserStale, ipAddress) {
+async function finishSetupIfComplete(mfaUserStale, ipAddress, userAgent) {
   const fresh = await prisma.user.findUnique({
     where: { id: mfaUserStale.id },
     include: { role: true, tenant: true },
   });
   if (!mfaService.hasMfaEnabled(fresh)) return {};
-  const { user, token, activeSessionsCount } = await mfaService.finalizeSetupSuccess(fresh, ipAddress);
+  const { user, token, activeSessionsCount } = await mfaService.finalizeSetupSuccess(fresh, ipAddress, userAgent);
   return { setupComplete: true, user, token, activeSessionsCount };
 }
 
@@ -81,7 +83,7 @@ async function setupDevBypass(req, res) {
       include: { role: true, tenant: true },
     });
     await mfaService.devBypassMfa(fresh, req.ip);
-    const { user, token, activeSessionsCount } = await mfaService.finalizeSetupSuccess(fresh, req.ip);
+    const { user, token, activeSessionsCount } = await mfaService.finalizeSetupSuccess(fresh, req.ip, req.headers['user-agent'] || null);
     res.json({ message: 'MFA bypassed (dev mode).', setupComplete: true, user, token, activeSessionsCount });
   } catch (error) {
     sendCaughtError(res, error, 'Dev bypass failed');
@@ -223,10 +225,25 @@ async function challengeSendEmailOtp(req, res) {
   }
 }
 
+// Mints the "trust this device" cookie when the DSA opted in on the
+// challenge screen. Called after finalizeChallengeSuccess so a failed
+// cookie-mint (extremely unlikely — no external call, just DB + res.cookie)
+// never blocks a login that already succeeded.
+async function maybeIssueTrustCookie(req, res) {
+  if (!req.body.trustDevice) return;
+  const rawToken = await trustedDeviceService.issueTrustedDevice({
+    user: req.mfaUser,
+    ipAddress: req.ip,
+    userAgent: req.headers['user-agent'] || null,
+  });
+  res.cookie(TRUST_COOKIE_NAME, rawToken, trustDeviceCookieOptions(req));
+}
+
 async function challengeVerifyTotp(req, res) {
   try {
     await mfaService.verifyChallengeTotp(req.mfaUser, req.mfaChallenge, req.body.code);
     const result = await mfaService.finalizeChallengeSuccess(req.mfaUser, req.mfaChallenge, req.ip);
+    await maybeIssueTrustCookie(req, res);
     res.json({ message: 'Login successful', ...result });
   } catch (error) {
     sendCaughtError(res, error, 'Failed to verify code');
@@ -237,6 +254,7 @@ async function challengeVerifyEmailOtp(req, res) {
   try {
     await mfaService.verifyChallengeEmailOtp(req.mfaUser, req.mfaChallenge, req.body.code);
     const result = await mfaService.finalizeChallengeSuccess(req.mfaUser, req.mfaChallenge, req.ip);
+    await maybeIssueTrustCookie(req, res);
     res.json({ message: 'Login successful', ...result });
   } catch (error) {
     sendCaughtError(res, error, 'Failed to verify code');
@@ -256,6 +274,7 @@ async function challengeVerifyMobileOtp(req, res) {
   try {
     await mfaService.verifyChallengeMobileOtp(req.mfaUser, req.mfaChallenge, req.body.code);
     const result = await mfaService.finalizeChallengeSuccess(req.mfaUser, req.mfaChallenge, req.ip);
+    await maybeIssueTrustCookie(req, res);
     res.json({ message: 'Login successful', ...result });
   } catch (error) {
     sendCaughtError(res, error, 'Failed to verify code');
@@ -266,6 +285,7 @@ async function challengeVerifyBackupCode(req, res) {
   try {
     await mfaService.verifyChallengeBackupCode(req.mfaUser, req.mfaChallenge, req.body.code);
     const result = await mfaService.finalizeChallengeSuccess(req.mfaUser, req.mfaChallenge, req.ip);
+    await maybeIssueTrustCookie(req, res);
     res.json({ message: 'Login successful', ...result });
   } catch (error) {
     sendCaughtError(res, error, 'Failed to verify backup code');
@@ -312,8 +332,19 @@ async function adminResetMfa(req, res) {
   }
 }
 
+// Public, unauthenticated — the frontend needs to know whether to even show
+// the "Skip MFA (dev only)" button before a user has a setup/challenge
+// token, let alone a session. Exposes nothing but a boolean; the actual
+// bypass endpoints (setupDevBypass/challengeDevBypass) independently
+// re-check the same condition server-side via mfaService, so this endpoint
+// returning a stale/spoofed answer could never itself grant a bypass.
+function devBypassStatus(req, res) {
+  res.json({ available: process.env.NODE_ENV !== 'production' });
+}
+
 module.exports = {
   setupStatus,
+  devBypassStatus,
   setupTotpInit,
   setupTotpConfirm,
   setupEmailInit,

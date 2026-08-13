@@ -214,6 +214,37 @@ async function publicRegisterDSA(req, res) {
   }
 }
 
+// Single-tenant fetch for the self-service "Organization Profile" screen —
+// same ownership rule as updateTenant below (a non-SUPER_ADMIN can only ever
+// read their own tenant), since GET here exists specifically to pre-fill
+// that edit form, not as a general tenant lookup.
+async function getTenantById(req, res) {
+  try {
+    const tenantId = parseInt(req.params.id, 10);
+
+    if (req.user.role !== 'SUPER_ADMIN' && req.user.tenant_id !== tenantId) {
+      return res.status(403).json({ error: 'You are not authorized to view this DSA profile.' });
+    }
+
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: {
+        id: true, name: true, email: true, mobile: true, type: true, status: true,
+        pan_number: true, gst_number: true, company_type: true, state: true, city: true, pincode: true,
+        created_at: true,
+      }
+    });
+
+    if (!tenant) {
+      return res.status(404).json({ error: 'Tenant not found' });
+    }
+
+    res.json(tenant);
+  } catch (error) {
+    sendCaughtError(res, error, 'Failed to fetch tenant');
+  }
+}
+
 async function updateTenant(req, res) {
   try {
     const tenantId = parseInt(req.params.id, 10);
@@ -263,6 +294,7 @@ async function updateTenant(req, res) {
 module.exports = {
   createTenant,
   getTenants,
+  getTenantById,
   updateTenantStatus,
   publicRegisterDSA,
   updateTenant,

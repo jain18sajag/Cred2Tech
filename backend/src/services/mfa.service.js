@@ -19,6 +19,7 @@ const { generateToken, verifyToken } = require('../utils/jwt');
 const { sendMail } = require('../utils/mailer');
 const { renderBrandedEmail } = require('../utils/emailTemplate');
 const { sendSms, isSmsConfigured } = require('../utils/sms');
+const { sendDeviceTrustAlert } = require('./securityAlert.service');
 
 const SETUP_TOKEN_TTL = '15m';
 const CHALLENGE_TOKEN_TTL = '10m';
@@ -395,7 +396,7 @@ async function finalizeChallengeSuccess(user, challenge, ipAddress) {
 }
 
 // Same finalize path for completing first-time MFA setup (setup token, not a challenge row)
-async function finalizeSetupSuccess(user, ipAddress) {
+async function finalizeSetupSuccess(user, ipAddress, userAgent = null) {
   const now = new Date();
   await prisma.user.update({
     where: { id: user.id },
@@ -417,6 +418,46 @@ async function finalizeSetupSuccess(user, ipAddress) {
   });
   const activeSessionsCount = await prisma.userSession.count({ where: { user_id: user.id, is_active: true } });
 
+  // Best-effort — must never block finishing MFA setup itself.
+  const { labelFromUserAgent } = require('./trustedDevice.service');
+  sendDeviceTrustAlert({ user, eventType: 'MFA_SETUP', ipAddress, userAgent, deviceLabel: labelFromUserAgent(userAgent) })
+    .catch((err) => console.error('[mfa.service] Failed to send MFA-setup alert email:', err.message));
+
+  const { password_hash, mfa_totp_secret, ...userSafe } = user;
+  return { user: { ...userSafe, last_login_at: now }, token, activeSessionsCount };
+}
+
+// Same finalize path for a login that skipped the MFA challenge entirely
+// because it presented a valid "trust this device" cookie (see
+// services/trustedDevice.service.js#validateTrustedDevice, called from
+// auth.service.js#loginUser before a challenge would otherwise be issued).
+// No MfaChallenge row exists in this path — there's nothing to mark
+// consumed — but it still writes its own audit action so admins retain
+// login-outcome visibility distinct from a normally-verified login.
+async function finalizeTrustedDeviceLogin(user, ipAddress, device) {
+  const now = new Date();
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { last_login_at: now, failed_login_attempts: 0, locked_until: null },
+  });
+
+  const tokenPayload = {
+    userId: user.id,
+    roleId: user.role_id,
+    roleName: user.role.name,
+    tenantId: user.tenant_id,
+    hierarchyLevel: user.hierarchy_level,
+    hierarchyPath: user.hierarchy_path,
+  };
+  const token = generateToken(tokenPayload);
+
+  await prisma.userSession.create({
+    data: { user_id: user.id, session_token: token, ip_address: ipAddress, is_active: true, last_activity_at: now },
+  });
+  const activeSessionsCount = await prisma.userSession.count({ where: { user_id: user.id, is_active: true } });
+
+  await logMfaAudit({ userId: user.id, action: 'LOGIN_MFA_SKIPPED_TRUSTED_DEVICE', ipAddress, detail: device.device_label || null });
+
   const { password_hash, mfa_totp_secret, ...userSafe } = user;
   return { user: { ...userSafe, last_login_at: now }, token, activeSessionsCount };
 }
@@ -433,6 +474,12 @@ async function adminResetMfa(targetUser, actorUser, ipAddress) {
     }),
     prisma.mfaBackupCode.deleteMany({ where: { user_id: targetUser.id } }),
   ]);
+  // Without this, a trust grant issued before the reset (if still within its
+  // 30-day window) would silently let the next login skip the challenge
+  // again once the user re-completes setup — defeating the point of an
+  // admin-forced reset, which is typically done on suspected compromise.
+  // Lazy require — see the identical note in changePassword() above.
+  await require('./trustedDevice.service').revokeAllTrustedDevices({ userId: targetUser.id });
   await logMfaAudit({ userId: targetUser.id, action: 'ADMIN_RESET', actorId: actorUser.id, ipAddress });
 
   const { html, text } = renderBrandedEmail({
@@ -512,6 +559,13 @@ async function changePassword(user, currentPassword, newPassword) {
       data: { is_active: false },
     }),
   ]);
+
+  // A password change is exactly the "assume compromise" moment a trust
+  // grant should not survive — revoke every trusted device too, not just
+  // sessions. Lazy require: trustedDevice.service.js itself requires this
+  // file (for logMfaAudit), so a top-level require here would create a
+  // circular import and silently get an empty module.
+  await require('./trustedDevice.service').revokeAllTrustedDevices({ userId: user.id });
 }
 
 function maskEmail(email) {
@@ -548,10 +602,12 @@ module.exports = {
   verifyChallengeBackupCode,
   finalizeChallengeSuccess,
   finalizeSetupSuccess,
+  finalizeTrustedDeviceLogin,
   devBypassMfa,
   devBypassChallenge,
   adminResetMfa,
   changePassword,
   maskEmail,
   maskMobile,
+  logMfaAudit,
 };

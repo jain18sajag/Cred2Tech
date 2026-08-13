@@ -232,6 +232,9 @@ async function getUserById(id, currentUser) {
       status: true,
       designation: true,
       last_login_at: true,
+      created_at: true,
+      role: { select: { name: true } },
+      tenant: { select: { name: true, type: true } }
     }
   });
 

@@ -7,6 +7,11 @@ const { requireMfaSetupToken, requireMfaChallengeToken } = require('../middlewar
 
 const router = express.Router();
 
+// Public — lets the frontend decide whether to show the dev-bypass button at
+// all, before there's any setup/challenge token or session to authenticate
+// with. See mfa.controller.js#devBypassStatus for why this is safe to expose.
+router.get('/dev-bypass-status', ctrl.devBypassStatus);
+
 // Mirrors the shape of app.js's existing otpSendLimiter/otpVerifyLimiter.
 const mfaSendLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,

@@ -163,6 +163,7 @@ model User {
   mfa_email_otps    MfaEmailOtp[]
   mfa_audit_logs    MfaAuditLog[]   @relation("MfaAuditSubject")
   mfa_actions_taken MfaAuditLog[]   @relation("MfaAuditActor")
+  trusted_devices   TrustedDevice[]
 
   role         Role   @relation(fields: [role_id], references: [id])
   tenant       Tenant @relation(fields: [tenant_id], references: [id])
@@ -2982,6 +2983,29 @@ model MfaChallenge {
 
   @@index([user_id])
   @@map("mfa_challenges")
+}
+
+// "Trust this device for 30 days" grant, opt-in via a checkbox at login-time
+// MFA verification. Mirrors MfaChallenge/PasswordResetToken: only a sha256
+// hash of the opaque bearer token is ever persisted — the raw token lives
+// solely in an httpOnly cookie on the client (see utils/trustDeviceCookie.js)
+// and is never logged or stored in plaintext anywhere.
+model TrustedDevice {
+  id           Int       @id @default(autoincrement())
+  user_id      Int
+  token_hash   String    @unique
+  device_label String? // lightweight UA-derived label, e.g. "Chrome on Windows"
+  ip_address   String? // IP at grant time (informational only, not re-checked)
+  user_agent   String? // raw UA string, capped length, for display/debugging
+  last_used_at DateTime  @default(now())
+  expires_at   DateTime
+  revoked_at   DateTime?
+  created_at   DateTime  @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@map("trusted_devices")
 }
 
 // Pending email-OTP state for MFA *setup*/*change* (as opposed to
