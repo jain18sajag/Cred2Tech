@@ -1,4 +1,3 @@
-const { PrismaClient } = require('@prisma/client');
 const crypto = require('crypto');
 const pollingConfig = require('../config/polling');
 const pgPubSub = require('../services/pgPubSub.service');
@@ -9,7 +8,10 @@ const bankService = require('../services/externalApis/bank.service');
 const gstService = require('../services/externalApis/gst.service');
 const { determineNotificationRecipient } = require('../services/notification.service');
 
-const prisma = new PrismaClient();
+// Shared client — carries the connection-safety timeouts (see config/db.js)
+// and the field-encryption extension, instead of an unprotected raw client
+// that could hang forever on a stalled connection with no recovery.
+const prisma = require('../../config/db');
 
 class DataPullWorker {
     constructor() {

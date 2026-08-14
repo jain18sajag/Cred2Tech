@@ -1412,6 +1412,15 @@ model CaseEsrFinancials {
   itr_finance_cost   Float?
   itr_gross_receipts Float?
 
+  // Previous financial year figures — required by every lender's Net Profit
+  // Method "2-year growth" test (average vs latest-year income decision).
+  // Sourced from ItrAnalyticsRequest.net_profit_previous_year /
+  // gross_receipts_previous_year when a vendor ITR pull is available; the
+  // vendor pull does not provide previous-year depreciation/finance-cost/
+  // remuneration, so only PAT-based growth/averaging is possible.
+  itr_pat_previous_year            Float?
+  itr_gross_receipts_previous_year Float?
+
   gst_avg_monthly_sales Float?
   gst_industry_type     String?
   gst_industry_margin   Float?
@@ -1464,6 +1473,7 @@ model CaseEsrFinancials {
 
   // ── Salaried Income Components ────────────────────────────────────────────
   salaried_incentive_income Float?
+  salaried_annual_bonus     Float?
   salaried_other_income     Float?
 
   // ── Manual Eligibility Overrides (LIP / Low LTV / Manual) ────────────────

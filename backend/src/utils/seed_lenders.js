@@ -5,7 +5,8 @@ const LENDERS = [
   { name: 'HDFC Bank', code: 'HDFC' },
   { name: 'India Shelters', code: 'INDIA_SHELTERS' },
   { name: 'Piramal', code: 'PIRAMAL' },
-  { name: 'Tata Capital Housing Finance Ltd', code: 'TATA_HOUSING', legacyCodes: ['TATACAPITAL'] }
+  { name: 'Tata Capital Housing Finance Ltd', code: 'TATA_HOUSING', legacyCodes: ['TATACAPITAL'] },
+  { name: 'IIFL Home Finance', code: 'IIFL' }
 ];
 
 const PRODUCTS = ['HL', 'LAP'];
@@ -24,12 +25,14 @@ const SCHEMES = [
 const LENDER_SCHEMES = {
   INDIA_SHELTERS: ['Salaried', 'ITR Based', 'Assessed Income Program'],
   PIRAMAL: ['Salaried', 'Cash Profit Method', 'Banking', 'GRP', 'LIP', 'Low LTV', 'Gross Margin Method', 'Assessed Income Program'],
-  TATA_HOUSING: ['Salaried', 'Net Profit Method', 'Banking', 'GST', 'GRP', 'LIP', 'Low LTV']
+  TATA_HOUSING: ['Salaried', 'Net Profit Method', 'Banking', 'GST', 'GRP', 'LIP', 'Low LTV'],
+  IIFL: ['Salaried', 'Net Profit Method', 'Banking', 'GST', 'GRP', 'LIP', 'Low LTV', 'Net Worth Method', 'Assessed Income Program']
 };
 
 const LENDER_EXCLUDED_SCHEMES = {
   INDIA_SHELTERS: ['Banking', 'GRP', 'LIP', 'Low LTV', 'Gross Margin Method'],
-  TATA_HOUSING: ['Net Worth Method', 'Any other method']
+  TATA_HOUSING: ['Net Worth Method', 'Any other method'],
+  ICICI: ['Net Worth Method']
 };
 
 async function seedLendersIfMissing(options = {}) {

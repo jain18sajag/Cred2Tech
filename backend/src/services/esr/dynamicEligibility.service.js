@@ -231,6 +231,13 @@ const LENDER_POLICY_REGISTRY = {
             obligationMultiplierParamKey: 'dscr_obligation_multiplier',
             defaultObligationMultiplier: 12,
             calculationRuleParamKey: 'dscr_calculation_rule'
+        },
+        // Requirement sheet: "below 710 is hard reject and from 710 to 740
+        // deviation can be taken". Only used for schemes whose configured
+        // bureau_cutoff is above this floor (i.e. everything except Salaried,
+        // whose own cutoff already is 710).
+        bureau: {
+            hardRejectFloor: 710
         }
     },
     INDIA_SHELTERS: {
@@ -271,6 +278,28 @@ const LENDER_POLICY_REGISTRY = {
         grpMultiplierByProfession: { DOCTOR: 3, ARCHITECT: 2 },
         exposureFields: ['tata_housing_exposure', 'lender_exposure'],
         foir: { SALARIED_SLABS: [{ max: 70000, value: 0.60 }, { max: 150000, value: 0.65 }, { value: 0.70 }], BANKING: 0.55, NPM: 0.80, GRP: 0.70, LIP: 0.65 }
+    },
+    IIFL: {
+        key: 'IIFL', displayName: 'IIFL Home Finance Policy',
+        aliases: ['IIFL HOME FINANCE', 'IIFL HOME FINANCE LTD', 'IIFL', 'INDIA INFOLINE FINANCE'],
+        salariedCalculator: 'IIFL',
+        // Requirement sheet: "ABB Multiplied by multiplier... Multiplier of 1.5"
+        // — a multiplier (income > ABB), not a divisor like ICICI/HDFC.
+        banking: { mode: 'ABB_MULTIPLIER', multiplier: 1.5 },
+        gstMargins: {
+            manufacturing: 0.07,
+            wholesale: 0.04,
+            retail: 0.05,
+            specialized: 0.03,
+            service: 0.15
+        },
+        // "(Average of last 2 years Net Profit after tax + 75% of Dep + interest
+        // on loan + director remuneration + director interest on loan) / 12" —
+        // unlike every other lender, IIFL always averages both years (no growth
+        // threshold test) and only allows 75% of depreciation as an addback.
+        npm: { alwaysAverageTwoYear: true, depreciationFraction: 0.75, includeRemuneration: true, includeDirectorInterest: true },
+        grpMultiplierByProfession: { DOCTOR: 4 },
+        exposureFields: ['iifl_exposure', 'lender_exposure']
     }
 };
 
@@ -526,8 +555,15 @@ function resolveBankingAbbIncome({ esr, paramMap, lenderPolicy }) {
 
     if (bankingPolicy.mode === 'ABB_MULTIPLIER') {
         const configured = resolveFirstConfiguredParam(paramMap, ['banking_dbr_multiplier', 'banking_foir', 'banking_abb_multiplier']);
-        let multiplier = configured?.value || bankingPolicy.multiplier || 0;
-        if (multiplier > 1) multiplier /= 100;
+        // A DB-configured value >1 is assumed to be a whole-number percent
+        // (e.g. "67" meaning 67%) and needs /100. The hardcoded policy
+        // constant, however, is already a correctly-scaled multiplier as
+        // written in code — most lenders' is <1 (0.67, 0.55) but IIFL's own
+        // requirement sheet specifies a genuine >1 multiplier ("Multiplier of
+        // 1.5", income exceeds ABB) that must NOT be treated as "1.5%".
+        let multiplier = configured
+            ? (configured.value > 1 ? configured.value / 100 : configured.value)
+            : (bankingPolicy.multiplier || 0);
         return {
             abb,
             monthlyIncome: multiplier > 0 ? abb * multiplier : 0,
@@ -698,41 +734,42 @@ function resolveHdfcNpmAnnualIncome({ esr, paramMap = {}, depreciationFraction =
         : getNumericParam(paramMap, [hdfcNpmPolicy.depreciationFractionParamKey || 'npm_depreciation_fraction'], hdfcNpmPolicy.defaultDepreciationFraction || 1);
     const depFraction = rawDepFraction > 1 ? rawDepFraction / 100 : rawDepFraction;
 
-    const latest = {
-        pat: toSafeNumber(esr.itr_pat),
+    const latestPat = toSafeNumber(esr.itr_pat);
+    const addbacks = {
         depreciation: toSafeNumber(esr.itr_depreciation),
         financeCost: toSafeNumber(esr.itr_finance_cost),
         remuneration: toSafeNumber(esr.itr_remuneration),
         directorInterest: includeDirectorInterest ? toSafeNumber(esr.director_interest_on_loan) : 0
     };
-    const latestAnnual = latest.pat + (latest.depreciation * depFraction) + latest.financeCost + latest.remuneration + latest.directorInterest;
+    // The vendor ITR pull only captures PAT (and gross receipts) year-over-year —
+    // not depreciation/finance cost/remuneration — so those addback components
+    // only ever exist for the latest year and are always added at full weight,
+    // independent of the PAT growth-average decision below. Averaging them
+    // against an unavailable (implicit-zero) previous year would silently
+    // halve real addback income once growth-averaging triggers.
+    const addbackTotal = (addbacks.depreciation * depFraction) + addbacks.financeCost + addbacks.remuneration + addbacks.directorInterest;
+    const latestAnnual = latestPat + addbackTotal;
 
-    const previous = {
-        pat: getHdfcPreviousYearNumber(esr, ['itr_pat_previous_year', 'itr_previous_year_pat', 'itr_prev_pat', 'previous_itr_pat']),
-        depreciation: getHdfcPreviousYearNumber(esr, ['itr_depreciation_previous_year', 'itr_previous_year_depreciation', 'itr_prev_depreciation', 'previous_itr_depreciation']),
-        financeCost: getHdfcPreviousYearNumber(esr, ['itr_finance_cost_previous_year', 'itr_previous_year_finance_cost', 'itr_prev_finance_cost', 'previous_itr_finance_cost']),
-        remuneration: getHdfcPreviousYearNumber(esr, ['itr_remuneration_previous_year', 'itr_previous_year_remuneration', 'itr_prev_remuneration', 'previous_itr_remuneration']),
-        directorInterest: includeDirectorInterest ? getHdfcPreviousYearNumber(esr, ['director_interest_on_loan_previous_year', 'previous_director_interest_on_loan']) : 0
-    };
-    const previousAnnual = previous.pat + (previous.depreciation * depFraction) + previous.financeCost + previous.remuneration + previous.directorInterest;
+    const previousPat = getHdfcPreviousYearNumber(esr, ['itr_pat_previous_year', 'itr_previous_year_pat', 'itr_prev_pat', 'previous_itr_pat']);
 
     const growthThresholdRaw = getNumericParam(paramMap, [hdfcNpmPolicy.growthThresholdParamKey || 'npm_growth_threshold'], hdfcNpmPolicy.defaultGrowthThreshold || 1);
     const growthThreshold = growthThresholdRaw > 1 ? growthThresholdRaw / 100 : growthThresholdRaw;
-    const growthRate = previousAnnual > 0 ? ((latestAnnual - previousAnnual) / Math.abs(previousAnnual)) : null;
-    const useTwoYearAverage = !!(previousAnnual > 0 && growthRate !== null && growthRate > growthThreshold);
-    const annualIncome = useTwoYearAverage ? ((latestAnnual + previousAnnual) / 2) : latestAnnual;
+    const growthRate = previousPat > 0 ? ((latestPat - previousPat) / Math.abs(previousPat)) : null;
+    const useTwoYearAverage = !!(previousPat > 0 && growthRate !== null && growthRate > growthThreshold);
+    const patComponent = useTwoYearAverage ? ((latestPat + previousPat) / 2) : latestPat;
+    const annualIncome = patComponent + addbackTotal;
 
     return {
         annualIncome: Math.max(0, annualIncome),
         monthlyIncome: Math.max(0, annualIncome / 12),
         latestAnnual,
-        previousAnnual,
+        previousAnnual: previousPat + addbackTotal,
         growthRate,
         growthThreshold,
         useTwoYearAverage,
         depreciationFraction: depFraction,
-        components: { latest, previous, includeDirectorInterest },
-        source: useTwoYearAverage ? 'HDFC_NPM_TWO_YEAR_AVERAGE' : 'HDFC_NPM_LATEST_YEAR'
+        components: { latest: { pat: latestPat, ...addbacks }, previousPat, includeDirectorInterest },
+        source: useTwoYearAverage ? 'HDFC_NPM_TWO_YEAR_PAT_AVERAGE_PLUS_LATEST_ADDBACKS' : 'HDFC_NPM_LATEST_YEAR'
     };
 }
 
@@ -740,24 +777,36 @@ function resolveNpmIncomeByPolicy(lenderPolicy, esr, paramMap = {}) {
     const policy = lenderPolicy.npm || {};
     const includeRemuneration = !!policy.includeRemuneration;
     const includeDirectorInterest = !!policy.includeDirectorInterest;
+    const depFractionRaw = getNumericParam(paramMap, ['npm_depreciation_fraction'], policy.depreciationFraction ?? 1);
+    const depFraction = depFractionRaw > 1 ? depFractionRaw / 100 : depFractionRaw;
     const latestPat = toSafeNumber(esr.itr_pat);
-    const latest = latestPat + toSafeNumber(esr.itr_depreciation) + toSafeNumber(esr.itr_finance_cost)
+    // Addback components (depreciation/finance cost/remuneration/director
+    // interest) are only ever available for the latest year — the vendor ITR
+    // pull does not capture their previous-year values — so they are always
+    // added at full latest-year weight, independent of the PAT growth-average
+    // decision below. Averaging them against an unavailable (implicit-zero)
+    // previous year would silently halve real addback income once
+    // growth-averaging triggers.
+    const addbackTotal = (toSafeNumber(esr.itr_depreciation) * depFraction) + toSafeNumber(esr.itr_finance_cost)
         + (includeRemuneration ? toSafeNumber(esr.itr_remuneration) : 0)
         + (includeDirectorInterest ? toSafeNumber(esr.director_interest_on_loan) : 0);
+    const latest = latestPat + addbackTotal;
     const previousPat = getHdfcPreviousYearNumber(esr, ['itr_pat_previous_year', 'itr_previous_year_pat', 'itr_prev_pat', 'previous_itr_pat']);
-    const previous = previousPat
-        + getHdfcPreviousYearNumber(esr, ['itr_depreciation_previous_year', 'itr_previous_year_depreciation', 'itr_prev_depreciation'])
-        + getHdfcPreviousYearNumber(esr, ['itr_finance_cost_previous_year', 'itr_previous_year_finance_cost', 'itr_prev_finance_cost'])
-        + (includeRemuneration ? getHdfcPreviousYearNumber(esr, ['itr_remuneration_previous_year', 'itr_previous_year_remuneration', 'itr_prev_remuneration']) : 0)
-        + (includeDirectorInterest ? getHdfcPreviousYearNumber(esr, ['director_interest_on_loan_previous_year', 'previous_director_interest_on_loan']) : 0);
+    const previous = previousPat + addbackTotal;
     const thresholdRaw = getNumericParam(paramMap, ['npm_growth_threshold'], policy.defaultGrowthThreshold || 0.50);
     const threshold = thresholdRaw > 1 ? thresholdRaw / 100 : thresholdRaw;
     const growthRate = previousPat > 0 ? (latestPat - previousPat) / Math.abs(previousPat) : null;
-    const useAverage = previousPat > 0 && growthRate > threshold;
+    // IIFL's policy is an unconditional 2-year average whenever a previous
+    // year is available (no growth-threshold test at all) — everyone else
+    // only averages once growth exceeds their own threshold.
+    const useAverage = policy.alwaysAverageTwoYear
+        ? previousPat > 0
+        : (previousPat > 0 && growthRate > threshold);
     const warnings = [];
     if (previousPat <= 0) warnings.push('PREVIOUS_YEAR_ITR_MISSING_GROWTH_TEST_SKIPPED');
     if (includeDirectorInterest && !toSafeNumber(esr.director_interest_on_loan)) warnings.push('DIRECTOR_INTEREST_MISSING_TREATED_ZERO');
-    const baseAnnualIncome = useAverage ? (latest + previous) / 2 : latest;
+    // Only PAT is averaged across the two years; addbacks always use latest year.
+    const baseAnnualIncome = useAverage ? ((latestPat + previousPat) / 2) + addbackTotal : latest;
     const loanReference = toSafeNumber(esr.requested_loan_amount) || toSafeNumber(esr.loan_amount) || 0;
     const explicitFilingGapMonths = getNumericParam(esr, [
         'itr_filing_gap_months', 'itr_return_filing_gap_months', 'two_itr_gap_months'
@@ -829,32 +878,55 @@ function resolveTataLipEligibility(esr = {}) {
     };
 }
 
+// India Shelters (ITR Based/GRP/Gross Margin, D18/F18/I18) and Piramal (Cash
+// Profit/GRP/Gross Margin, D18/G18/I18) both use the identical conditional
+// rule: "100% if ABB is at least 1 time of proposed EMI else 80%" — across
+// all three of those methods, not just Net Profit/ITR.
+const ABB_VS_EMI_CONDITIONAL_FOIR_LENDERS = new Set(['INDIA_SHELTERS', 'PIRAMAL']);
+function resolveAbbVsProposedEmiConditionalFoir(esr) {
+    const abb = toSafeNumber(esr.bank_avg_balance);
+    const proposedEmi = toSafeNumber(esr.manual_proposed_emi) || toSafeNumber(esr.proposed_emi);
+    return abb > 0 && proposedEmi > 0 && abb >= proposedEmi ? 1.00 : 0.80;
+}
+
 function resolveFoirByPolicy(lenderPolicy, method, income, esr, paramMap = {}, productType = 'LAP') {
     const name = String(method || '').toUpperCase();
     const policy = lenderPolicy.foir || {};
+    const usesAbbConditional = ABB_VS_EMI_CONDITIONAL_FOIR_LENDERS.has(lenderPolicy.key);
     const slabs = name.includes('SALARIED') ? policy.SALARIED_SLABS : null;
     if (slabs) return slabs.find(s => s.max === undefined || income < s.max)?.value ?? null;
     if (name.includes('SALARIED')) return policy.SALARIED ?? null;
     if (name.includes('BANK')) return policy.BANKING ?? null;
     if (name.includes('NET PROFIT') || name.includes('CASH PROFIT') || name.includes('ITR')) {
-        if (lenderPolicy.key === 'INDIA_SHELTERS') {
-            const abb = toSafeNumber(esr.bank_avg_balance);
-            const proposedEmi = toSafeNumber(esr.manual_proposed_emi) || toSafeNumber(esr.proposed_emi);
-            return abb > 0 && proposedEmi > 0 && abb >= proposedEmi ? 1.00 : 0.80;
-        }
+        if (usesAbbConditional) return resolveAbbVsProposedEmiConditionalFoir(esr);
         return policy.NPM ?? null;
     }
-    if (name.includes('GRP') || name.includes('GROSS RECEIPT')) return policy.GRP ?? null;
-    if (name.includes('GROSS MARGIN') || name.includes('GST')) return policy.GROSS_MARGIN ?? null;
+    // India Shelters (F18) and Piramal (F18) both state GRP as a flat 100%,
+    // not the ABB-vs-EMI conditional — that conditional text sits in a
+    // different column (G, LIP) on both sheets. GRP always uses its flat
+    // policy value.
+    if (name.includes('GRP') || name.includes('GROSS RECEIPT')) {
+        return policy.GRP ?? null;
+    }
+    if (name.includes('GROSS MARGIN') || name.includes('GST')) {
+        if (usesAbbConditional) return resolveAbbVsProposedEmiConditionalFoir(esr);
+        return policy.GROSS_MARGIN ?? null;
+    }
     if (name.includes('AIP') || name.includes('ASSESSED INCOME')) return policy[`AIP_${String(productType).toUpperCase()}`] ?? policy.AIP ?? null;
-    if (name.includes('LIP')) return policy.LIP ?? null;
+    // Column G (LIP) on both India Shelters' and Piramal's sheets carries the
+    // same ABB-vs-EMI conditional text as ITR/Cash Profit (D) and Gross
+    // Margin (I) — not a flat rate.
+    if (name.includes('LIP')) {
+        if (usesAbbConditional) return resolveAbbVsProposedEmiConditionalFoir(esr);
+        return policy.LIP ?? null;
+    }
     return null;
 }
 
 function resolveGrpMultiplierForPolicy({ esr, paramMap = {}, lenderPolicy }) {
     const profession = normalizeProfessionForGrp(esr);
     const doctorMultiplier = getNumericParam(paramMap, ['grpMultiplierByProfession.DOCTOR', 'grp_doctor_multiplier', 'grp_md_multiplier', 'grp_medical_doctor_multiplier'], 4);
-    const preservesLegacyGrpFallback = lenderPolicy.key === 'ICICI' || lenderPolicy.key === 'HDFC' || lenderPolicy.key === 'DEFAULT';
+    const preservesLegacyGrpFallback = lenderPolicy.key === 'ICICI' || lenderPolicy.key === 'HDFC' || lenderPolicy.key === 'IIFL' || lenderPolicy.key === 'DEFAULT';
     const defaultMultiplier = getNumericParam(
         paramMap,
         ['grpMultiplierByProfession.DEFAULT', 'grp_other_professional_multiplier', 'grp_default_multiplier'],
@@ -1388,7 +1460,26 @@ function calculateIciciSalariedConsideredIncome({ esr, incomeEntries = [] }) {
     // ICICI salary eligibility is salary-slip based. Bank-statement salary and
     // manual salary rows are not substitutes for completed salary-slip OCR.
     const netSalaryMonthly = netSalaryFromSnapshot;
-    const consideredSalary = netSalaryMonthly;
+
+    // Policy: "Net Salary per month... Incentive 3 month average. Annual Bonus
+    // can be considered if reported from latest year." Both are added directly
+    // to net salary (ICICI applies FOIR once, later, on the combined total —
+    // unlike HDFC there is no separate weightage step to fold them into first).
+    const incentiveMonthly = isSalarySlipOcrSnapshot ? getFirstPositiveValue(esr, [
+        'salaried_incentive_income',
+        'average_monthly_incentive',
+        'incentive_3m_average',
+        'salary_incentive_income'
+    ], 'monthly') : 0;
+
+    const annualBonusMonthly = isSalarySlipOcrSnapshot ? getFirstPositiveValue(esr, [
+        'salaried_annual_bonus',
+        'annual_bonus',
+        'latest_year_bonus',
+        'bonus_income_annual'
+    ], 'annual') : 0;
+
+    const consideredSalary = netSalaryMonthly + incentiveMonthly + annualBonusMonthly;
 
     const agricultureResolution = resolveIciciAgricultureIncome({ esr, entrySums });
     const consideredAgriculture = agricultureResolution.eligibleMonthly;
@@ -1439,6 +1530,8 @@ function calculateIciciSalariedConsideredIncome({ esr, incomeEntries = [] }) {
         salary_net_monthly: netSalaryMonthly,
         salary_allowed_pct: 100,
         salary_source: netSalaryFromSnapshot > 0 ? 'SALARY_SLIP_OCR' : 'NONE',
+        incentive_monthly: incentiveMonthly,
+        annual_bonus_monthly: annualBonusMonthly,
         agriculture_raw_monthly: agricultureRawMonthly,
         agriculture_source: agricultureSource,
         agriculture_allowed_pct: agricultureAllowedPct,
@@ -1451,9 +1544,25 @@ function calculateIciciSalariedConsideredIncome({ esr, incomeEntries = [] }) {
                 type: 'Salary Income',
                 raw_monthly: netSalaryMonthly,
                 allowed_pct: 100,
-                eligible_monthly: consideredSalary,
+                eligible_monthly: netSalaryMonthly,
                 source: 'Salary-slip OCR',
                 rule: 'ICICI Salaried method: verified monthly net salary is the base; FOIR is applied once by the scheme parameter.'
+            }] : []),
+            ...(incentiveMonthly > 0 ? [{
+                type: 'Incentive Income',
+                raw_monthly: incentiveMonthly,
+                allowed_pct: 100,
+                eligible_monthly: incentiveMonthly,
+                source: 'Salary-slip OCR',
+                rule: 'ICICI Salaried method: 3-month average incentive is added to net salary.'
+            }] : []),
+            ...(annualBonusMonthly > 0 ? [{
+                type: 'Annual Bonus',
+                raw_monthly: annualBonusMonthly,
+                allowed_pct: 100,
+                eligible_monthly: annualBonusMonthly,
+                source: 'Salary-slip OCR',
+                rule: 'ICICI Salaried method: latest-year annual bonus considered as monthly equivalent when reported.'
             }] : []),
             ...(consideredAgriculture > 0 ? [{
                 type: 'Agriculture Income',
@@ -1514,13 +1623,6 @@ function calculateHdfcSalariedConsideredIncome({ esr, paramMap = {} }) {
     const pctAboveThreshold = pctAboveThresholdRaw > 1 ? pctAboveThresholdRaw / 100 : pctAboveThresholdRaw;
     const netSalaryCapPct = netSalaryCapPctRaw > 1 ? netSalaryCapPctRaw / 100 : netSalaryCapPctRaw;
 
-    const allowedPct = grossSalaryMonthly > thresholdMonthly ? pctAboveThreshold : pctUpToThreshold;
-
-    const policyWeightedSalary = grossSalaryMonthly * allowedPct;
-    const bankSalaryCap = bankNetSalaryMonthly > 0 ? bankNetSalaryMonthly * netSalaryCapPct : null;
-
-    const consideredSalary = bankSalaryCap !== null ? Math.min(policyWeightedSalary, bankSalaryCap) : policyWeightedSalary;
-
     const incentiveMonthly = getFirstPositiveValue(esr, [
         'salaried_incentive_income',
         'average_monthly_incentive',
@@ -1535,7 +1637,20 @@ function calculateHdfcSalariedConsideredIncome({ esr, paramMap = {} }) {
         'bonus_income_annual'
     ], 'annual');
 
-    const totalConsideredSalaryIncome = consideredSalary + incentiveMonthly + annualBonusMonthly;
+    // Policy formula: "Gross Salary * 50%/60% ... subject to 70% of net salary
+    // per bank account" — incentive and bonus are part of the gross income
+    // base the 50%/60% weightage and bank-salary cap apply to, not a
+    // no-haircut addition bolted on afterwards (that would let incentive
+    // bypass the very bank-verification cap the policy exists to enforce).
+    const grossIncomeInclIncentiveBonus = grossSalaryMonthly + incentiveMonthly + annualBonusMonthly;
+    const allowedPct = grossIncomeInclIncentiveBonus > thresholdMonthly ? pctAboveThreshold : pctUpToThreshold;
+
+    const policyWeightedSalary = grossIncomeInclIncentiveBonus * allowedPct;
+    const bankSalaryCap = bankNetSalaryMonthly > 0 ? bankNetSalaryMonthly * netSalaryCapPct : null;
+
+    const consideredSalary = bankSalaryCap !== null ? Math.min(policyWeightedSalary, bankSalaryCap) : policyWeightedSalary;
+
+    const totalConsideredSalaryIncome = consideredSalary;
 
     return {
         total_eligible_income: totalConsideredSalaryIncome,
@@ -1545,6 +1660,7 @@ function calculateHdfcSalariedConsideredIncome({ esr, paramMap = {} }) {
         agri_income: 0,
         other_income: 0,
         salary_gross_monthly: grossSalaryMonthly,
+        salary_gross_incl_incentive_bonus_monthly: grossIncomeInclIncentiveBonus,
         salary_allowed_pct: allowedPct * 100,
         bank_net_salary_monthly: bankNetSalaryMonthly,
         bank_salary_cap: bankSalaryCap,
@@ -1552,28 +1668,87 @@ function calculateHdfcSalariedConsideredIncome({ esr, paramMap = {} }) {
         annual_bonus_monthly: annualBonusMonthly,
         breakdown: [
             {
-                type: 'Salary Income',
+                type: 'Salary Income (incl. incentive + bonus)',
                 raw_monthly: grossSalaryMonthly,
+                incentive_monthly: incentiveMonthly,
+                annual_bonus_monthly: annualBonusMonthly,
+                gross_monthly_before_weightage: grossIncomeInclIncentiveBonus,
                 allowed_pct: allowedPct * 100,
                 eligible_monthly_before_cap: policyWeightedSalary,
                 bank_net_salary_monthly: bankNetSalaryMonthly,
                 bank_salary_cap: bankSalaryCap,
                 eligible_monthly: consideredSalary,
-                rule: 'HDFC Salaried: 50% up to ₹1L, 60% above ₹1L, capped by 70% of bank net salary when available. This is treated as EMI capacity basis and FOIR is not applied again.'
+                rule: 'HDFC Salaried: base salary + 3-month avg incentive + latest-year annual bonus form the gross income base; 50% up to ₹1L / 60% above ₹1L is applied to that full gross, then capped by 70% of bank net salary when available. This is treated as EMI capacity basis and FOIR is not applied again.'
+            }
+        ]
+    };
+}
+
+// IIFL policy: "Gross Salary per month to be considered for eligibility. 50%
+// of Incentive 3 month average. 50% of Annual Bonus can be considered if
+// reported from latest year" — unlike HDFC there is no 50%/60% salary-slab
+// weightage step; unlike ICICI, incentive/bonus are only weighted at 50%
+// (not 100%). FOIR is then applied once, later, by the scheme's configured
+// DBR slab (e.g. "<50k -60%, >50k -65%") — same as ICICI/Tata's pattern.
+function calculateIiflSalariedConsideredIncome({ esr }) {
+    const grossSalaryMonthly = getFirstPositiveValue(esr, [
+        'salaried_gross_monthly',
+        'salaried_income',
+        'salary_income',
+        'monthly_salary_income',
+        'applicant_salary_income'
+    ], 'monthly');
+
+    const incentiveMonthlyRaw = getFirstPositiveValue(esr, [
+        'salaried_incentive_income',
+        'average_monthly_incentive',
+        'incentive_3m_average',
+        'salary_incentive_income'
+    ], 'monthly');
+    const incentiveMonthly = incentiveMonthlyRaw * 0.5;
+
+    const annualBonusRaw = getFirstPositiveValue(esr, [
+        'salaried_annual_bonus',
+        'annual_bonus',
+        'latest_year_bonus',
+        'bonus_income_annual'
+    ], 'annual');
+    const annualBonusMonthly = annualBonusRaw * 0.5;
+
+    const totalConsideredSalaryIncome = grossSalaryMonthly + incentiveMonthly + annualBonusMonthly;
+
+    return {
+        total_eligible_income: totalConsideredSalaryIncome,
+        primary_income: totalConsideredSalaryIncome,
+        rental_bank: 0,
+        rental_cash: 0,
+        agri_income: 0,
+        other_income: 0,
+        salary_gross_monthly: grossSalaryMonthly,
+        salary_allowed_pct: 100,
+        incentive_monthly: incentiveMonthly,
+        annual_bonus_monthly: annualBonusMonthly,
+        breakdown: [
+            {
+                type: 'Salary Income',
+                raw_monthly: grossSalaryMonthly,
+                allowed_pct: 100,
+                eligible_monthly: grossSalaryMonthly,
+                rule: 'IIFL Salaried: full gross monthly salary considered; FOIR is applied once by the scheme parameter.'
             },
             ...(incentiveMonthly > 0 ? [{
                 type: 'Incentive Income',
-                raw_monthly: incentiveMonthly,
-                allowed_pct: 100,
+                raw_monthly: incentiveMonthlyRaw,
+                allowed_pct: 50,
                 eligible_monthly: incentiveMonthly,
-                rule: 'HDFC Salaried: 3-month average incentive can be considered.'
+                rule: 'IIFL Salaried: 50% of 3-month average incentive is considered.'
             }] : []),
             ...(annualBonusMonthly > 0 ? [{
                 type: 'Annual Bonus',
-                raw_monthly: annualBonusMonthly,
-                allowed_pct: 100,
+                raw_monthly: annualBonusRaw,
+                allowed_pct: 50,
                 eligible_monthly: annualBonusMonthly,
-                rule: 'HDFC Salaried: latest-year annual bonus considered as monthly equivalent when reported/vetted.'
+                rule: 'IIFL Salaried: 50% of latest-year annual bonus considered as monthly equivalent when reported.'
             }] : [])
         ]
     };
@@ -1872,6 +2047,9 @@ function getSchemePrimaryIncome(esr, scheme, paramMap, warnings, logger, lenderP
         if (lenderPolicy.key === 'ICICI') {
             return calculateIciciSalariedConsideredIncome({ esr, incomeEntries: [] }).total_eligible_income;
         }
+        if (lenderPolicy.key === 'IIFL') {
+            return calculateIiflSalariedConsideredIncome({ esr }).total_eligible_income;
+        }
         return baseSalary;
     }
     if (name.includes('BANKING') || name.includes('ABB')) {
@@ -2006,6 +2184,8 @@ function calculateComposedIncome({ scheme, esr, incomeEntries, paramMap, warning
             ? calculateHdfcSalariedConsideredIncome({ esr, paramMap })
             : lenderPolicy.key === 'ICICI'
                 ? calculateIciciSalariedConsideredIncome({ esr, incomeEntries })
+                : lenderPolicy.key === 'IIFL'
+                ? calculateIiflSalariedConsideredIncome({ esr })
                 : {
                     total_eligible_income: Number(esr.salaried_income) || 0,
                     primary_income: Number(esr.salaried_income) || 0,
@@ -2484,12 +2664,7 @@ function calculateAgeBasedTenureMonthsFromDob(dob, maturityAge) {
         + (maturityDate.getMonth() - today.getMonth());
     const dayAdjustment = maturityDate.getDate() < today.getDate() ? 1 : 0;
     const rawMonths = maturityDate <= today ? 0 : Math.max(0, baseMonths - dayAdjustment);
-    // rawMonths contains completed whole months. Preserve any remaining days so
-    // a partial final year is rounded up instead of being silently discarded.
-    const hasPartialMonth = maturityDate > today
-        && maturityDate.getDate() !== today.getDate();
-    const months = roundAgeBasedTenureMonthsToFullYears(rawMonths, hasPartialMonth);
-    const monthsForYearRounding = rawMonths + (hasPartialMonth ? 1 : 0);
+    const months = roundAgeBasedTenureMonthsToFullYears(rawMonths);
 
     return {
         months,
@@ -2499,22 +2674,14 @@ function calculateAgeBasedTenureMonthsFromDob(dob, maturityAge) {
         maturityDate: maturityDate.toISOString().slice(0, 10),
         baseMonths,
         dayAdjustment,
-        hasPartialMonth,
-        monthsForYearRounding,
-        calculation: hasPartialMonth
-            ? `CEIL((${rawMonths} completed months + remaining days) / 12) * 12 = ${months}`
-            : `CEIL(${rawMonths} / 12) * 12 = ${months}`
+        calculation: `CEIL(${rawMonths} months / 12) * 12 = ${months}`
     };
 }
 
-function roundAgeBasedTenureMonthsToFullYears(months, hasPartialMonth = false) {
+function roundAgeBasedTenureMonthsToFullYears(months) {
     const value = Number(months);
-    if (!Number.isFinite(value) || value < 0) return 0;
-    const valueIncludingPartialMonth = value + (hasPartialMonth ? 1 : 0);
-    if (valueIncludingPartialMonth <= 0) return 0;
-    // Lender tenure rounds any partial year up to the next full year:
-    // 10 years 1 month (121 months) becomes 11 years (132 months).
-    return Math.ceil(valueIncludingPartialMonth / 12) * 12;
+    if (!Number.isFinite(value) || value <= 0) return 0;
+    return Math.ceil(value / 12) * 12;
 }
 
 function calculateAgeBasedTenureMonthsFromAge(appAge, maturityAge) {
@@ -2555,7 +2722,7 @@ function isPrimaryApplicant(app, index = 0) {
 
 function calculateAgeBasedTenureResolution(applicants, paramMap, warnings, policyWarnings, esr = {}, options = {}) {
     const getIntParam = (sourceMap, key, defaultVal = null, monthlyIncomeOverride = null) => {
-        const raw = sourceMap?.[key];
+        const raw = resolveRawParamValue(sourceMap?.[key]);
         const monthlyIncome = monthlyIncomeOverride !== null && monthlyIncomeOverride !== undefined
             ? Number(monthlyIncomeOverride) || 0
             : Number(esr.selected_monthly_income) || Number(esr.salaried_income) || 0;
@@ -2900,19 +3067,35 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const bureauCutoff = handleParseResult(bureauRes, 'bureau_cutoff');
     logger?.traceParser('parseIntegerSafe', 'bureau_cutoff', bureauRes.raw, bureauRes);
 
+    // Some lenders (e.g. HDFC's own requirement sheet: "below 710 is hard
+    // reject and from 710 to 740 deviation can be taken") define a two-tier
+    // band below the standard cutoff instead of a single hard line. A score
+    // in that band is not auto-rejected — it is still eligible, flagged for
+    // manual deviation approval. Lenders without a configured/policy floor
+    // keep today's single hard-cutoff behavior (floor === cutoff).
+    const bureauHardRejectRes = getParamInteger(paramMap, 'bureau_hard_reject_below');
+    const configuredHardRejectFloor = handleParseResult(bureauHardRejectRes, 'bureau_hard_reject_below');
+    const bureauHardRejectFloor = configuredHardRejectFloor
+        ?? lenderPolicy.bureau?.hardRejectFloor
+        ?? bureauCutoff;
+
     const effectiveCibil = (lowest_cibil_score !== undefined && lowest_cibil_score !== null)
         ? lowest_cibil_score
         : esr.bureau_score;
 
     if (bureauCutoff !== null) {
-        if (!effectiveCibil || effectiveCibil < bureauCutoff) {
+        if (!effectiveCibil || effectiveCibil < bureauHardRejectFloor) {
             isEligible = false;
             failure_reasons.push(effectiveCibil
-                ? `Lowest CIBIL score ${effectiveCibil} is below bureau cutoff ${bureauCutoff}`
+                ? `Lowest CIBIL score ${effectiveCibil} is below the hard-reject floor ${bureauHardRejectFloor}`
                 : "Bureau score missing.");
             logger?.traceFailure('CIBIL_REJECT', effectiveCibil
-                ? `Lowest CIBIL ${effectiveCibil} < Bureau Cutoff ${bureauCutoff}`
+                ? `Lowest CIBIL ${effectiveCibil} < Hard-Reject Floor ${bureauHardRejectFloor}`
                 : 'Bureau score missing');
+        } else if (effectiveCibil < bureauCutoff) {
+            const deviationMsg = `Lowest CIBIL ${effectiveCibil} is below the standard cutoff ${bureauCutoff} but at/above the hard-reject floor ${bureauHardRejectFloor} — eligible subject to manual deviation approval.`;
+            policyWarnings.push(deviationMsg);
+            logger?.traceStep('BUREAU CHECK', `DEVIATION BAND — ${deviationMsg}`);
         } else {
             logger?.traceStep('BUREAU CHECK', `PASS — Effective CIBIL ${effectiveCibil} >= Cutoff ${bureauCutoff}`);
         }
@@ -2941,7 +3124,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const isTataLipMethod = lenderPolicy.key === 'TATA_HOUSING' && /\bLIP\b/i.test(scheme.scheme_name || '');
     const isManualOnlyMethod = (!isTataLipMethod && /\bLIP\b/i.test(scheme.scheme_name || ''))
         || /\b(LOW\s+LTV|MANUAL)\b/i.test(scheme.scheme_name || '')
-        || (['INDIA_SHELTERS', 'PIRAMAL', 'TATA_HOUSING'].includes(lenderPolicy.key)
+        || (['INDIA_SHELTERS', 'PIRAMAL', 'TATA_HOUSING', 'IIFL'].includes(lenderPolicy.key)
             && /\b(AIP|ASSESSED\s+INCOME|NET\s+WORTH|NWM|ANY\s+OTHER)\b/i.test(scheme.scheme_name || ''));
 
     if (isManualOnlyMethod && !(Number(esr.manual_eligible_loan_amount) > 0)) {
@@ -2989,6 +3172,8 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
                 income_method_matched,
                 status: 'NOT_APPLICABLE',
                 is_eligible: false,
+                final_eligible_loan_amount: 0,
+                eligible_loan_amount: 0,
                 monthly_income_used: 0,
                 failure_reasons: ["NWM inactive per ICICI policy / ignored for current phase"],
                 ineligibility_reason: "NWM inactive per ICICI policy / ignored for current phase"
@@ -3492,6 +3677,10 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
     const pf_max = handleParseResult(pfMaxRes, `${pref}_pf_max`);
 
     // 6. Calculate Maximum Eligible EMI
+    // Tracks whether foir_allowed_percent was actually multiplied into
+    // maximum_eligible_emi, so downstream audit-log text never shows a
+    // "x FOIR%" formula for a branch that didn't use it (see esrCalculationLog.service.js).
+    let emiCapacityUsedFoirMultiplier = false;
     let maximum_eligible_emi = 0;
     if ((isHdfcSalariedEmiCapacityMethod || (isNoDoubleFoirSalariedMethod && configuredRawFoir == null)) && composedIncome > 0) {
         // Lender-specific salaried method where income has already been policy-weighted
@@ -3504,6 +3693,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
             `₹${maximum_eligible_emi.toLocaleString()}`
         );
     } else if (!skip_foir_check && foir_allowed_percent !== null && composedIncome > 0) {
+        emiCapacityUsedFoirMultiplier = true;
         maximum_eligible_emi = Math.max(0, (composedIncome * foir_allowed_percent) - netObligations);
         logger?.traceFormula(
             'STEP 7 — ELIGIBLE EMI CAPACITY',
@@ -4103,6 +4293,7 @@ function evaluateDynamicSchemeEligibility({ esr, scheme, product, lender, lowest
         weighted_other_income: composedIncome - incomeComposition.primary_income,
         foir_breakdown: {
             skip_foir_check,
+            emi_capacity_used_foir_multiplier: emiCapacityUsedFoirMultiplier,
             composed_income: combinedMonthlyIncomeUsed,
             primary_composed_income: composedIncome,
             co_applicant_salary_income: coApplicantMonthlyIncomeForFoir,
@@ -4585,7 +4776,18 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
             product_display_name: lender.products[0].product_type === 'HL' ? 'Home Loan' : lender.products[0].product_type === 'LAP' ? 'Loan Against Property' : lender.products[0].product_type,
             is_eligible: isLenderEligible,
             ineligibility_reason: lenderIneligibilityReason,
-            scheme_evaluations: allSchemeEvaluations
+            scheme_evaluations: allSchemeEvaluations,
+            // Explicit defaults so a fully-ineligible lender (no scheme below
+            // sets these) still returns 0/null instead of `undefined` — an
+            // `undefined` field either renders literally in the UI or gets
+            // silently dropped from the JSON response, both misleading for a
+            // report that's supposed to say "this lender is not eligible".
+            final_eligible_loan_amount: 0,
+            max_tenure_months: null,
+            roi_min: null,
+            roi_max: null,
+            monthly_income_used: null,
+            max_eligible_emi: null
         };
 
         const scheme_evaluations = allSchemeEvaluations; // alias for the block below
@@ -4944,6 +5146,15 @@ async function generateDynamicESR(case_id, user_id, tenant_id) {
         });
 
         return newESR;
+    }, {
+        // Default Prisma interactive-transaction timeout is 5000ms, which is too
+        // tight once there are several lenders x several schemes to persist (each
+        // EligibilityReportLender write also does a tenant_lender_id lookup) —
+        // this was reproducibly timing out ("Transaction already closed... 5000ms
+        // ... however 6000ms+ passed") on a normal multi-lender LAP report even
+        // with no unusual load, silently failing ESR generation for the whole case.
+        timeout: 20000,
+        maxWait: 10000
     });
 
     let calculationLogMeta = null;

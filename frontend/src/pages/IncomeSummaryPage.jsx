@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext';
 
 const INCOME_TYPES = [
   'Director Salary', "Partner's Salary", 'Interest on Capital',
+  'Incentive', 'Annual Bonus',
   'Rental Income — Bank', 'Rental Income — Cash', 'Interest Income',
   'Dividend Income', 'Agriculture Income', 'Professional Fees', 'Other'
 ];

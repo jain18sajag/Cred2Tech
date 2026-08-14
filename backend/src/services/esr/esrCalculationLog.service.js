@@ -336,6 +336,20 @@ function _buildWorkbook(payload) {
 
 function _buildDbRows({ caseId, tenantId, userId, calculationRunId, esrReport, lenderResults, inputSnapshot, sourcePaths, fileMeta, warningsAndExclusions }) {
     const rows = [];
+    // input_snapshot_json/source_paths_json/excluded_records_json are the
+    // same value for every row in this batch (they come from the case-level
+    // inputSnapshot/sourcePaths/warningsAndExclusions, not from the
+    // per-scheme `evaluation`) — computing and storing a full duplicate copy
+    // on all ~30-45 rows per case multiplied the actual INSERT payload size
+    // by that same factor, which is what was making this write slow enough
+    // to look like a hang under sequential/concurrent load. Computed once
+    // here and attached only to the first row; nothing in this codebase
+    // reads these columns expecting every row to carry its own copy (grep
+    // confirms they're write-only outside this function), so a lookup by
+    // calculation_run_id already gets the full data from that one row.
+    const sharedInputSnapshotJson = _maskSensitive(_safeJson(inputSnapshot || {}));
+    const sharedSourcePathsJson = _maskSensitive(_safeJson(sourcePaths));
+    const sharedExcludedRecordsJson = _maskSensitive(_safeJson(warningsAndExclusions));
     (lenderResults || []).forEach(lender => {
         const evaluations = Array.isArray(lender.scheme_evaluations) && lender.scheme_evaluations.length
             ? lender.scheme_evaluations
@@ -387,10 +401,10 @@ function _buildDbRows({ caseId, tenantId, userId, calculationRunId, esrReport, l
                 configuration_error: Boolean(evaluation.configuration_error || evaluation.parameter_error),
                 warnings_json: _maskSensitive(_safeJson(warnings)),
                 errors_json: _maskSensitive(_safeJson(errors)),
-                input_snapshot_json: _maskSensitive(_safeJson(inputSnapshot || {})),
-                source_paths_json: _maskSensitive(_safeJson(sourcePaths)),
+                input_snapshot_json: rows.length === 0 ? sharedInputSnapshotJson : null,
+                source_paths_json: rows.length === 0 ? sharedSourcePathsJson : null,
                 calculation_steps_json: _maskSensitive(_safeJson(_calculationSteps(evaluation, lender, index))),
-                excluded_records_json: _maskSensitive(_safeJson(warningsAndExclusions)),
+                excluded_records_json: rows.length === 0 ? sharedExcludedRecordsJson : null,
                 json_file_name: fileMeta.jsonFileName,
                 json_file_path: fileMeta.jsonFilePath,
                 json_file_url: fileMeta.jsonFileUrl,
@@ -458,11 +472,24 @@ function _buildLenderMethodCalculationRows(lenderResults, inputSnapshot) {
             const foir = evaluation.foir_breakdown || {};
             const dscr = evaluation.dscr_breakdown || foir.dscr_breakdown || null;
             const coApp = evaluation.co_applicant_salary_addon || null;
-            const monthlyIncome = _numberOrNull(evaluation.monthly_income_used ?? foir.composed_income ?? inputSnapshot?.selected_monthly_income);
+            // Deliberately no `?? inputSnapshot?.selected_monthly_income` fallback
+            // here — that's a case-wide value, not this scheme's own computed
+            // income. A scheme that's genuinely not applicable (e.g. Salaried
+            // for a self-employed applicant) explicitly sets
+            // monthly_income_used: null; falling back to the case-level figure
+            // fabricated a plausible-looking but wrong "income used" for a
+            // method that computed nothing.
+            const monthlyIncome = _numberOrNull(evaluation.monthly_income_used ?? foir.composed_income);
             const primaryIncome = _numberOrNull(evaluation.primary_monthly_income_used ?? foir.primary_composed_income);
             const coApplicantIncome = _numberOrNull(foir.co_applicant_salary_income);
             const obligations = _numberOrNull(foir.net_obligations ?? inputSnapshot?.existing_obligations);
-            const maxEmi = _numberOrNull(evaluation.maximum_eligible_emi ?? evaluation.max_eligible_emi ?? foir.maximum_eligible_emi ?? lender.max_eligible_emi);
+            // No `lender.max_eligible_emi` fallback — that's the lender-level
+            // rollup's best-scheme figure, not this scheme's own. Borrowing it
+            // previously showed a real EMI-capacity number for a scheme the
+            // engine had explicitly marked not-applicable (monthly_income_used:
+            // null), e.g. "null - obligations = ₹2,07,750" from a different
+            // scheme's numbers.
+            const maxEmi = _numberOrNull(evaluation.maximum_eligible_emi ?? evaluation.max_eligible_emi ?? foir.maximum_eligible_emi);
             const incomeBasedLoan = _numberOrNull(evaluation.foir_based_eligible_loan_amount ?? evaluation.dscr_eligible_loan_amount);
             const ltvPercent = _numberOrNull(evaluation.applicable_ltv_percent);
             const propertyValue = _numberOrNull(inputSnapshot?.property_value ?? inputSnapshot?.market_value);
@@ -471,11 +498,21 @@ function _buildLenderMethodCalculationRows(lenderResults, inputSnapshot) {
             const requestedCap = _numberOrNull(inputSnapshot?.requested_loan_amount);
             const businessCreditCap = _numberOrNull(evaluation.banking_business_credit_cap);
             const posDeduction = _numberOrNull(evaluation.hdfc_unsecured_pos_deduction ?? evaluation.pos_deduction);
-            const finalEligible = _numberOrNull(evaluation.final_eligible_loan_amount ?? lender.final_eligible_loan_amount);
+            // Never borrow the lender-level rollup (the best-performing scheme's
+            // amount) to display for a DIFFERENT, specific scheme whose own
+            // amount is missing — that has previously shown a fake positive
+            // eligible amount for a scheme the engine actually marked
+            // ineligible/not-applicable. Default to 0 instead.
+            const finalEligible = evaluation.final_eligible_loan_amount !== undefined && evaluation.final_eligible_loan_amount !== null
+                ? _numberOrNull(evaluation.final_eligible_loan_amount)
+                : 0;
             const proposedEmi = _numberOrNull(evaluation.proposed_emi ?? foir.proposed_emi);
-            const roi = _numberOrNull(evaluation.underwriting_roi_used ?? evaluation.roi ?? lender.roi_min);
-            const tenure = _intOrNull(evaluation.final_tenure_used ?? evaluation.max_tenure_months ?? lender.max_tenure_months);
-            const lenderMaxTenure = _intOrNull(evaluation.lender_max_tenure_months ?? evaluation.max_tenure_months ?? lender.max_tenure_months);
+            // No `lender.roi_min`/`lender.max_tenure_months` fallback — same
+            // reasoning as maxEmi/finalEligible above: those are the lender
+            // rollup's winning-scheme values, not necessarily this scheme's.
+            const roi = _numberOrNull(evaluation.underwriting_roi_used ?? evaluation.roi);
+            const tenure = _intOrNull(evaluation.final_tenure_used ?? evaluation.max_tenure_months);
+            const lenderMaxTenure = _intOrNull(evaluation.lender_max_tenure_months ?? evaluation.max_tenure_months);
             const ageBasedTenure = _intOrNull(evaluation.age_based_tenure_limit_months);
             const foirPercent = _numberOrNull(evaluation.foir_allowed_percent ?? foir.foir_allowed_percent);
             const actualFoir = _numberOrNull(evaluation.foir_actual_percent ?? foir.foir_actual_percent);
@@ -574,7 +611,18 @@ function _dataTakenForEvaluation(methodName, evaluation, inputSnapshot) {
 function _incomeFormulaForEvaluation(methodName, evaluation, inputSnapshot, monthlyIncome, primaryIncome, coApplicantIncome, dscr) {
     const method = String(methodName || '').toUpperCase();
     if (method.includes('GST')) {
-        const baseFormula = `GST Avg Monthly Sales ${_money(inputSnapshot?.gst_avg_monthly_sales)} x Margin ${_percent(inputSnapshot?.gst_industry_margin)} = ${_money(primaryIncome ?? monthlyIncome)}`;
+        const gstTurnover = _numberOrNull(inputSnapshot?.gst_avg_monthly_sales);
+        const gstIncomeForMargin = _numberOrNull(primaryIncome ?? monthlyIncome);
+        // The real margin used is resolved per lender/industry inside the
+        // engine (resolveGstIndustryMargin) and isn't necessarily equal to the
+        // raw case_esr_financials.gst_industry_margin snapshot field (which is
+        // often unset when the lender-specific default applies) — back-derive
+        // the margin actually used from income/turnover so the audit text
+        // never shows a percentage that doesn't match its own formula.
+        const gstMarginUsed = gstTurnover && gstIncomeForMargin !== null && gstTurnover > 0
+            ? gstIncomeForMargin / gstTurnover
+            : inputSnapshot?.gst_industry_margin;
+        const baseFormula = `GST Avg Monthly Sales ${_money(inputSnapshot?.gst_avg_monthly_sales)} x Margin ${_percent(gstMarginUsed)} = ${_money(primaryIncome ?? monthlyIncome)}`;
         const isIciciGst = String(evaluation?.lender_policy_key || '').toUpperCase() === 'ICICI';
         const includedCoApplicantSalary = isIciciGst && monthlyIncome !== null && primaryIncome !== null
             ? Math.max(0, monthlyIncome - primaryIncome)
@@ -616,6 +664,13 @@ function _emiCapacityFormulaForEvaluation(methodName, foir, dscr, monthlyIncome,
     if (foir?.skip_foir_check) {
         return `No DBR/FOIR deduction; eligible EMI from method = ${_money(maxEmi)}`;
     }
+    // Some methods (e.g. HDFC/ICICI Salaried) compute EMI capacity as
+    // Income − Obligations directly — income was already policy-weighted
+    // upstream, so no FOIR% is multiplied in here. Showing "x FOIR%" in that
+    // case would misrepresent the real arithmetic actually used.
+    if (!foir?.emi_capacity_used_foir_multiplier) {
+        return `${_money(monthlyIncome)} - obligations ${_money(obligations)} = ${_money(maxEmi)} (income already policy-weighted; FOIR% not applied again)`;
+    }
     return `(${_money(monthlyIncome)} x ${_percent(foirPercent)}) - obligations ${_money(obligations)} = ${_money(maxEmi)}`;
 }
 
@@ -628,6 +683,9 @@ function _foirAllowedFormulaForEvaluation(evaluation, foirPercent) {
     }
     if (evaluation.foir_breakdown?.skip_foir_check) {
         return 'No DBR/FOIR check for this method';
+    }
+    if (!evaluation.foir_breakdown?.emi_capacity_used_foir_multiplier) {
+        return `FOIR% not applied to EMI capacity for this method (income already policy-weighted)${foirPercent !== null ? ` — configured FOIR reference: ${_percent(foirPercent)}` : ''}`;
     }
     return `FOIR allowed from lender policy = ${_percent(foirPercent)}`;
 }
@@ -786,10 +844,30 @@ function _maskSensitive(value) {
         return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, _maskSensitive(entry)]));
     }
     if (typeof value !== 'string') return value;
+    // Some fields (e.g. income_breakdown) are themselves a pre-serialized
+    // JSON blob by the time this runs, so real financial figures sit right
+    // next to these digit-run regexes as plain text. Two failure modes were
+    // confirmed here:
+    //  1. A repeating decimal (231800/3 = 77266.66666666667) had its
+    //     fractional digits masked as if they were a 9-18 digit account
+    //     number, turning it into the invalid JSON fragment
+    //     "77266.*******6667" — corrupting the whole blob so nothing
+    //     downstream could JSON.parse it. Fixed by `(?<![.\d])`/`(?![.\d])`,
+    //     which require the match not be adjacent to a decimal point or
+    //     another digit.
+    //  2. A large bare loan/property amount (e.g. ₹13,42,75,000 = 134275000,
+    //     a perfectly ordinary LAP-ticket size) is indistinguishable from a
+    //     real account number by digit-count alone — it was getting masked
+    //     too, hiding a real, non-sensitive figure from the audit trail.
+    //     Fixed by `(?<!:\s?)`: a bare JSON numeric literal always
+    //     immediately follows a key's colon (`"key":123...` or
+    //     `"key": 123...`); genuine free-text PII does not, so this
+    //     distinguishes "JSON number" from "sensitive digit string in
+    //     prose" without needing to know which field is which.
     return value
         .replace(/\b[A-Z]{5}[0-9]{4}[A-Z]\b/g, match => `${match.slice(0, 3)}****${match.slice(-1)}`)
-        .replace(/\b[0-9]{12}\b/g, match => `********${match.slice(-4)}`)
-        .replace(/\b[0-9]{9,18}\b/g, match => `${'*'.repeat(Math.max(0, match.length - 4))}${match.slice(-4)}`);
+        .replace(/(?<!:\s?)(?<![.\d])[0-9]{12}(?![.\d])/g, match => `********${match.slice(-4)}`)
+        .replace(/(?<!:\s?)(?<![.\d])[0-9]{9,18}(?![.\d])/g, match => `${'*'.repeat(Math.max(0, match.length - 4))}${match.slice(-4)}`);
 }
 
 function _safeJson(value) {
@@ -833,11 +911,19 @@ function _pick(obj, keys) {
 }
 
 function _numberOrNull(value) {
+    // Number(null) is 0 and Number('') is 0 in JS — without this guard, a
+    // field the engine deliberately set to null (e.g. "this scheme doesn't
+    // apply, there is no LTV/income to report") silently became the number
+    // 0 here, which then rendered as a fabricated "x 0.00% = ₹0" formula
+    // instead of correctly showing "not applicable" throughout the
+    // calculation log.
+    if (value === null || value === undefined || value === '') return null;
     const num = Number(value);
     return Number.isFinite(num) ? num : null;
 }
 
 function _intOrNull(value) {
+    if (value === null || value === undefined || value === '') return null;
     const num = Number(value);
     return Number.isFinite(num) ? Math.trunc(num) : null;
 }

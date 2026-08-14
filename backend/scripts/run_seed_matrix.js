@@ -4,7 +4,7 @@ const seedLendersIfMissing = require('../src/utils/seed_lenders');
 async function main() {
     console.log("Verifying lender, product, and scheme configuration...");
     await seedLendersIfMissing({
-        lenderCodes: ['INDIA_SHELTERS', 'PIRAMAL', 'TATA_HOUSING']
+        lenderCodes: ['INDIA_SHELTERS', 'PIRAMAL', 'TATA_HOUSING', 'IIFL']
     });
     console.log("Starting seedDataMatrix runner...");
     await seedDataMatrix();

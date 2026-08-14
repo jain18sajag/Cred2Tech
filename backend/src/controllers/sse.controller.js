@@ -1,6 +1,8 @@
 const sseService = require('../services/sse.service');
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+// Shared client — carries the connection-safety timeouts (see config/db.js)
+// instead of an unprotected raw client that could hang forever on a stalled
+// connection with no recovery.
+const prisma = require('../../config/db');
 
 exports.getPullStatusStream = async (req, res) => {
     const caseId = parseInt(req.params.caseId, 10);

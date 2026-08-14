@@ -52,10 +52,14 @@ const legacyUploadController = require('../controllers/legacyUpload.controller')
 router.post('/bulk-legacy-upload', requireRole('DSA_ADMIN', 'SUPER_ADMIN'), legacyUploadController.bulkUploadLegacyCases);
 
 // GET /cases/bulk-upload/template
-router.get('/bulk-upload/template', caseController.downloadBulkTemplate);
-
 // POST /cases/bulk-upload
-router.post('/bulk-upload', upload.single('file'), caseController.uploadBulkCases);
+// Restricted to DSA/staff roles for the same reason as bulk-legacy-upload
+// above — this creates arbitrary customers/cases (with arbitrary PANs) from
+// an uploaded spreadsheet and auto-runs ESR. It was reachable by
+// MSME_CUSTOMER via the router-level gate, letting a single self-service
+// customer mass-create case/customer records for other people's PANs.
+router.get('/bulk-upload/template', requireRole('DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA', 'SUPER_ADMIN'), caseController.downloadBulkTemplate);
+router.post('/bulk-upload', requireRole('DSA_ADMIN', 'DSA_MEMBER', 'SUB_DSA', 'SUPER_ADMIN'), upload.single('file'), caseController.uploadBulkCases);
 
 // POST /cases/:id/add-applicant
 router.post('/:id/add-applicant', caseController.addApplicant);

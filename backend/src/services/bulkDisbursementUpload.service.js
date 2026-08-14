@@ -1,6 +1,8 @@
 const ExcelJS = require('exceljs');
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+// Shared client — carries the connection-safety timeouts (see config/db.js)
+// instead of an unprotected raw client that could hang forever on a stalled
+// connection with no recovery.
+const prisma = require('../../config/db');
 const disbursementService = require('./disbursement.service');
 
 const parseNum = (val, fallback = null) => {

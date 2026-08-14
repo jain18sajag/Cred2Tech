@@ -426,6 +426,8 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
         let itr_remuneration = null;
         let director_interest_on_loan = null;
         let itr_gross_receipts = null;
+        let itr_pat_previous_year = null;
+        let itr_gross_receipts_previous_year = null;
 
         const itrReq = pickBestRecord(caseRecord.itr_analytics);
 
@@ -444,6 +446,14 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
                 itr_pat = toNum(itrReq.net_profit_latest_year);
                 itr_gross_receipts = toNum(itrReq.gross_receipts_latest_year);
             }
+
+            // Previous-FY figures for the Net Profit Method "2-year growth" test
+            // (HDFC/India Shelters/Piramal/Tata policy). The vendor ITR pull only
+            // captures PAT and gross receipts year-over-year — not depreciation,
+            // finance cost, or director remuneration — so only PAT-based growth
+            // testing/averaging is possible from real data.
+            itr_pat_previous_year = toNum(itrReq.net_profit_previous_year);
+            itr_gross_receipts_previous_year = toNum(itrReq.gross_receipts_previous_year);
 
             if (parsedItr) {
                 // Log ITR verbose details
@@ -794,17 +804,21 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
             salaried_income = totalSalariedMonthly;
         }
 
-        // --- Incentive income: 3-month average ---
-
-        // --- Incentive income: 3-month average ---
-        const INCENTIVE_TYPES = new Set(['incentive', 'bonus', 'variable pay', 'performance bonus']);
+        // --- Incentive income: 3-month average. Bonus: latest reported annual figure. ---
+        // Bonus and incentive are distinct income components under every lender's
+        // policy (different treatment %, different averaging period — incentive is
+        // a recurring 3-month average, bonus is a single latest-year reported
+        // figure) and must not be merged into one bucket.
+        const INCENTIVE_TYPES = new Set(['incentive', 'variable pay']);
+        const BONUS_TYPES = new Set(['bonus', 'annual bonus', 'performance bonus']);
         const OTHER_ELIGIBLE_TYPES = new Set(['other eligible income', 'other income']);
 
         let totalIncentiveMonthly = 0;
+        let totalAnnualBonus = 0;
         let totalOtherEligibleMonthly = 0;
 
         for (const applicant of caseRecord.applicants) {
-            // Read incentive from OCR slip if available. 
+            // Read incentive from OCR slip if available.
             // Average strictly over the most recent 3 months of valid slips.
             const completedSlips = applicant.salary_ocr_results || [];
             if (completedSlips.length > 0) {
@@ -814,7 +828,7 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
                 let slipIncentiveSum = 0;
                 let validIncentiveCount = 0;
                 for (const slip of recentSlips) {
-                    const incentiveVal = toNum(slip.incentive_amount) || toNum(slip.bonus_amount);
+                    const incentiveVal = toNum(slip.incentive_amount);
                     if (incentiveVal !== null && incentiveVal > 0) {
                         slipIncentiveSum += incentiveVal;
                         validIncentiveCount++;
@@ -823,18 +837,25 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
                 if (validIncentiveCount > 0) {
                     totalIncentiveMonthly += slipIncentiveSum / 3; // Strict 3-month average per Excel
                 }
+
+                // Bonus is a one-time/annual payout, not a recurring monthly item —
+                // take the most recent slip that actually reports one instead of
+                // averaging it in with incentive.
+                const latestBonusSlip = completedSlips.find(s => toNum(s.bonus_amount) > 0);
+                if (latestBonusSlip) totalAnnualBonus += toNum(latestBonusSlip.bonus_amount);
             }
 
         }
 
-        // Read incentive/other eligible income from all manual entries once at case level.
-        // Do not scan per-applicant here, otherwise applicant-linked manual rows can be double-counted.
+        // Read incentive/bonus/other eligible income from all manual entries once at
+        // case level. Do not scan per-applicant here, otherwise applicant-linked
+        // manual rows can be double-counted.
         for (const entry of allManualIncomeEntries) {
             const type = (entry.income_type || '').toLowerCase();
-            const monthly = (toNum(entry.annual_amount) || 0) / 12;
-            // If it's manual, annual/12 is used as average monthly value.
-            if (INCENTIVE_TYPES.has(type)) totalIncentiveMonthly += monthly;
-            if (OTHER_ELIGIBLE_TYPES.has(type)) totalOtherEligibleMonthly += monthly;
+            const annual = toNum(entry.annual_amount) || 0;
+            if (INCENTIVE_TYPES.has(type)) totalIncentiveMonthly += annual / 12;
+            if (BONUS_TYPES.has(type)) totalAnnualBonus += annual;
+            if (OTHER_ELIGIBLE_TYPES.has(type)) totalOtherEligibleMonthly += annual / 12;
         }
 
         if (hasSalariedData && totalSalariedMonthly > 0) {
@@ -977,6 +998,8 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
             itr_finance_cost,
             itr_gross_receipts,
             itr_remuneration,
+            itr_pat_previous_year,
+            itr_gross_receipts_previous_year,
 
             gst_avg_monthly_sales,
             gst_industry_type,
@@ -1007,6 +1030,7 @@ async function extractEsrFinancials(case_id, tenant_id, options = {}) {
             bank_net_salary_monthly: verified_bank_net_salary_monthly,
             bank_salary_months_available: bank_salary_credit_count || null,
             salaried_incentive_income: totalIncentiveMonthly > 0 ? totalIncentiveMonthly : null,
+            salaried_annual_bonus: totalAnnualBonus > 0 ? totalAnnualBonus : null,
             salaried_other_income: totalOtherEligibleMonthly > 0 ? totalOtherEligibleMonthly : null,
 
             selected_income_method,

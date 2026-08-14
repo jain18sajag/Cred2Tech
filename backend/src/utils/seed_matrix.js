@@ -141,12 +141,20 @@ const lenderPolicyValues = {
   TATA_HOUSING: {
     HL: { hl_min_loan: { SAL: '500000', NPM: '500000', BANK: '1000000', GST: '3000000', GRP: '2000000', LIP: '5000000', LOW_LTV: '1000000' }, hl_max_loan: { LIP: '25000000', LOW_LTV: '30000000', default: '75000000' }, hl_roi_min: '7.5%', hl_roi_max: '8.5%', hl_pf_min: null, hl_pf_max: null, hl_max_tenure: { SAL: '360 Months', default: '240 Months' }, age_maturity_income: { SAL: '60', default: '70' }, age_maturity_non_income: '75', bureau_cutoff: '700', bureau_name: 'CIBIL', hl_dbr_foir: { SAL: '<70000 - 60%, <150000 - 65%, >=150000 - 70%', BANK: '55%', NPM: '80%', GST: '80%', GRP: '70%', LIP: '65%', LOW_LTV: null }, existing_obligation: { BANK: 'Loan availed in last 6 months: EMI reduced from ABB; loans closed in the last 12 months or closing shortly are added back to ABB; cash-out uses the last balance before loan credit for ABB', LOW_LTV: 'No obligation', NWM: null, ANY: null, default: 'All obligations considered except those closing in next 12 months' }, hl_ltv_upto_30: { LOW_LTV: '50%', default: '90%' }, hl_ltv_30_75: { LOW_LTV: '50%', default: '80%' }, hl_ltv_above_75: { LOW_LTV: '50%', default: '75%' }, hl_ltv_commercial: { LOW_LTV: null, default: '70%' }, hl_ltv_industrial: { LOW_LTV: null, default: '70%' }, hl_ltv_plot: { LOW_LTV: null, default: '70%' } },
     LAP: { lap_min_loan: { SAL: '500000', NPM: '500000', BANK: '1000000', GST: '3000000', GRP: '2000000', LIP: '5000000', LOW_LTV: '1000000' }, lap_max_loan: { LIP: '25000000', LOW_LTV: '30000000', default: '75000000' }, lap_roi_min: '9%', lap_roi_max: '10.5%', lap_pf_min: '0%', lap_pf_max: '1.5%', lap_max_tenure: '180 Months', age_maturity_income: { SAL: '60', default: '70' }, age_maturity_non_income: '75', bureau_cutoff: '700', bureau_name: 'CIBIL', lap_dbr_foir: { SAL: '<70000 - 60%, <150000 - 65%, >=150000 - 70%', BANK: '55%', NPM: '80%', GST: '80%', GRP: '70%', LIP: '65%', LOW_LTV: null }, existing_obligation: { BANK: 'Loan availed in last 6 months: EMI reduced from ABB; loans closed in the last 12 months or closing shortly are added back to ABB; cash-out uses the last balance before loan credit for ABB', LOW_LTV: 'No obligation', NWM: null, ANY: null, default: 'All obligations considered except those closing in next 12 months' }, lap_ltv_res_self: { LOW_LTV: '50%', default: '70%' }, lap_ltv_res_rented: { SAL: null, LOW_LTV: '40%', default: '65%' }, lap_ltv_res_vacant: { SAL: null, LIP: 'NOT_ALLOWED', LOW_LTV: 'NOT_ALLOWED', default: '60%' }, lap_ltv_com_self: { SAL: null, LOW_LTV: '50%', default: '60%' }, lap_ltv_com_rented: { SAL: null, LOW_LTV: '40%', default: '55%' }, lap_ltv_com_vacant: { SAL: null, LIP: 'NOT_ALLOWED', LOW_LTV: 'NOT_ALLOWED', default: '50%' }, lap_ltv_ind_self: { SAL: null, default: '45%' }, lap_ltv_ind_rented: { SAL: null, default: '45%' }, lap_ltv_ind_vacant: { SAL: null, default: 'NOT_ALLOWED' }, lap_ltv_mix_self: null, lap_ltv_mix_rented: null, lap_ltv_mix_vacant: null, lap_ltv_plot_self: null, lap_ltv_plot_rented: null, lap_ltv_plot_vacant: null, lap_ltv_special: { SAL: null, LOW_LTV: null, default: '50%' } }
+  },
+  IIFL: {
+    HL: { hl_min_loan: '500000', hl_max_loan: { BANK: '30000000', AIP: '5000000', default: '50000000' }, hl_roi_min: '9.45%', hl_roi_max: '13.5%', hl_pf_min: '0.5%', hl_pf_max: '1.75%', hl_max_tenure: { SAL: '300 Months', default: '240 Months' }, age_maturity_income: { SAL: '65', default: '75' }, age_maturity_non_income: '75', bureau_cutoff: '660', bureau_name: 'CIBIL', hl_dbr_foir: { SAL: '<50k -60%, >50k - 65%', NPM: 'Max 100% ( Double wammy - 160%)', BANK: 'No DBR', GST: 'Max 100% ( Double wammy - 140%)', GRP: 'No DBR', LIP: '70%', LOW_LTV: '100%', AIP: '70%' }, elig_rental_bank: 'YES', elig_rental_cash: 'YES', elig_agri_itr: 'YES', dbr_rental_bank: '50%', dbr_rental_cash: '50%', dbr_agri_itr: '50%', existing_obligation: { AIP: 'All obligations considered except those closing in next 6 months. Sub-₹30k POS not obligated. Income-generating-asset (e.g. CV) loans not obligated.', default: 'All obligations considered except those closing in next 12 months. Sub-₹1L POS not obligated. Income-generating-asset (e.g. CV) loans not obligated.' }, hl_ltv_upto_30: { LOW_LTV: '50%', default: '90%' }, hl_ltv_30_75: { LOW_LTV: '50%', default: '80%' }, hl_ltv_above_75: { LOW_LTV: '50%', default: '75%' }, hl_ltv_commercial: { LOW_LTV: null, default: '60%' }, hl_ltv_industrial: 'NOT_ALLOWED', hl_ltv_plot: { LOW_LTV: null, default: '75%' } },
+    LAP: { lap_min_loan: { AIP: '500000', default: '1000000' }, lap_max_loan: { BANK: '30000000', LIP: '20000000', AIP: '3500000', default: '150000000' }, lap_roi_min: '12.15%', lap_roi_max: '15.5%', lap_pf_min: '2%', lap_pf_max: '2%', lap_max_tenure: '180 Months', age_maturity_income: { SAL: '65', default: '75' }, age_maturity_non_income: '75', bureau_cutoff: '660', bureau_name: 'CIBIL', lap_dbr_foir: { SAL: '<50k -60%, >50k - 65%', NPM: 'Max 100% ( Double wammy - 140%)', BANK: 'No DBR', GST: 'Max 100% ( Double wammy - 140%)', GRP: 'No DBR', LIP: '70%', LOW_LTV: '100%', AIP: '70%' }, elig_rental_bank: 'YES', elig_rental_cash: 'YES', elig_agri_itr: 'YES', dbr_rental_bank: '50%', dbr_rental_cash: '50%', dbr_agri_itr: '50%', existing_obligation: { AIP: 'All obligations considered except those closing in next 6 months. Sub-₹30k POS not obligated. Income-generating-asset (e.g. CV) loans not obligated.', default: 'All obligations considered except those closing in next 12 months. Sub-₹1L POS not obligated. Income-generating-asset (e.g. CV) loans not obligated.' }, lap_ltv_res_self: { LOW_LTV: '50%', default: '70%' }, lap_ltv_res_rented: { LOW_LTV: '50%', default: '70%' }, lap_ltv_res_vacant: { LOW_LTV: 'NOT_ALLOWED', default: '70%' }, lap_ltv_com_self: { LOW_LTV: '50%', default: '65%' }, lap_ltv_com_rented: { LOW_LTV: '50%', default: '65%' }, lap_ltv_com_vacant: { LOW_LTV: 'NOT_ALLOWED', default: '65%' }, lap_ltv_ind_self: { LOW_LTV: '50%', NWM: '40%', default: '55%' }, lap_ltv_ind_rented: { LOW_LTV: '50%', NWM: '40%', default: '55%' }, lap_ltv_ind_vacant: 'NOT_ALLOWED', lap_ltv_mix_self: { LOW_LTV: '50%', NWM: '70%', default: '65%' }, lap_ltv_mix_rented: { LOW_LTV: '50%', NWM: '70%', default: '65%' }, lap_ltv_mix_vacant: { LOW_LTV: 'NOT_ALLOWED', NWM: '70%', default: '65%' }, lap_ltv_plot_self: 'NOT_ALLOWED', lap_ltv_plot_rented: 'NOT_ALLOWED', lap_ltv_plot_vacant: 'NOT_ALLOWED', lap_ltv_special: { LOW_LTV: 'NOT_ALLOWED', default: '50%' } }
   }
 };
 
-// Explicit business override: these three lenders do not block ESR on a
-// minimum bureau score. Keep ICICI and HDFC configuration untouched.
-for (const lenderCode of ['INDIA_SHELTERS', 'PIRAMAL', 'TATA_HOUSING']) {
+// Explicit business override: India Shelters and Piramal's own policy sheets
+// have no bureau cutoff (blank cells), so they don't block ESR on a minimum
+// bureau score. Tata Capital's sheet explicitly states bureau_cutoff = 700
+// (see its lenderPolicyValues entries above), so it is excluded from this
+// override and keeps its real cutoff. Keep ICICI and HDFC configuration
+// untouched.
+for (const lenderCode of ['INDIA_SHELTERS', 'PIRAMAL']) {
   for (const productType of ['HL', 'LAP']) {
     lenderPolicyValues[lenderCode][productType].bureau_cutoff = '0';
   }
@@ -326,8 +334,10 @@ async function seedDataMatrix() {
       paramKeyMap[p.parameter_key] = p.id;
     }
 
-    // Apply the approved zero-cutoff override to every active method, including
-    // legacy-named Tata schemes that may predate the canonical scheme names.
+    // Apply the approved zero-cutoff override to every active method for the
+    // lenders whose own sheets have no bureau cutoff. Tata Capital's sheet
+    // states bureau_cutoff = 700, so it is excluded here — its cutoff is
+    // seeded normally from lenderPolicyValues instead.
     const bureauCutoffParameterId = paramKeyMap.bureau_cutoff;
     if (bureauCutoffParameterId) {
       const zeroCutoffSchemes = await prisma.scheme.findMany({
@@ -336,7 +346,7 @@ async function seedDataMatrix() {
           product: {
             status: 'ACTIVE',
             product_type: { in: ['HL', 'LAP'] },
-            lender: { code: { in: ['INDIA_SHELTERS', 'PIRAMAL', 'TATA_HOUSING'] } }
+            lender: { code: { in: ['INDIA_SHELTERS', 'PIRAMAL'] } }
           }
         },
         select: { id: true }
@@ -360,9 +370,10 @@ async function seedDataMatrix() {
       }
     }
 
-    // This workbook runner is isolated to the three lenders in this rollout.
-    // ICICI/HDFC retain their existing database configuration and calculation paths.
-    const lenders = ['INDIA_SHELTERS', 'PIRAMAL', 'TATA_HOUSING'];
+    // This workbook runner is isolated to lenders with an explicit
+    // lenderPolicyValues entry above. ICICI/HDFC retain their existing
+    // database configuration and calculation paths.
+    const lenders = ['INDIA_SHELTERS', 'PIRAMAL', 'TATA_HOUSING', 'IIFL'];
     const products = ['HL', 'LAP'];
 
     for (const lCode of lenders) {

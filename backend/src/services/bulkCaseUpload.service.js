@@ -1,6 +1,10 @@
 const ExcelJS = require('exceljs');
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+// Shared client — carries the connection-safety timeouts (see config/db.js)
+// and the field-encryption extension. The previous raw, unextended client
+// meant PAN written via this bulk-upload path was stored in plaintext,
+// inconsistent with every other write path in the app (which encrypts PAN
+// via this same extension) — using the shared client fixes that too.
+const prisma = require('../../config/db');
 const { generateESR } = require('./esr.service');
 
 // Utility for parsing numbers safely
