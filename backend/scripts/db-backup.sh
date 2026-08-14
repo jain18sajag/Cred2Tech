@@ -64,11 +64,21 @@ BACKUP_FILE="${BACKUP_DIR}/cred2tech-backend_${TIMESTAMP}${SUFFIX}.sql.gz.enc"
 
 echo "$LOG_PREFIX Starting backup → $BACKUP_FILE"
 
-# Prisma connection strings carry a `?schema=public` (and sometimes other
-# Prisma-only) query params that pg_dump/libpq reject ("invalid URI query
-# parameter"). Strip `schema=…` and tidy up any leftover ?/& separators.
-DUMP_URL=$(printf '%s' "$DATABASE_URL" \
-  | sed -E 's/schema=[^&]*//g; s/&&+/\&/g; s/\?&/?/; s/[?&]+$//')
+# Prisma connection strings carry `?schema=public` and sometimes
+# `?uselibpqcompat=true` — Prisma-only query params that pg_dump/libpq
+# reject outright ("invalid URI query parameter"). Stripped via Node's URL
+# parser rather than sed: a sed-based strip can't safely handle a password
+# containing a literal unencoded '@' (ours does) — pg_dump's URI parser
+# splits userinfo/host on the FIRST '@' it finds, so an unencoded '@' in the
+# password gets parsed as part of the hostname ("could not translate host
+# name '<rest-of-password>@<real-host>'"). Node's URL serializer
+# percent-encodes it correctly on output.
+DUMP_URL=$(node -e '
+  const u = new URL(process.argv[1]);
+  u.searchParams.delete("schema");
+  u.searchParams.delete("uselibpqcompat");
+  process.stdout.write(u.toString());
+' "$DATABASE_URL")
 
 pg_dump "$DUMP_URL" \
   | gzip \

@@ -87,9 +87,20 @@ if [ "$CONFIRM" != "yes" ]; then
 fi
 
 # ── Decrypt → gunzip → psql ───────────────────────────────────────────────────
-# Strip Prisma-only query params (e.g. ?schema=public) that libpq/psql reject.
-PSQL_URL=$(printf '%s' "$TARGET_URL" \
-  | sed -E 's/schema=[^&]*//g; s/&&+/\&/g; s/\?&/?/; s/[?&]+$//')
+# Strip Prisma-only query params (e.g. ?schema=public, ?uselibpqcompat=true)
+# that libpq/psql reject outright ("invalid URI query parameter"), via Node's
+# URL parser rather than sed. A sed-based strip can't safely handle a
+# password containing a literal unencoded '@' (our own DB password does) —
+# psql's URI parser splits on the FIRST '@' it sees, while Prisma/Node split
+# on the LAST one, so an unencoded '@' in the password is parsed as part of
+# the host by psql ("could not translate host name '<rest-of-password>@<real-host>'").
+# Node's URL serializer percent-encodes it correctly on output.
+PSQL_URL=$(node -e '
+  const u = new URL(process.argv[1]);
+  u.searchParams.delete("schema");
+  u.searchParams.delete("uselibpqcompat");
+  process.stdout.write(u.toString());
+' "$TARGET_URL")
 
 echo "Restoring..."
 openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -pass pass:"$BACKUP_ENCRYPTION_KEY" -in "$ENC_FILE" \
