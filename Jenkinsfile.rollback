@@ -6,7 +6,7 @@
 // CODE modes:
 //   • RELEASE — instantly re-point 'current' to an existing release folder on the
 //               server (no rebuild). Fastest.
-//   • GIT     — check out a specific commit/tag from backend/ and deploy it fresh.
+//   • GIT     — check out a specific commit/tag and deploy it fresh.
 //   • NONE    — don't touch code (use when you only need to restore the DB).
 //
 // DATABASE restore (optional, off by default):
@@ -19,7 +19,7 @@
 // health check, the previous release is auto-restored. A DB restore is gated
 // behind an explicit confirmation parameter because it overwrites live data.
 //
-// Set Jenkins job "Script Path" = backend/Jenkinsfile.rollback.
+// Set Jenkins job "Script Path" = Jenkinsfile.rollback.
 // ─────────────────────────────────────────────────────────────────────────────
 pipeline {
     agent any
@@ -46,7 +46,6 @@ pipeline {
         PM2_APP       = 'cred2tech-backend'
         DEPLOY_BASE   = '/opt/cred2tech/cred2tech-backend'
         ENV_FILE      = '/etc/cred2tech/cred2tech-backend.env'
-        BACKEND_DIR   = 'backend'
         // APP_PORT is resolved at runtime from PORT in the service env file.
         NOTIFY_EMAIL  = 'adarsh.suradkar@cred2tech.com, cred2tech@gmail.com'
         GIT_REPO      = 'https://github.com/jain18sajag/Cred2Tech.git'
@@ -182,14 +181,14 @@ pipeline {
                     env.TARGET_RELEASE = "${DEPLOY_BASE}/releases/${ts}_rollback_${ref}"
                     sh """
                         mkdir -p ${env.TARGET_RELEASE}
-                        cp -r ${BACKEND_DIR}/src               ${env.TARGET_RELEASE}/
-                        cp -r ${BACKEND_DIR}/config            ${env.TARGET_RELEASE}/
-                        cp -r ${BACKEND_DIR}/prisma            ${env.TARGET_RELEASE}/
-                        cp -r ${BACKEND_DIR}/scripts           ${env.TARGET_RELEASE}/ 2>/dev/null || true
-                        cp -r ${BACKEND_DIR}/docs              ${env.TARGET_RELEASE}/ 2>/dev/null || true
-                        cp    ${BACKEND_DIR}/server.js         ${env.TARGET_RELEASE}/
-                        cp    ${BACKEND_DIR}/package.json      ${env.TARGET_RELEASE}/
-                        cp    ${BACKEND_DIR}/package-lock.json ${env.TARGET_RELEASE}/
+                        cp -r src               ${env.TARGET_RELEASE}/
+                        cp -r config            ${env.TARGET_RELEASE}/
+                        cp -r prisma            ${env.TARGET_RELEASE}/
+                        cp -r scripts           ${env.TARGET_RELEASE}/ 2>/dev/null || true
+                        cp -r docs              ${env.TARGET_RELEASE}/ 2>/dev/null || true
+                        cp    server.js         ${env.TARGET_RELEASE}/
+                        cp    package.json      ${env.TARGET_RELEASE}/
+                        cp    package-lock.json ${env.TARGET_RELEASE}/
                         cp    ${ENV_FILE}                      ${env.TARGET_RELEASE}/.env
 
                         COMMIT=\$(git rev-parse --short HEAD)

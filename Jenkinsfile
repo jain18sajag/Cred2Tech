@@ -1,9 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // CI/CD pipeline for cred2tech-backend (Express + Prisma / PostgreSQL).
 //
-// This is a MONO-REPO (backend/ + frontend/). This pipeline deploys ONLY the
-// backend/ subtree to production — the frontend is never touched here. Pushes
-// that change only frontend/ are skipped (unless FORCE_DEPLOY is set).
+// This repo is backend-only (the testing frontend that used to live alongside
+// it under frontend/ is deprecated and removed — dev/testing work now happens
+// on branches deployed via Jenkinsfile.dev, and the real production frontend
+// is Cred2Tech-WebApp, a separate repo entirely). Every push to main deploys.
 //
 // Safety-first: BEFORE anything is deployed we take a full PostgreSQL backup
 // (pg_dump → gzip → AES-256 encrypted) and push it to S3, so a bad deploy can be
@@ -11,7 +12,7 @@
 // failed backup BLOCKS the deploy — we never change production without a fresh
 // offsite backup in hand.
 //
-// Set Jenkins job "Script Path" = backend/Jenkinsfile.
+// Set Jenkins job "Script Path" = Jenkinsfile.
 // ─────────────────────────────────────────────────────────────────────────────
 pipeline {
     agent any
@@ -21,11 +22,6 @@ pipeline {
     }
 
     parameters {
-        booleanParam(
-            name: 'FORCE_DEPLOY',
-            defaultValue: false,
-            description: 'Deploy even if this push did not change backend/ (e.g. manual redeploy).'
-        )
         booleanParam(
             name: 'RUN_MIGRATIONS',
             defaultValue: false,
@@ -46,7 +42,6 @@ pipeline {
         // If the credential is not configured the pipeline falls back to the
         // on-box ENV_FILE.
         ENV_CREDENTIAL_ID = 'cred2tech-backend-env'
-        BACKEND_DIR   = 'backend'                       // sub-path inside the mono-repo
         // APP_PORT is resolved at runtime from PORT in the service env file (so this
         // PROD instance can run on its own port — 5000 is already taken on the box by
         // uat_backend). Default 5000 if PORT is not set in the env file.
@@ -70,10 +65,8 @@ pipeline {
 
     // ── Generic Webhook Trigger ────────────────────────────────────────────────
     // Fires on a GitHub push webhook. We only act on pushes to main (regexp
-    // filter on the ref); whether anything actually deploys is then decided by
-    // the 'Detect Backend Changes' stage, so frontend-only pushes spin up a build
-    // that exits NOT_BUILT. The shared secret lives in a Jenkins credential
-    // (tokenCredentialId) — the webhook URL is:
+    // filter on the ref) — every such push deploys. The shared secret lives in
+    // a Jenkins credential (tokenCredentialId) — the webhook URL is:
     //   https://<jenkins>/generic-webhook-trigger/invoke?token=<that-secret>
     triggers {
         GenericTrigger(
@@ -116,50 +109,8 @@ pipeline {
             }
         }
 
-        // ── 3. Detect Backend Changes (mono-repo gate) ───────────────────────────
-        // Only deploy when this push actually changed backend/. Frontend-only
-        // commits are skipped so we never needlessly restart the backend.
-        stage('Detect Backend Changes') {
-            steps {
-                script {
-                    if (params.FORCE_DEPLOY) {
-                        env.BACKEND_CHANGED = 'true'
-                        echo "FORCE_DEPLOY set — deploying regardless of changed paths."
-                    } else if (!env.GIT_PREVIOUS_SUCCESSFUL_COMMIT?.trim() || !env.GIT_COMMIT?.trim()) {
-                        env.BACKEND_CHANGED = 'true'
-                        echo "No previous successful commit recorded — treating as a backend change (safe default)."
-                    } else {
-                        // Fail SAFE: if the commit range can't be resolved (e.g. a shallow
-                        // clone), emit a sentinel so we deploy rather than wrongly skip.
-                        def changed = sh(
-                            script: """
-                                if git rev-parse --verify --quiet ${env.GIT_PREVIOUS_SUCCESSFUL_COMMIT}^{commit} >/dev/null \
-                                   && git rev-parse --verify --quiet ${env.GIT_COMMIT}^{commit} >/dev/null; then
-                                    git diff --name-only ${env.GIT_PREVIOUS_SUCCESSFUL_COMMIT} ${env.GIT_COMMIT} | grep -E '^${BACKEND_DIR}/' || true
-                                else
-                                    echo '__DIFF_UNAVAILABLE__'
-                                fi
-                            """,
-                            returnStdout: true
-                        ).trim()
-                        env.BACKEND_CHANGED = changed ? 'true' : 'false'
-                        if (changed == '__DIFF_UNAVAILABLE__') {
-                            echo "Could not resolve commit range — deploying to be safe."
-                        } else {
-                            echo changed ? "Backend changes detected:\n${changed}" : "No backend/ changes in this push — skipping deploy."
-                        }
-                    }
-                    if (env.BACKEND_CHANGED != 'true') {
-                        currentBuild.result = 'NOT_BUILT'
-                        currentBuild.description = 'Skipped — no backend changes'
-                    }
-                }
-            }
-        }
-
-        // ── 4. Deploy Backend (all deploy work is gated on backend changes) ───────
+        // ── 3. Deploy Backend ─────────────────────────────────────────────────────
         stage('Deploy Backend') {
-            when { expression { env.BACKEND_CHANGED == 'true' } }
             stages {
 
                 // ── 4·0 Stage .env from Jenkins Credentials (source of truth) ────
@@ -225,7 +176,7 @@ pipeline {
                                     SCRIPT="${BACKUP_SCRIPT}"
                                 else
                                     echo "Installed backup script not found — using the checked-out copy."
-                                    SCRIPT="${BACKEND_DIR}/scripts/db-backup.sh"
+                                    SCRIPT="scripts/db-backup.sh"
                                     chmod +x "\$SCRIPT"
                                 fi
                                 "\$SCRIPT" predeploy
@@ -257,7 +208,7 @@ pipeline {
                                       -e "sk-[a-zA-Z0-9]\\{32,\\}" \
                                       --include="*.js" --include="*.json" \
                                       --exclude-dir=node_modules --exclude-dir=.git \
-                                      backend 2>/dev/null || true
+                                      . 2>/dev/null || true
                                 ''',
                                 returnStdout: true
                             ).trim()
@@ -275,7 +226,6 @@ pipeline {
                 stage('Install & Validate') {
                     steps {
                         sh """
-                            cd ${BACKEND_DIR}
                             npm ci
                             npx prisma generate
                             # This is a pure code-load check (require('./app.js') has no
@@ -409,17 +359,16 @@ pipeline {
                                 returnStdout: true
                             ).trim()
 
-                            // Copy ONLY the backend subtree — the frontend never reaches prod.
                             sh """
                                 mkdir -p ${env.RELEASE_DIR}
-                                cp -r ${BACKEND_DIR}/src               ${env.RELEASE_DIR}/
-                                cp -r ${BACKEND_DIR}/config            ${env.RELEASE_DIR}/
-                                cp -r ${BACKEND_DIR}/prisma            ${env.RELEASE_DIR}/
-                                cp -r ${BACKEND_DIR}/scripts           ${env.RELEASE_DIR}/ 2>/dev/null || true
-                                cp -r ${BACKEND_DIR}/docs              ${env.RELEASE_DIR}/ 2>/dev/null || true
-                                cp    ${BACKEND_DIR}/server.js         ${env.RELEASE_DIR}/
-                                cp    ${BACKEND_DIR}/package.json      ${env.RELEASE_DIR}/
-                                cp    ${BACKEND_DIR}/package-lock.json ${env.RELEASE_DIR}/
+                                cp -r src               ${env.RELEASE_DIR}/
+                                cp -r config            ${env.RELEASE_DIR}/
+                                cp -r prisma            ${env.RELEASE_DIR}/
+                                cp -r scripts           ${env.RELEASE_DIR}/ 2>/dev/null || true
+                                cp -r docs              ${env.RELEASE_DIR}/ 2>/dev/null || true
+                                cp    server.js         ${env.RELEASE_DIR}/
+                                cp    package.json      ${env.RELEASE_DIR}/
+                                cp    package-lock.json ${env.RELEASE_DIR}/
                                 cp    "${env.STAGED_ENV}"              "${env.RELEASE_DIR}/.env"
                                 echo "Release folder ready: ${env.RELEASE_DIR}"
                             """
